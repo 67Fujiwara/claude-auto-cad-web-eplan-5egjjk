@@ -51,8 +51,8 @@ const DB_SYMBOLS = [
   {
     id: "func_earth", db: true, group: "接地", jis: "03-02-02", cat: "db", letter: "E",
     name: "機能接地 (FE)", nameEn: "Functional earth", desc: "機能接地。一般接地記号+用途注記で表す",
-    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-8,-2, 16, 17],
-    body: `<path d="M0,0 V5"/><path d="M-6,5 H6 L0,13 Z"/>`,
+    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-9,-2, 18, 20],
+    body: `<path d="M0,0 V4"/><path d="M0,4 L-7,10 L0,16 L7,10 Z"/><path d="M-3.6,8.5 H3.6 M-2.4,10.5 H2.4 M-1.2,12.5 H1.2 M0,6.5 V8.5"/>`,
   },
   {
     id: "chassis_earth", db: true, group: "接地", jis: "03-02-04", cat: "db", letter: "E",
@@ -72,7 +72,7 @@ const DB_SYMBOLS = [
     id: "var_resistor", db: true, group: "受動部品", jis: "04-01-02", cat: "db", letter: "R",
     name: "可変抵抗器", nameEn: "Variable resistor", desc: "斜め矢印つき抵抗器",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "load", bounds: [-7,-2, 14, 24],
-    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M-5,16 L5,4 M5,4 L3,4.4 M5,4 L4.6,6"/>`,
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M-5,16 L5,4 M5,4 L3.271,5.006 M5,4 L4.322,5.882"/>`,
   },
   {
     id: "capacitor", db: true, group: "受動部品", jis: "04-02-01", cat: "db", letter: "C",
@@ -110,7 +110,7 @@ const DB_SYMBOLS = [
     id: "led", db: true, group: "半導体", jis: "05-03-02", cat: "db", letter: "V",
     name: "発光ダイオード (LED)", nameEn: "LED", desc: "ダイオード+光の矢印2本",
     pins: [{x:0,y:0,n:"A"},{x:0,y:20,n:"K"}], sim: "none", bounds: [-6.5,-2, 19.5, 24],
-    body: `<path d="M0,0 V6 M0,20 V14 M-4.5,6 L4.5,6 L0,14 Z M-4.5,14 H4.5"/><path d="M5,7 L9.5,4 M9.5,4 L7.7,4.2 M9.5,4 L9,5.7 M6.5,10.5 L11,7.5 M11,7.5 L9.2,7.7 M11,7.5 L10.5,9.2"/>`,
+    body: `<path d="M0,0 V6 M0,20 V14 M-4.5,6 L4.5,6 L0,14 Z M-4.5,14 H4.5"/><path d="M5,7 L9.5,4 M9.5,4 L7.557,4.473 M9.5,4 L8.316,5.612 M6.5,10.5 L11,7.5 M11,7.5 L9.057,7.973 M11,7.5 L9.816,9.112"/>`,
   },
   {
     id: "zener", db: true, group: "半導体", jis: "05-03-06", cat: "db", letter: "V",
@@ -128,7 +128,7 @@ const DB_SYMBOLS = [
     id: "tr_npn", db: true, group: "半導体", jis: "05-05-01", cat: "db", letter: "V",
     name: "トランジスタ (NPN)", nameEn: "NPN transistor", desc: "エミッタ矢印は外向き",
     pins: [{x:-10,y:10,n:"B"},{x:0,y:0,n:"C"},{x:0,y:20,n:"E"}], sim: "none", bounds: [-12,-2, 21.5, 24],
-    body: `<circle cx="0" cy="10" r="7.5"/><path d="M-10,10 H-3 M-3,5.5 V14.5 M-3,8 L0,3 M0,3 V0 M-3,12 L0,17 M0,17 V20 M-1.2,15 L0,17 L-2.4,16.6"/>`,
+    body: `<circle cx="0" cy="10" r="7.5"/><path d="M-10,10 H-3 M-3,5.5 V14.5 M-3,8 L0,3 M0,3 V0 M-3,12 L0,17 M0,17 V20"/><path d="M0,17 L-0.38,15.037 L-1.553,15.74 Z" fill="currentColor"/>`,
   },
 
   /* ── 電源・変換 (JIS C 0617-6) ── */
@@ -147,8 +147,8 @@ const DB_SYMBOLS = [
   {
     id: "ct", db: true, group: "電源・変換", jis: "06-09-11", cat: "db", letter: "T",
     name: "変流器 (CT)", nameEn: "Current transformer", desc: "一次貫通導体+二次巻線円",
-    pins: [{x:0,y:0,n:"P1"},{x:0,y:20,n:"P2"},{x:10,y:15,n:"S1"},{x:10,y:20,n:"S2"}], sim: "passthru", bounds: [-7.5,-2, 19.5, 24],
-    body: `<path d="M0,0 V20"/><circle cx="0" cy="10" r="5.5"/><path d="M3.889,13.889 L10,15 M10,15 V20"/>`,
+    pins: [{x:0,y:0,n:"P1"},{x:0,y:20,n:"P2"},{x:10,y:5,n:"S1"},{x:10,y:15,n:"S2"}], sim: "passthru", bounds: [-7.5,-2, 19.5, 24],
+    body: `<path d="M0,0 V20"/><circle cx="0" cy="10" r="5.5"/><path d="M3.889,6.111 L10,5"/><path d="M3.889,13.889 L10,15"/>`,
   },
   {
     id: "rectifier", stdNote: "整流器 (合成記号)", db: true, group: "電源・変換", cat: "db", letter: "U",
@@ -229,8 +229,8 @@ const DB_SYMBOLS = [
   {
     id: "bell", db: true, group: "計器・信号", stdNote: "電鈴 (JIS C 0617-8 音響信号装置。ランプ 08-10-01 とは別図)", cat: "db", letter: "P",
     name: "ベル", nameEn: "Bell", desc: "電鈴 (外側の打鈴子で ブザーと区別)",
-    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "load", bounds: [-8.5,-2, 20.5, 24],
-    body: `<path d="M0,0 V8 M-6.5,8 H6.5"/><path d="M-6.5,8 A6.5,6.5 0 0 0 6.5,8"/><path d="M0,20 V14.5"/><path d="M4.596,12.596 L7.425,15.425"/><circle cx="8.485" cy="16.485" r="1.5"/>`,
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "load", bounds: [-8.5,-2, 17, 24],
+    body: `<path d="M0,0 V4"/><path d="M-6.5,13 A6.5,6.5 0 0 1 6.5,13"/><path d="M-6.5,13 H6.5"/><path d="M0,20 V13"/><circle cx="0" cy="15" r="1.5"/>`,
   },
   {
     id: "horn", jis: "08-10-04", db: true, group: "計器・信号", cat: "db", letter: "P",

@@ -99,7 +99,7 @@ const SYMBOLS = [
     id: "press_sw", jis: "07-08-05", cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
     desc: "設定圧で動作・a接点", typ: "SNS-C102X", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-17,-2, 19, 24],
-    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/>` + gLink(-11.8, bladeXNO(10), 10),
+    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/>` + gLink(-11.8, bladeXNO(9.8), 9.8),
   },
   {
     id: "float_sw", jis: "07-08-06", cat: "input", letter: "B", name: "フロートスイッチ", nameEn: "Float switch",
@@ -111,7 +111,7 @@ const SYMBOLS = [
     id: "thermo", jis: "07-08-04", cat: "input", letter: "B", name: "サーモスタット", nameEn: "Thermostat",
     desc: "温度スイッチ・b接点", typ: "US-622", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
     sim: "contact_nc", momentary: false, bounds: [-16.3,-2, 18.3, 24],
-    body: G_NC + `<text x="-13" y="8.6" font-size="5.385" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-13,9 V10"/>` + gLink(-13, bladeXNC(10), 10),
+    body: G_NC + `<text x="-13" y="8.8" font-size="5.333" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text>` + gLink(-13, bladeXNC(10), 10),
   },
 
   /* ══════════ ロジック機器 ══════════ */
@@ -381,19 +381,20 @@ function symBodySVG(sym, opts = {}) {
   // 機器を回転しても記号内の文字は図面の下辺から読める向きに保つ (JIS Z 8313-0)。
   // 回転グループの内側にあるので、文字だけ逆回転を掛けて打ち消す。
   const rot = ((opts.rot || 0) % 360 + 360) % 360;
-  if (rot) body = counterRotateText(body, rot);
+  if (rot) {
+    const [bx, by, bw, bh] = sym.bounds;
+    body = counterRotateText(body, rot, bx + bw / 2, by + bh / 2);
+  }
   return `<g fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
 }
 
-/** シンボル内の <text> に逆回転を掛け、機器の回転にかかわらず水平に保つ */
-function counterRotateText(body, rot) {
+/** シンボル内の <text> に逆回転を掛け、機器の回転にかかわらず水平に保つ。
+    回転中心は記号全体で共通 (cx,cy)。各文字の位置で回すと複数行の上下順が
+    180° で入れ替わってしまうため。 */
+function counterRotateText(body, rot, cx, cy) {
   return body.replace(/<text\b([^>]*)>/g, (m, attrs) => {
     if (/\btransform=/.test(attrs)) return m;
-    const num = name => {
-      const r = new RegExp(name + '="(-?[\\d.]+)"').exec(attrs);
-      return r ? parseFloat(r[1]) : 0;
-    };
-    return `<text${attrs} transform="rotate(${-rot} ${num("x")} ${num("y")})">`;
+    return `<text${attrs} transform="rotate(${-rot} ${cx} ${cy})">`;
   });
 }
 

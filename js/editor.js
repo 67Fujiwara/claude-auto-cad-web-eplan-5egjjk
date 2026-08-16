@@ -106,6 +106,14 @@ function sheetSVG(page, opts = {}) {
   const cxm = w / 2, cym = h / 2;   // 中心マークは用紙の対称軸上 (JIS Z 8311)
   out += `<path d="M${cxm},0 V${m + cm5} M${cxm},${h} V${h - m - cm5} M0,${cym} H${ml + cm5} M${w},${cym} H${w - m - cm5}"
     stroke="${INK}" stroke-width="${cmw}" fill="none"/>`;
+  // 裁断マーク (用紙四隅・10×5mm の塗り) — JIS Z 8311
+  const tmL = 10 * fr, tmS = 5 * fr;
+  [[0, 0, tmS, tmL], [0, 0, tmL, tmS],
+   [w - tmS, 0, tmS, tmL], [w - tmL, 0, tmL, tmS],
+   [0, h - tmL, tmS, tmL], [0, h - tmS, tmL, tmS],
+   [w - tmS, h - tmL, tmS, tmL], [w - tmL, h - tmS, tmL, tmS]].forEach(([tx, ty, tw, th]) => {
+    out += `<rect x="${tx}" y="${ty}" width="${tw}" height="${th}" fill="${INK}" stroke="none"/>`;
+  });
   // 格子参照: 列 1,2,3… / 行 A,B,C… (I・O は使わない)
   const cw = (w - ml - m) / cols, rh = (h - 2 * m) / rows;
   const fs = TEXT_H.normal * fr, tick = 0.35 * fr, zw = 5 * fr;
@@ -146,8 +154,8 @@ function sheetSVG(page, opts = {}) {
     const id = `${clipBase}c${clipN++}`;                 // ページ間で id が衝突しないように
     return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${cw2[ci]}" height="${S(10)}"/></clipPath>` +
       `<g clip-path="url(#${id})">` +
-      `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">${escXML(label)}</text>` +
-      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${svgFontSize(S(size))}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text></g>`;
+      `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${svgFontSizeFor(label, S(TEXT_H.small))}" fill="${INK_SOFT}">${escXML(label)}</text>` +
+      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${svgFontSizeFor(shown, S(size), false, { bold })}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text></g>`;
   };
   out += revisionTableSVG(tbX, tbY, tbW, S, fr, meta, clipBase + "r");
   out += `<g font-family="sans-serif" data-titleblock="1">
@@ -164,8 +172,8 @@ function sheetSVG(page, opts = {}) {
     ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
     ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
     ${cell(c2, r3, 1, "用紙 / 投影法", `${pm.paper} / ${meta.proj || "第三角法"}`)}
-    <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
-    <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large))}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
+    <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSizeFor("ページ", S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
+    <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large), false, true)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
     ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}
   </g>`;
   return out;
@@ -191,7 +199,7 @@ function revisionTableSVG(tbX, tbY, tbW, S, fr, meta, idBase = "rv") {
   xs.slice(1, -1).forEach(x => { grid += `M${x},${y0} V${y0 + h} `; });
   out += `<path d="${grid}" stroke="${INK}" stroke-width="${S(LINE_W.thin)}" fill="none"/>`;
   head.forEach((t, i) => {
-    out += `<text x="${xs[i] + S(1.6)}" y="${y0 + rh - S(1.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">${t}</text>`;
+    out += `<text x="${xs[i] + S(1.6)}" y="${y0 + rh - S(1.6)}" font-size="${svgFontSizeFor(t, S(TEXT_H.small))}" fill="${INK_SOFT}">${t}</text>`;
   });
   // 新しい改訂が上に来るように下から積む (JIS の一般的な書式)
   let rc = 0;
@@ -201,7 +209,7 @@ function revisionTableSVG(tbX, tbY, tbW, S, fr, meta, idBase = "rv") {
       if (!v) return;
       const id = `${idBase}${rc++}`;
       out += `<clipPath id="${id}"><rect x="${xs[i]}" y="${y}" width="${cols[i]}" height="${rh}"/></clipPath>` +
-        `<g clip-path="url(#${id})"><text x="${xs[i] + S(1.6)}" y="${y + rh - S(1.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK}">${escXML(v)}</text></g>`;
+        `<g clip-path="url(#${id})"><text x="${xs[i] + S(1.6)}" y="${y + rh - S(1.6)}" font-size="${svgFontSizeFor(v, S(TEXT_H.small))}" fill="${INK}">${escXML(v)}</text></g>`;
     });
   });
   return out + `</g>`;
@@ -240,7 +248,7 @@ function zonesSVG(page, opts = {}) {
     out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr}" fill="none"
       stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr}" stroke-dasharray="${dash}"/>`;
     if (z.label) {
-      out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${svgFontSize(TEXT_H.normal * fr)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
+      out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${svgFontSizeFor(z.label, TEXT_H.normal * fr)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
     }
   });
   return out;
@@ -275,13 +283,13 @@ function wiresSVG(page, opts = {}) {
       const [mx, my, horiz] = wireLabelPos(w, page);
       // 位置は wireLabelPos が確定済み (当たり判定矩形と完全に一致させる)
       const lx = mx, ly = my;
-      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec && w.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz] = wireLabelPos(w, page);
       const sx = horiz ? mx : mx + WIRE_SPEC_OFF * fr, sy = horiz ? my + 4.6 * fr : my;
-      out += `<text x="${sx}" y="${sy}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+      out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
   });
   // ジャンクションドット (直径は線幅の約3倍)
@@ -329,7 +337,7 @@ function devicesSVG(page, opts = {}) {
       const rotated = (dev.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
       const tx = abs.x + 1 * fr, ty = rotated ? abs.y - 1.6 * fr : abs.y + (isTop ? 3.4 : -1.6) * fr;
-      out += `<text x="${tx}" y="${ty}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
+      out += `<text x="${tx}" y="${ty}" font-size="${svgFontSizeFor(name, TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
     out += devLabelsSVG(dev, sym, page);
@@ -371,14 +379,14 @@ function devLabelsSVG(dev, sym, page) {
   const boxes = deviceLabelBoxes(page || curPage(), dev);
   boxes.forEach((o) => {
     const isTag = o.isTag;
-    out += `<text x="${o.x}" y="${o.y}" font-size="${svgFontSize(o.size, isTag)}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
+    out += `<text x="${o.x}" y="${o.y}" font-size="${svgFontSizeFor(o.text, o.size, isTag, { bold: isTag })}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
       `${isTag ? ' font-weight="600" font-family="monospace"' : ""}>${escXML(o.text)}</text>`;
   });
   // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)。
   // タグを右へ寄せた機器では、その下に置いて重ならないようにする
   const xr = deviceXrefBox(page || curPage(), dev);
   if (xr) {
-    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSize(xr.size, true)}" fill="#7a4ec2" font-family="monospace">${escXML(xr.text)}</text>`;
+    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSizeFor(xr.text, xr.size, true)}" fill="#7a4ec2" font-family="monospace">${escXML(xr.text)}</text>`;
   }
   return out;
 }
@@ -395,7 +403,7 @@ function mirrorSVG(coilDev) {
   const MAXROWS = 4;
   const cols = mirrorCols(contacts.slice(0, 4));   // 桁被りを防ぐ動的な列位置
   let out = `<g font-family="monospace">`;
-  out += `<path d="M${coilDev.x},${coilDev.y + 20 * mfr} L${x},${y0 - 1.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr).join(" ")}"/>`;
+  out += `<path d="M${coilDev.x},${coilDev.y + 20 * mfr} L${x},${y0 - 1.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${fitDashPattern(WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr), Math.hypot(x - coilDev.x, y0 - 1.5 * mfr - coilDev.y - 20 * mfr)).join(" ")}" stroke-linecap="butt"/>`;
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = symOf(c.sym);
@@ -408,7 +416,7 @@ function mirrorSVG(coilDev) {
     } else {
       out += `<path d="M${x},${cy + M(1.5)} h${M(2)} l${M(2.6)},${M(-2.8)} m${M(0.6)},${M(2.8)} h${M(0.8)}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" fill="none"/>`;
     }
-    out += `<text x="${x + M(cols.pin)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="${INK_SOFT}">${pinLabel}</text>`;
+    out += `<text x="${x + M(cols.pin)}" y="${cy + M(2.3)}" font-size="${svgFontSizeFor(pinLabel, TEXT_H.small * mfr, true)}" font-family="monospace" fill="${INK_SOFT}">${pinLabel}</text>`;
     out += `<text x="${x + M(cols.ref)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="#7a4ec2">/${devLocation(c)}</text>`;
   });
   if (contacts.length > MAXROWS) {
@@ -430,7 +438,7 @@ function textsSVG(page, opts = {}) {
       const wApprox = t.text.length * h * 0.62 + 2 * fr;
       out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"/>`;
     }
-    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSize(h)}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h)}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
   });
   return out;
 }
@@ -476,7 +484,7 @@ function overlaySVG(page) {
   if (Editor.ghost) {
     const g = Editor.ghost;
     const sym = symOf(g.symId);
-    out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 })}</g>`;
+    out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1, rot: g.rot || 0 })}</g>`;
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
   // ラバーバンド (右→左ドラッグは交差選択: 緑破線)

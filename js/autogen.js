@@ -244,7 +244,7 @@ function aiGenerate(sel) {
     const bodyTop = L.bodyTopY - (bodyH - 20);
     let els = [...series];
     const avail = bodyTop - ctrlRailY - 10;
-    const fieldFirst = els.length && SYMBOLS_BY_ID[els[0].id].cat === "input";
+    const fieldFirst = els.length && symOf(els[0].id).cat === "input";
     let nSlots = els.length + (startGroup.length ? 1 : 0);
     let withTerm = useTerm && (fieldFirst || (!els.length && startGroup.length));
     if (withTerm && (nSlots + 1) * 20 <= avail) {

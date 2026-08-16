@@ -194,6 +194,14 @@ function dxfPoly(pts, layer, ltype) {
   for (let i = 0; i < pts.length - 1; i++) out += dxfLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer, ltype);
   return out;
 }
+/** 塗りつぶし矩形 (SOLID)。裁断マークなどに使う */
+function dxfSolid(x0, y0, x1, y1, layer) {
+  return dxfEntity([[0, "SOLID"], [8, layer],
+    [10, x0.toFixed(3)], [20, dxfY(y0)],
+    [11, x1.toFixed(3)], [21, dxfY(y0)],
+    [12, x0.toFixed(3)], [22, dxfY(y1)],
+    [13, x1.toFixed(3)], [23, dxfY(y1)]]);
+}
 function dxfCircle(cx, cy, r, layer, ltype) {
   const p = [[0, "CIRCLE"], [8, layer]];
   if (ltype) p.push([6, ltype]);
@@ -212,8 +220,9 @@ function dxfEscape(text) {
 }
 function dxfText(x, y, size, text, layer, anchor = "start", angle = 0) {
   if (!text) return "";
-  // 幅は CJK を全角として見積もる (画面と同じ textWidthMM を使う)
-  const w = textWidthMM(String(text), size);
+  // 和文は JIS Z 8313-10 の最小呼び (3.5mm) に合わせる。画面と同じ判定を使う
+  size = textHeightMM(text, size);
+  const w = textWidthMM(String(text), size, false, true);
   const rad = angle * Math.PI / 180;
   const off = anchor === "middle" ? -w / 2 : anchor === "end" ? -w : 0;
   const ax = x + off * Math.cos(rad);       // 回転後の基線方向へ寄せる
@@ -290,6 +299,14 @@ function pageToDXF(page) {
   ents += dxfLine(cxm, h, cxm, h - mg - cm5, "FRAME");
   ents += dxfLine(0, cym, ml + cm5, cym, "FRAME");
   ents += dxfLine(w, cym, w - mg - cm5, cym, "FRAME");
+  // ── 裁断マーク (用紙四隅・10×5mm の塗り) — JIS Z 8311 ──
+  const tmL = S(10), tmS = S(5);
+  [[0, 0, tmS, tmL], [0, 0, tmL, tmS],
+   [w - tmS, 0, tmS, tmL], [w - tmL, 0, tmL, tmS],
+   [0, h - tmL, tmS, tmL], [0, h - tmS, tmL, tmS],
+   [w - tmS, h - tmL, tmS, tmL], [w - tmL, h - tmS, tmL, tmS]].forEach(([tx, ty, tw, th]) => {
+    ents += dxfSolid(tx, ty, tx + tw, ty + th, "FRAME");
+  });
   // ── 格子参照 (列 1 から / 行 A から・I と O を除く) ──
   const cw = (w - ml - mg) / cols, rh = (h - 2 * mg) / rows;
   const fs = S(TEXT_H.normal), zw = S(5);
@@ -398,16 +415,21 @@ function pageToDXF(page) {
     if (!sym) return;
     const xf = dxfDevXform(dev);
     dxfSymPrimitives(sym).forEach(pr => {
-      const lyr = pr.lt ? "AUXLINE" : "SYMBOL";      // 破線は補助線レイヤへ (導体と分離)
+      const lyr = "SYMBOL";      // 破線も記号レイヤに置き、線種で区別する
       if (pr.type === "poly") {
         ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), lyr, pr.lt);
       } else if (pr.type === "circle") {
         const [cx, cy] = xf(pr.cx, pr.cy);
         ents += dxfCircle(cx, cy, pr.r, lyr, pr.lt);
       } else if (pr.type === "text") {
-        // 記号内の文字は回転させない (JIS Z 8313-0: 文字は図面の下辺から読める向き)
-        const [tx, ty] = xf(pr.x, pr.y);
-        ents += dxfText(tx, ty, pr.size * contentScale(), pr.text, "SYMBOL", pr.anchor || "middle");
+        // 記号内の文字は回転させない (JIS Z 8313-0: 文字は図面の下辺から読める向き)。
+        // 位置は記号中心を回した点からの相対で置く (画面と同じ。複数行の順序を保つ)
+        const [sbx, sby, sbw, sbh] = sym.bounds;
+        const scx = sbx + sbw / 2, scy = sby + sbh / 2;
+        const [rcx, rcy] = xf(scx, scy);
+        const k = contentScale();
+        ents += dxfText(rcx + (pr.x - scx) * k, rcy + (pr.y - scy) * k,
+          pr.size * k, pr.text, "SYMBOL", pr.anchor || "middle");
       }
     });
     // ピン番号 (画面と同じく回転後の絶対座標に水平で置く)

@@ -220,7 +220,8 @@ input, select, textarea { font-family: inherit; }
 #btnAddPage:hover { background: var(--panel-3); color: var(--text); }
 
 #canvasWrap { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
-#canvas { width: 100%; height: 100%; outline: none; cursor: default; }
+/* 図面の文字は書体を固定する (画面・印刷・幅の実測で同じ書体を使う) */
+#canvas { width: 100%; height: 100%; outline: none; cursor: default; font-family: sans-serif; }
 #canvas.tool-wire { cursor: crosshair; }
 #canvas.tool-pan { cursor: grab; }
 #canvas.tool-pan:active { cursor: grabbing; }

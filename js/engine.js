@@ -103,7 +103,7 @@ function sheetScale() { return SHEET.f || 1; }
 function contentScale() { return 1; }
 
 /* 表題欄の割付 (用紙上 mm)。画面・DXF で必ず同じものを使う */
-const TITLE_BLOCK = { w: 160, h: 30, rowH: 10, cols: [52, 44, 34, 30] };
+const TITLE_BLOCK = { w: 160, h: 30, rowH: 10, cols: [58, 42, 32, 28] };
 const REV_TABLE = { rowH: 6, maxRows: 4, w: 120, cols: [16, 26, 0, 22] }; // cols[2]=残り
 
 /** 表題欄の矩形 (作図領域座標)。図枠描画・DXF・DRC で共有する */
@@ -137,7 +137,7 @@ function titleBlocksRects() {
 /** 線番ラベルの外接矩形 (mx,my は wireLabelPos の戻り値) */
 function wireNumBox(w, mx, my, horiz) {
   const f = contentScale(), h = TEXT_H.small * f;
-  const wd = textWidthMM(String(w.num || ""), h);
+  const wd = textWidthMM(String(w.num || ""), h, false, true);
   return horiz ? { x: mx - wd / 2, y: my - h, w: wd, h }
                : { x: mx - h, y: my - wd / 2, w: h, h: wd };
 }
@@ -145,7 +145,7 @@ function wireNumBox(w, mx, my, horiz) {
 function wireSpecBox(w, mx, my, horiz) {
   if (!w.spec || w.numShow === false) return null;
   const f = contentScale(), h = TEXT_H.small * f;
-  const wd = textWidthMM(String(w.spec), h);
+  const wd = textWidthMM(String(w.spec), h, false, true);
   const sx = horiz ? mx : mx + WIRE_SPEC_OFF * f, sy = horiz ? my + 4.6 * f : my;
   return horiz ? { x: sx - wd / 2, y: sy - h, w: wd, h }
                : { x: sx - h, y: sy - wd / 2, w: h, h: wd };
@@ -247,7 +247,7 @@ function pinLabelBoxes(page) {
     (s2.pins || []).forEach((p, pi) => {
       const vis = pinLabelVisible(page, d2, pi);
       if (!vis) return;
-      const h = TEXT_H.small * f, w2 = textWidthMM(vis.name, h);
+      const h = TEXT_H.small * f, w2 = textWidthMM(vis.name, h, false, true);
       const rotated = (d2.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (s2.horizontalPins && p.y <= s2.bounds[1] + 2));
       const ty = rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f;
@@ -301,7 +301,7 @@ function placeDeviceLabels(page, dev, obstacles) {
   const H = TEXT_H.normal * f;
   const mk = (text, x, y, anchor, isTag) => {
     const hh = textHeightMM(text, H);
-    const o = { text, x, y, w: textWidthMM(text, hh), h: hh, anchor, size: H, isTag: !!isTag };
+    const o = { text, x, y, w: textWidthMM(text, hh, !!isTag, !!isTag), h: hh, anchor, size: H, isTag: !!isTag };
     o.box = labelBox(o);
     return o;
   };
@@ -388,7 +388,7 @@ function deviceXrefBox(page, dev) {
   const s = contentScale();
   const b = devBounds(dev);
   const text = "/" + devLocation(f.dev);
-  const h = TEXT_H.small * s, w = textWidthMM(text, h);
+  const h = TEXT_H.small * s, w = textWidthMM(text, h, false, true);
   const obst = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
     obst.push(insetRect(devBounds(d2), 1.2 * s));
@@ -460,40 +460,88 @@ function revisionRows() {
    em 寸法なので、そのまま渡すと実際の文字高は h の約 0.7 倍にしかならない。
    図面に印字される文字高を規格値どおりにするため、SVG へ出すときだけ換算する。
    (DXF の TEXT 高さは大文字高そのものなので TEXT_H をそのまま渡してよい) */
-const TEXT_CAP = 0.70;                 // 大文字高 / font-size (サンセリフ体の実測値)
-const TEXT_CAP_MONO = 0.73;            // 同上 (等幅書体)
-const TEXT_CAP_SERIF = 0.65;           // 同上 (明朝・セリフ体)
-/* 和文 (漢字・かな) の字面高は欧文の大文字高より大きい。JIS Z 8313-10 の
-   呼びは字面の高さなので、CJK を含む文字列は別の比率で換算する。
-   また同規格の和文の呼びは 3.5mm 以上なので、それを下回らないようにする。 */
-const TEXT_CAP_CJK = 0.85;
+/* JIS Z 8313 の「文字高 h」は欧文では大文字高、和文では字面の高さを指すが、
+   SVG の font-size は em 寸法なのでそのまま渡すと規格値にならない。
+   比率は書体に依存するので、実際に描画に使う書体から canvas で実測する
+   (measureText().actualBoundingBox*)。測れない環境では標準的な値を使う。 */
+const DRAW_FONT = "sans-serif";        // 図面の既定書体 (画面・印刷・実測で共通)
+const DRAW_FONT_MONO = "monospace";
+const TEXT_CAP_FALLBACK = { sans: 0.70, mono: 0.73, serif: 0.65, cjk: 0.88,
+  "sans+b": 0.71, "mono+b": 0.74, "serif+b": 0.66, "cjk+b": 0.90 };
+const __capCache = {};
+function capRatio(kind) {
+  if (__capCache[kind] !== undefined) return __capCache[kind];
+  let r = TEXT_CAP_FALLBACK[kind] || 0.70;
+  const g = measureCtx();
+  if (g) {
+    const bold = kind.endsWith("+b");
+    const base = bold ? kind.slice(0, -2) : kind;
+    const fam = base === "mono" ? DRAW_FONT_MONO : base === "serif" ? "serif" : DRAW_FONT;
+    g.font = `${bold ? "600 " : ""}1000px ${fam}`;
+    const m = g.measureText(base === "cjk" ? "国" : "H");
+    const h = ((m.actualBoundingBoxAscent || 0) + Math.max(0, m.actualBoundingBoxDescent || 0)) / 1000;
+    if (h > 0.3 && h < 1.5) r = h;
+  }
+  __capCache[kind] = r;
+  return r;
+}
+const TEXT_CAP = 0.70, TEXT_CAP_MONO = 0.73, TEXT_CAP_SERIF = 0.65, TEXT_CAP_CJK = 0.88;  // 実測が使えないときの参考値
+/* 和文 (漢字・かな) を含む文字列は JIS Z 8313-10 の呼びに合わせる。
+   同規格の和文の呼びは 3.5mm 以上なので、それを下回らないようにする。 */
 const TEXT_H_MIN_CJK = 3.5;
 const RE_CJK = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFF60\u3040-\u30FF]/;
 function hasCJK(s) { return RE_CJK.test(String(s == null ? "" : s)); }
-function svgFontSize(h, mono) { return +(h / (mono ? TEXT_CAP_MONO : TEXT_CAP)).toFixed(3); }
-/** 文字列に応じた SVG font-size。和文を含むときは JIS Z 8313-10 の呼びに合わせる */
-function svgFontSizeFor(text, h, mono) {
-  if (!hasCJK(text)) return svgFontSize(h, mono);
-  return +(Math.max(h, TEXT_H_MIN_CJK) / TEXT_CAP_CJK).toFixed(3);
+/** 欧文用の SVG font-size (文字高 h → em 寸法) */
+function svgFontSize(h, mono, bold) { return +(h / capRatio((mono ? "mono" : "sans") + (bold ? "+b" : ""))).toFixed(3); }
+/** 文字列に応じた SVG font-size。図面に出す文字はすべてこれを通す */
+function svgFontSizeFor(text, h, mono, opts) {
+  const o = typeof opts === "object" && opts ? opts : {};
+  const b = o.bold ? "+b" : "";
+  if (hasCJK(text)) return +(Math.max(h, TEXT_H_MIN_CJK) / capRatio("cjk" + b)).toFixed(3);
+  return +(h / capRatio((o.serif ? "serif" : mono ? "mono" : "sans") + b)).toFixed(3);
 }
 /** 文字列が実際に占める高さ (mm)。和文は最小呼びに引き上げられる */
 function textHeightMM(text, h) { return hasCJK(text) ? Math.max(h, TEXT_H_MIN_CJK) : h; }
 
-/** 文字列の概算幅 (mm)。size は JIS の文字高 h。CJK は全角として数える */
-function textWidthMM(s, size, bold = false) {
-  let n = 0;
-  for (const ch of String(s)) {
-    const c = ch.codePointAt(0);
-    const wide = (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF) ||
-      (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
-      (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF00 && c <= 0xFF60) ||
-      (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x3FFFD);
-    n += wide ? 1 : 0.60;          // 欧文の平均送りは実測 0.60em (従来 0.58 は約3%過小)
-  }
-  if (hasCJK(s)) return n * (Math.max(size, TEXT_H_MIN_CJK) / TEXT_CAP_CJK) * (bold ? 1.05 : 1);
-  return n * svgFontSize(size) * (bold ? 1.05 : 1);
+/* 文字幅は canvas の実測を使う (推定式では表題欄の切り詰め判定や中央寄せが
+   数十%ずれる)。描画に使う font-size と同じ条件で測るので、画面・DXF・検図で
+   同じ値になる。canvas が使えない環境では従来の概算にフォールバックする。 */
+let __measCtx;
+function measureCtx() {
+  if (__measCtx !== undefined) return __measCtx;
+  try { __measCtx = document.createElement("canvas").getContext("2d") || false; }
+  catch (e) { __measCtx = false; }
+  return __measCtx;
 }
-/** 欄幅に収まる文字高を求める (最小 2.5mm。それ以下は呼び出し側で切る) */
+const __twCache = new Map();
+function isWideChar(c) {
+  return (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF) ||
+    (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
+    (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF00 && c <= 0xFF60) ||
+    (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x3FFFD);
+}
+/** 文字列の描画幅 (mm)。size は JIS の文字高 h。mono=等幅書体で描く文字列 */
+function textWidthMM(s, size, bold = false, mono = false) {
+  const str = String(s == null ? "" : s);
+  if (!str) return 0;
+  const fs = svgFontSizeFor(str, size, mono, { bold });
+  const key = `${mono ? 1 : 0}|${bold ? 1 : 0}|${fs}|${str}`;
+  const hit = __twCache.get(key);
+  if (hit !== undefined) return hit;
+  let w;
+  const g = measureCtx();
+  if (g) {
+    g.font = `${bold ? "600 " : ""}${fs * 100}px ${mono ? "monospace" : "sans-serif"}`;
+    w = g.measureText(str).width / 100;
+  } else {
+    let n = 0;
+    for (const ch of str) n += isWideChar(ch.codePointAt(0)) ? 1 : 0.55;
+    w = n * fs * (bold ? 1.05 : 1);
+  }
+  if (__twCache.size > 4000) __twCache.clear();
+  __twCache.set(key, w);
+  return w;
+}
 /** JIS Z 8313 の文字高の標準列 (この値以外は使わない) */
 const TEXT_H_SERIES = [2.5, 3.5, 5, 7, 10, 14, 20];
 function fitTextSize(value, cellW, startSize, bold = false) {
@@ -705,8 +753,8 @@ const WIRE_STYLES = {
   solid:   { name: "実線 (配線)",                 dash: "",                     dxf: null },
   dash:    { name: "破線 (かくれ線・区画)",       dash: "3 0.75",               dxf: [3, -0.75] },
   // ISO 128-20 の点要素は線幅の 0.5 倍程度。butt では消えるので round キャップで描く
-  dashdot: { name: "一点鎖線 (中心線・基準線)",   dash: "6 0.75 0.25 0.75",    dxf: [6, -0.75, 0, -0.75], round: true },
-  dashdotdot: { name: "二点鎖線 (想像線・隣接機器)", dash: "6 0.75 0.25 0.75 0.25 0.75", dxf: [6, -0.75, 0, -0.75, 0, -0.75], round: true },
+  dashdot: { name: "一点鎖線 (中心線・基準線)",   dash: "6 0.75 0 0.75",    dxf: [6, -0.75, 0, -0.75], round: true },
+  dashdotdot: { name: "二点鎖線 (想像線・隣接機器)", dash: "6 0.75 0 0.75 0 0.75", dxf: [6, -0.75, 0, -0.75, 0, -0.75], round: true },
 };
 /** 折線の全長 (mm) */
 function polyLengthMM(pts) {
@@ -896,7 +944,7 @@ function mirrorCols(contacts) {
   let wPin = 0;
   contacts.forEach(c => {
     const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
-    if (n0 && n1) wPin = Math.max(wPin, textWidthMM(`${n0}\u00b7${n1}`, h, false));
+    if (n0 && n1) wPin = Math.max(wPin, textWidthMM(`${n0}\u00b7${n1}`, h, false, true));
   });
   const pin = 7;
   return { pin, ref: pin + Math.max(wPin + 1.2, 8) };
@@ -948,7 +996,7 @@ function mirrorTableSize(coilDev) {
   const cols = mirrorCols(shown);
   const h = TEXT_H.small * f;
   let wMax = 0;
-  shown.forEach(c => { wMax = Math.max(wMax, cols.ref * f + textWidthMM("/" + devLocation(c), h)); });
+  shown.forEach(c => { wMax = Math.max(wMax, cols.ref * f + textWidthMM("/" + devLocation(c), h, false, true)); });
   return { w: wMax, h: shown.length * 4.2 * f + 2 * f };
 }
 
@@ -969,10 +1017,10 @@ function mirrorLabelBoxes(coilDev) {
     const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
     if (n0 && n1) {
       const t = `${n0}\u00b7${n1}`;
-      out.push({ x: x + cols.pin * f, y: cy - h, w: textWidthMM(t, h), h });
+      out.push({ x: x + cols.pin * f, y: cy - h, w: textWidthMM(t, h, false, true), h });
     }
     const r = "/" + devLocation(c);
-    out.push({ x: x + cols.ref * f, y: cy - h, w: textWidthMM(r, h), h });
+    out.push({ x: x + cols.ref * f, y: cy - h, w: textWidthMM(r, h, false, true), h });
   });
   return out;
 }
@@ -1305,7 +1353,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複",
+  "線番の重複", "図番の重複",
 ];
 
 function drcSources(page, pinNet) {
@@ -1403,20 +1451,28 @@ function runDRC() {
         if (!outside(bx)) return;
         issues.push({ sev: "err", msg: `${what} が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target, loc: `${page.no}.${sheetCol(bx.x)}` });
       };
+      const blocks0 = titleBlocksRects();
+      const onBlock = bx => blocks0.find(r => bx.x < r.x + r.w && bx.x + bx.w > r.x && bx.y < r.y + r.h && bx.y + bx.h > r.y);
+      const report2 = (bx, what, target) => {
+        report(bx, what, target);
+        const hit = onBlock(bx);
+        if (hit) issues.push({ sev: "err", msg: `${what} が${hit.kind === "rev" ? "改訂履歴欄" : "表題欄"}に重なっています`, page: page.no, target, loc: `${page.no}.${sheetCol(bx.x)}` });
+      };
       page.devices.forEach(dev => {
-        deviceLabelBoxes(page, dev).forEach(o => report(o.box, `${displayTag(dev) || "機器"} の文字「${o.text}」`, dev.id));
+        deviceLabelBoxes(page, dev).forEach(o => report2(o.box, `${displayTag(dev) || "機器"} の文字「${o.text}」`, dev.id));
         const xr = deviceXrefBox(page, dev);
-        if (xr) report(xr.box, `${displayTag(dev) || "機器"} の相互参照`, dev.id);
+        if (xr) report2(xr.box, `${displayTag(dev) || "機器"} の相互参照`, dev.id);
+        mirrorLabelBoxes(dev).forEach(bx => report2(bx, `${displayTag(dev) || "コイル"} の接点ミラー`, dev.id));
       });
-      pinLabelBoxes(page).forEach(bx => report(bx, "端子番号", bx.owner));
+      pinLabelBoxes(page).forEach(bx => report2(bx, "端子番号", bx.owner));
       condWires(page).forEach(w => {
         if (!w.num || w.numShow === false) return;
         const [mx, my, hz] = wireLabelPos(w, page);
-        report(wireNumBox(w, mx, my, hz), `線番 ${w.num}`, w.id);
+        report2(wireNumBox(w, mx, my, hz), `線番 ${w.num}`, w.id);
         const sp = wireSpecBox(w, mx, my, hz);
-        if (sp) report(sp, `電線仕様「${w.spec}」`, w.id);
+        if (sp) report2(sp, `電線仕様「${w.spec}」`, w.id);
       });
-      page.texts.forEach(t => report(textBounds(t), `注記「${t.text}」`, t.id));
+      page.texts.forEach(t => report2(textBounds(t), `注記「${t.text}」`, t.id));
     }
 
     // 用紙に出る文字要素どうし・文字と図記号の重なり (検図の要)
@@ -1630,6 +1686,23 @@ function runDRC() {
       });
     }
   });
+
+  // 図番の重複 (同じ図番のページが2枚あると図面管理が破綻する)
+  {
+    const seen = new Map();
+    App.project.pages.forEach(pg => {
+      const no = pageDwgNo(pg);
+      if (!seen.has(no)) seen.set(no, []);
+      seen.get(no).push(pg);
+    });
+    seen.forEach((pgs, no) => {
+      if (pgs.length < 2) return;
+      issues.push({
+        sev: "err", msg: `図番 ${no} が ${pgs.length} ページ (${pgs.map(x => x.no).join(", ")}) で重複しています`,
+        page: pgs[0].no, target: null, loc: `${pgs[0].no}.-`,
+      });
+    });
+  }
 
   applySheet(curPage());   // 現在ページの図枠に戻す
   return issues;
