@@ -68,14 +68,14 @@ const SYMBOLS = [
   {
     id: "prox", cat: "input", letter: "B", name: "近接センサ", nameEn: "Proximity sensor",
     desc: "誘導形 3線式 (BN=+V/BK=出力/BU=0V)", typ: "E2E-X5ME1", pins: [{x:0,y:0,n:"BN"},{x:0,y:20,n:"BK"},{x:-10,y:20,n:"BU"}],
-    sim: "contact_no", momentary: false, bounds: [-20,0, 24, 20],
-    body: `<rect x="-18" y="3" width="14" height="14"/><path d="M-15.5,10 l3.5,-3.5 l3.5,3.5 l-3.5,3.5 z"/><path d="M-10,17 V20"/>` + G_NO,
+    sim: "contact_no", momentary: false, bounds: [-21,0, 25, 20],
+    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-16.5,10 l3.5,-3.5 l3.5,3.5 l-3.5,3.5 z"/><path d="M-10,17 V20"/>` + G_NO,
   },
   {
     id: "photo", cat: "input", letter: "B", name: "光電センサ", nameEn: "Photoelectric sensor",
     desc: "透過形/反射形 3線式 (BN=+V/BK=出力/BU=0V)", typ: "E3Z-D61", pins: [{x:0,y:0,n:"BN"},{x:0,y:20,n:"BK"},{x:-10,y:20,n:"BU"}],
-    sim: "contact_no", momentary: false, bounds: [-26,0, 30, 20],
-    body: `<rect x="-18" y="3" width="14" height="14"/><path d="M-24,7 l5,2 m-2.2,-1.6 l2.2,1.6 l-2.6,0.6 M-24,12 l5,1 m-2.1,-1.4 l2.1,1.4 l-2.5,0.8"/><path d="M-10,17 V20"/>` + G_NO,
+    sim: "contact_no", momentary: false, bounds: [-27,0, 31, 20],
+    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-25,7 l5,2 m-2.2,-1.6 l2.2,1.6 l-2.6,0.6 M-25,12 l5,1 m-2.1,-1.4 l2.1,1.4 l-2.5,0.8"/><path d="M-10,17 V20"/>` + G_NO,
   },
   {
     id: "press_sw", cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
@@ -143,7 +143,7 @@ const SYMBOLS = [
     id: "aux_ton_nc", cat: "logic", letter: "K", name: "限時動作b接点 (TON)", nameEn: "On-delay contact NC",
     desc: "オンディレイタイマの限時動作接点", pins: [{x:0,y:0,n:"15"},{x:0,y:20,n:"16"}],
     sim: "contact_nc", linked: true, bounds: [-12,-2, 15, 24],
-    body: G_NC + `<path d="M-6.8,7.6 A2.8,2.8 0 0 1 -1.2,7.6" />`,
+    body: G_NC + `<path d="M-6.8,11 A2.8,2.8 0 0 1 -1.2,11" />`,
   },
   {
     id: "aux_toff_no", cat: "logic", letter: "K", name: "限時復帰a接点 (TOF)", nameEn: "Off-delay contact NO",
@@ -155,7 +155,7 @@ const SYMBOLS = [
     id: "aux_toff_nc", cat: "logic", letter: "K", name: "限時復帰b接点 (TOF)", nameEn: "Off-delay contact NC",
     desc: "オフディレイタイマの限時復帰接点", pins: [{x:0,y:0,n:"15"},{x:0,y:20,n:"16"}],
     sim: "contact_nc", linked: true, bounds: [-12,-2, 15, 24],
-    body: G_NC + `<path d="M-6.8,6 A2.8,2.8 0 0 0 -1.2,6" />`,
+    body: G_NC + `<path d="M-6.8,10 A2.8,2.8 0 0 0 -1.2,10" />`,
   },
   {
     id: "safety_relay", cat: "logic", letter: "K", name: "セーフティリレー", nameEn: "Safety relay",
