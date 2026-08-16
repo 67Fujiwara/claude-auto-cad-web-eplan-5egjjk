@@ -467,9 +467,15 @@ function setupEditor() {
     overlay: svg.querySelector("#lyOverlay"),
   };
 
+  // ズーム倍率 (1ノッチあたりの%)。表示メニュー「ズーム速度…」で調節・保存
+  Editor.zoomStep = (() => {
+    const v = parseFloat(localStorage.getItem("electracad.zoomStep"));
+    return (v >= 0.04 && v <= 0.5) ? v : 0.18;
+  })();
+  Editor.wheelAcc = 0;
   svg.addEventListener("wheel", e => {
     e.preventDefault();
-    // Shift+ホイール = 横スクロール / Ctrl+ホイール = 細かいズーム / ホイール = ズーム
+    // Shift+ホイール = 横スクロール / Ctrl+ホイール = 微調整 / ホイール = 段階ズーム
     let dy = e.deltaY;
     if (e.deltaMode === 1) dy *= 16;      // 行単位デバイスをピクセル相当へ
     else if (e.deltaMode === 2) dy *= 120;
@@ -478,10 +484,15 @@ function setupEditor() {
       requestRender();
       return;
     }
-    // 移動量に比例した滑らかなズーム (ホイール1ノッチ≈9%、タッチパッドは微小刻み)
-    const speed = e.ctrlKey ? 0.0006 : 0.0011;
-    const factor = Math.max(0.75, Math.min(1.35, Math.exp(-dy * speed)));
-    zoomAt(e.clientX, e.clientY, factor);
+    // 段階式ズーム: ホイール1ノッチ = 1ステップ (タッチパッドは累積で1ステップ扱い)
+    Editor.wheelAcc += dy;
+    const NOTCH = 100;
+    let steps = 0;
+    while (Editor.wheelAcc <= -NOTCH) { Editor.wheelAcc += NOTCH; steps++; }
+    while (Editor.wheelAcc >= NOTCH) { Editor.wheelAcc -= NOTCH; steps--; }
+    if (!steps) return;
+    const step = e.ctrlKey ? Editor.zoomStep / 3 : Editor.zoomStep;
+    zoomAt(e.clientX, e.clientY, Math.pow(1 + step, steps));
   }, { passive: false });
 
   svg.addEventListener("mousedown", onMouseDown);

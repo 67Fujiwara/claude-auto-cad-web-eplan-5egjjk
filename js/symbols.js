@@ -286,10 +286,13 @@ const SYMBOLS = [
   },
   {
     id: "trafo", cat: "power", letter: "T", name: "変圧器", nameEn: "Transformer",
-    desc: "制御トランス (絶縁・2巻線)", typ: "PT-100E", horizontalPins: true,
+    desc: "制御トランス 2巻線 (JIS C 0617 巻線形)", typ: "PT-100E", horizontalPins: true,
     pins: [{x:-5,y:0,n:"1"},{x:5,y:0,n:"2"},{x:-5,y:40,n:"3"},{x:5,y:40,n:"4"}],
-    sim: "trafo", bounds: [-12,0, 24, 40],
-    body: `<path d="M-5,0 V14 M5,0 V14 M-5,40 V26 M5,40 V26"/><path d="M-5,14 A5,5 0 0 1 5,14" transform="translate(0,3)"/><path d="M-5,26 A5,5 0 0 0 5,26" transform="translate(0,-3)"/><path d="M-10,20 H10" stroke-dasharray="1.4 1.2"/>`,
+    sim: "trafo", bounds: [-10,0, 20, 40],
+    body: `<path d="M-5,0 V16 M5,0 V16 M-5,40 V24 M5,24 V40"/>` +
+      `<path d="M-5,16 A2.5,2.5 0 0 1 0,16 A2.5,2.5 0 0 1 5,16"/>` +   // 一次巻線 (半円コブ上向き)
+      `<path d="M-5,24 A2.5,2.5 0 0 0 0,24 A2.5,2.5 0 0 0 5,24"/>` +   // 二次巻線 (半円コブ下向き)
+      `<path d="M-8,20 H8"/>`,                                          // 鉄心 (実線)
   },
   {
     id: "earth", cat: "power", letter: "E", name: "接地 (PE)", nameEn: "Earth / PE",

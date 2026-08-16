@@ -378,6 +378,8 @@ const MENUS = {
     } },
     { label: "拡大", key: "+", fn: () => UI.zoomCenter(1.25) },
     { label: "縮小", key: "−", fn: () => UI.zoomCenter(0.8) },
+    { sep: true },
+    { label: "ズーム速度…", key: "", fn: () => UI.zoomSpeedDialog() },
   ],
   insert: [
     { label: "AI自動作図…", key: "F2", fn: () => UI.openWizard() },
@@ -635,6 +637,29 @@ UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false
   bk.addEventListener("mousedown", e => { if (e.target === bk) close(); });
   root.appendChild(bk);
   return { close, el: bk };
+};
+
+/** ホイール1ノッチあたりのズーム倍率をスライダで調節 */
+UI.zoomSpeedDialog = () => {
+  const cur = Math.round(Editor.zoomStep * 100);
+  const body = h(`<div style="line-height:1.9">
+    <div style="display:flex;align-items:center;gap:14px">
+      <input id="zsRange" type="range" min="5" max="40" step="1" value="${cur}" style="flex:1"/>
+      <span id="zsVal" style="font-family:var(--mono);font-size:15px;font-weight:700;min-width:52px;text-align:right">${cur}%</span>
+    </div>
+    <div style="font-size:11.5px;color:var(--text-dim);margin-top:10px">
+      ホイール1ノッチで拡大/縮小する割合です (段階式・保存されます)。<br>
+      目安: 弱 8% ・ 標準 18% ・ 強 30%。Ctrl+ホイールは常にこの 1/3 の微調整になります。
+    </div>
+  </div>`);
+  const range = body.querySelector("#zsRange");
+  const val = body.querySelector("#zsVal");
+  range.addEventListener("input", () => {
+    val.textContent = range.value + "%";
+    Editor.zoomStep = range.value / 100;
+    localStorage.setItem("electracad.zoomStep", String(Editor.zoomStep));
+  });
+  UI.openModal({ title: "ズーム速度", sub: "マウスホイールの拡大縮小の強さ", body });
 };
 
 UI.showShortcuts = () => {
