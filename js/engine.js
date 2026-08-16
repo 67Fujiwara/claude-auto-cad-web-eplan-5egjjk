@@ -186,27 +186,50 @@ function deviceLabelBoxes(page, dev) {
   const horizontal = (dev.rot || 0) % 180 !== 0;
   const H = TEXT_H.normal * f;
   const mk = (text, x, y, anchor) => ({ text, x, y, w: textWidthMM(text, H), h: H, anchor, size: H });
+  const wrap = (arr, side) => { const o = arr.map(x => ({ ...x, box: labelBox(x) })); o.side = side; return o; };
   if (horizontal) {
     const out = [];
     if (tag) out.push(mk(tag, b.x + b.w - 2.5 * f, b.y - 2 * f, "start"));
     if (desc) out.push(mk(desc, b.x + b.w / 2, b.y + b.h + 4.4 * f, "middle"));
-    return out.map(o => ({ ...o, box: labelBox(o) }));
+    return wrap(out, "top");
   }
-  const build = (side) => {
+  /* 縦向き機器: 左に置くのが基本。他の機器・端子番号・他機器のラベルに当たる場合は
+     間隔を詰めて機器側へ寄せ、それでも当たるなら反対側を試す。 */
+  const build = (side, gap) => {
     const out = [];
-    const x = side === "left" ? b.x - 2.2 * f : b.x + b.w + 2.2 * f;
+    const x = side === "left" ? b.x - gap * f : b.x + b.w + gap * f;
     const anchor = side === "left" ? "end" : "start";
     if (tag) out.push(mk(tag, x, b.y + b.h / 2 - 0.8 * f, anchor));
     if (desc) out.push(mk(desc, x, b.y + b.h / 2 + (tag ? 4 : 1) * f, anchor));
-    return out.map(o => ({ ...o, box: labelBox(o) }));
+    return wrap(out, side);
   };
-  const left = build("left");
-  // 左側が隣の機器に被るなら右へ (接点ミラーを持つコイルは右を空けておく)
-  const clash = !sym.mirror && left.some(o => page.devices.some(d2 =>
-    d2 !== dev && rectsOverlap(o.box, devBounds(d2), 0.3)));
-  const boxes = clash ? build("right") : left;
-  boxes.side = clash ? "right" : "left";
-  return boxes;
+  if (!tag && !desc) return wrap([], "left");
+  // 干渉相手: 他機器の図記号・その端子番号 (自分の端子番号は避けない)
+  const obstacles = [];
+  page.devices.forEach(d2 => {
+    if (d2 === dev) return;
+    obstacles.push(insetRect(devBounds(d2), 1.2 * f));
+    const s2 = symOf(d2.sym);
+    (s2.pins || []).forEach((p, pi) => {
+      const vis = pinLabelVisible(page, d2, pi);
+      if (!vis) return;
+      const h = TEXT_H.small * f, w2 = textWidthMM(vis.name, h);
+      const rotated = (d2.rot || 0) % 360 !== 0;
+      const isTop = !rotated && (p.y <= 0 || (s2.horizontalPins && p.y <= s2.bounds[1] + 2));
+      const ty = rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f;
+      obstacles.push({ x: vis.abs.x + 1 * f, y: ty - h, w: w2, h });
+    });
+  });
+  const free = boxes => !boxes.some(o => obstacles.some(r => rectsOverlap(o.box, r, 0.05)));
+  // 機器側へ順に寄せる → 収まらなければ反対側 (ミラー表を持つコイルは右を空ける)
+  const sides = sym.mirror ? ["left"] : ["left", "right"];
+  for (const side of sides) {
+    for (const gap of [2.2, 1.4, 0.8, 0.3]) {
+      const cand = build(side, gap);
+      if (free(cand)) return cand;
+    }
+  }
+  return build("left", 0.8);
 }
 function labelBox(o) {
   const x = o.anchor === "middle" ? o.x - o.w / 2 : o.anchor === "end" ? o.x - o.w : o.x;

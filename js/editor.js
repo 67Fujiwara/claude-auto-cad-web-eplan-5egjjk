@@ -156,7 +156,7 @@ function sheetSVG(page, opts = {}) {
       stroke="${INK}" stroke-width="${S(LINE_W.thin)}"/>
     ${cell(c1, r1, 0, "図名 (プロジェクト)", App.project.name, TEXT_H.normal, true)}
     ${cell(c2, r1, 1, "ページ名", page.name, TEXT_H.normal, true)}
-    ${cell(c3, r1, 2, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
+    ${cell(c3, r1, 2, "図面番号", page.dwgNo || meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
     ${cell(c4, r1, 3, "改訂", meta.rev || "0")}
     ${cell(c1, r2, 0, "設計 (署名)", meta.designer || "—")}
     ${cell(c2, r2, 1, "検図 (署名)", meta.checker || "—")}

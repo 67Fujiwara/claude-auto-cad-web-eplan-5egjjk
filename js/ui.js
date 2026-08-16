@@ -68,21 +68,51 @@ UI.buildPalette = (filter = "") => {
 };
 
 /* ══════════════ ページタブ ══════════════ */
+/** ページ番号を振り直し、ページ固有の図番も並び順に同期する */
+UI.renumberPages = () => {
+  const meta = projectMeta();
+  const base = (meta.dwgNo || "").trim();
+  App.project.pages.forEach((p, k) => {
+    p.no = k + 1;
+    // 図番はページ順に自動採番。書式は「接頭辞-連番」(既定 E-001)
+    if (meta.dwgNoAuto !== false) {
+      const m = /^(.*?)(\d+)\s*$/.exec(base);
+      p.dwgNo = m ? m[1] + String(parseInt(m[2], 10) + k).padStart(m[2].length, "0")
+                  : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : "E-" + String(k + 1).padStart(3, "0"));
+    }
+  });
+};
+
+/** 指定位置にページを挿入する (idx 番目の直前) */
+UI.insertPageAt = (idx, name) => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中はページを追加できません"); return; }
+  commit();
+  const pg = newPage(name || `ページ ${App.project.pages.length + 1}`, idx + 1);
+  App.project.pages.splice(idx, 0, pg);
+  UI.renumberPages();
+  App.pageIdx = idx;
+  App.selection.clear();
+  UI.refresh();
+  UI.setMsg(`${idx + 1} ページ目に挿入しました (図番を再採番しました)`);
+};
+
 UI.buildPageTabs = () => {
   const wrap = document.getElementById("pageTabs");
   wrap.innerHTML = "";
   App.project.pages.forEach((pg, i) => {
-    const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}">
+    const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}" title="${pg.dwgNo ? "図番 " + pg.dwgNo : ""}">
+      <span class="ptab-ins" title="このページの前に挿入">⊕</span>
       <span class="ptab-no">${pg.no}</span><span>${pg.name}</span>
       ${App.project.pages.length > 1 ? '<span class="ptab-close" title="ページを削除">×</span>' : ""}
     </div>`);
     el.addEventListener("click", e => {
+      if (e.target.classList.contains("ptab-ins")) { UI.insertPageAt(i); return; }
       if (e.target.classList.contains("ptab-close")) {
         if (App.sim.running) { UI.setMsg("シミュレーション中はページを削除できません"); return; }
         if (!confirm(`ページ「${pg.name}」を削除しますか？`)) return;
         commit();
         App.project.pages.splice(i, 1);
-        App.project.pages.forEach((p, k) => p.no = k + 1);
+        UI.renumberPages();
         App.pageIdx = Math.max(0, Math.min(App.pageIdx, App.project.pages.length - 1));
         App.selection.clear();
         UI.refresh();
@@ -97,7 +127,7 @@ UI.buildPageTabs = () => {
       if (e.target.classList.contains("ptab-close")) return;
       if (App.sim.running) return;
       // インラインリネーム (prompt は使わない)
-      const span = el.querySelector("span:nth-child(2)");
+      const span = el.querySelector("span:nth-child(3)");
       const inp = h(`<input value="${pg.name.replace(/"/g, "&quot;")}" style="width:${Math.max(60, pg.name.length * 13)}px;background:var(--bg);border:1px solid var(--accent);border-radius:4px;color:var(--text);font-size:12px;padding:1px 6px;outline:none"/>`);
       span.replaceWith(inp);
       inp.focus(); inp.select();
@@ -496,6 +526,7 @@ const MENUS = {
     { label: "設計ルールチェック (DRC)", key: "", fn: () => UI.runDRC() },
     { label: "部品表 (BOM)", key: "", fn: () => UI.showBOM() },
     { label: "配線番号の自動付与", key: "", fn: () => { commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (手動線番は保護)"); } },
+    { label: "線番の編集…", key: "", fn: () => UI.editWireNumbers() },
     { sep: true },
     { label: "部品表CSV を出力", key: "", fn: () => downloadFile(App.project.name + "_部品表.csv", bomCSV(), "text/csv") },
     { label: "接続リストCSV を出力", key: "", fn: () => downloadFile(App.project.name + "_接続リスト.csv", connectionCSV(), "text/csv") },
@@ -595,6 +626,7 @@ UI.addPage = () => {
   commit();
   const pg = newPage("ページ " + (App.project.pages.length + 1), App.project.pages.length + 1);
   App.project.pages.push(pg);
+  UI.renumberPages();
   App.pageIdx = App.project.pages.length - 1;
   App.selection.clear();
   UI.refresh();
@@ -727,6 +759,87 @@ UI.printAll = () => {
 };
 
 /** 全ページを DXF (AutoCAD互換) でダウンロード */
+
+/* ══════════════ 線番の編集 ══════════════ */
+/** ページ内の線番を一覧で編集する (重複は警告し、空欄は自動採番に戻す) */
+UI.editWireNumbers = () => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中は編集できません"); return; }
+  const page = curPage();
+  const { wireNet } = computeNets(page, "open");
+  // ネット単位でまとめる (同じネットの配線は同じ線番)
+  const nets = new Map();
+  condWires(page).forEach(w => {
+    const net = wireNet.get(w.id);
+    if (!net) return;
+    if (!nets.has(net)) nets.set(net, { num: w.num || "", wires: [], fixed: !!w.fixed, spec: w.spec || "" });
+    const e = nets.get(net);
+    e.wires.push(w);
+    if (w.num) e.num = w.num;
+    if (w.fixed) e.fixed = true;
+    if (w.spec) e.spec = w.spec;
+  });
+  const rows = [...nets.entries()];
+  if (!rows.length) { UI.setMsg("このページに配線がありません"); return; }
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">
+      ページ ${page.no}「${escAttr(page.name)}」の線番 ${rows.length} 本。<br>
+      手動で入力した線番は自動採番から保護されます (空欄にすると自動採番に戻ります)。
+    </div>
+    <div class="wnum-head"><span>線番</span><span>電線仕様</span><span>接続先</span></div>
+    <div id="wnRows" style="max-height:52vh;overflow:auto"></div>
+  </div>`);
+  const netLabel = (e) => {
+    const pins = [];
+    page.devices.forEach(d => devPins(d).forEach(p => {
+      if (e.wires.some(w => w.pts.some(pt => Math.abs(pt[0] - p.x) < .01 && Math.abs(pt[1] - p.y) < .01))) {
+        const nm = `${displayTag(d) || symOf(d.sym).name}:${effectivePinName(d, p.idx) || p.idx + 1}`;
+        if (!pins.includes(nm)) pins.push(nm);
+      }
+    }));
+    return pins.slice(0, 3).join(" ⇔ ") + (pins.length > 3 ? ` ほか${pins.length - 3}` : "");
+  };
+  body.querySelector("#wnRows").innerHTML = rows.map(([net, e], i) => `
+    <div class="wnum-row">
+      <input id="wn${i}" class="mono" value="${escAttr(e.num)}" placeholder="自動"/>
+      <input id="ws${i}" class="mono" value="${escAttr(e.spec)}" placeholder="例: KIV(BL)-1.25sq"/>
+      <span class="wnum-conn">${escAttr(netLabel(e)) || "—"}</span>
+    </div>`).join("");
+  const foot = h(`<div style="display:flex;gap:10px;justify-content:space-between;align-items:center;width:100%">
+    <button class="btn-solid" id="wnAuto">すべて自動採番に戻す</button>
+    <span style="flex:1"></span>
+    <button class="btn-solid" id="wnCancel">キャンセル</button>
+    <button class="btn-solid primary" id="wnOk">適用</button>
+  </div>`);
+  const m = UI.openModal({ title: "線番の編集", sub: "ページ内の線番と電線仕様をまとめて編集します", body, foot, wide: true });
+  foot.querySelector("#wnCancel").addEventListener("click", m.close);
+  foot.querySelector("#wnAuto").addEventListener("click", () => {
+    if (!confirm("このページの線番をすべて自動採番に戻しますか？")) return;
+    commit();
+    rows.forEach(([, e]) => e.wires.forEach(w => { w.num = null; w.fixed = false; w.numShow = false; }));
+    autoNumberWires();
+    m.close(); UI.refresh(false);
+    UI.setMsg("線番を自動採番に戻しました");
+  });
+  foot.querySelector("#wnOk").addEventListener("click", () => {
+    const vals = rows.map((_, i) => body.querySelector(`#wn${i}`).value.trim());
+    const dup = vals.filter((v, i) => v && vals.indexOf(v) !== i);
+    if (dup.length && !confirm(`線番 ${[...new Set(dup)].join(", ")} が重複しています。このまま適用しますか？`)) return;
+    commit();
+    rows.forEach(([, e], i) => {
+      const v = vals[i];
+      const spec = body.querySelector(`#ws${i}`).value.trim();
+      e.wires.forEach((w, k) => {
+        w.num = v || null;
+        w.fixed = !!v;                     // 手動線番は自動採番から保護
+        w.numShow = !!v && k === 0;        // ネットの代表1本にだけ表示
+        if (spec) w.spec = spec; else delete w.spec;
+      });
+    });
+    if (vals.some(v => !v)) autoNumberWires();   // 空欄は自動採番で埋める
+    m.close(); UI.refresh(false);
+    UI.setMsg("線番を更新しました");
+  });
+};
 
 /* ══════════════ DXF 取り込み ══════════════ */
 /** DXF を読み込み、図面に作図するか、シンボルとして登録する */

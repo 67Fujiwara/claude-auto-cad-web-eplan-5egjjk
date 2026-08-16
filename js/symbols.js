@@ -61,7 +61,7 @@ const SYMBOLS = [
     body: G_NO + `<path d="M-15,7 L-11,10 L-15,13"/><path d="M-11,10 H-1.8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
-    id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ", nameEn: "Limit switch",
+    id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ (LS)", nameEn: "Limit switch",
     desc: "位置スイッチ・メーク接点", jis: "07-08-01", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-11.6,-2, 13.6, 24],
     // 07-08-01: メーク接点 + 可動接点先端の直角三角形 (位置スイッチ)
@@ -180,7 +180,7 @@ const SYMBOLS = [
 
   /* ══════════ アウトプット機器 ══════════ */
   {
-    id: "lamp", cat: "output", letter: "P", name: "表示灯", nameEn: "Indicator lamp",
+    id: "lamp", cat: "output", letter: "P", name: "表示灯 (PL)", nameEn: "Indicator lamp",
     desc: "パイロットランプ X1-X2", typ: "XB4-BVB3", pins: [{x:0,y:0,n:"X1"},{x:0,y:20,n:"X2"}],
     sim: "load", bounds: [-7,0, 14, 20],
     body: `<path d="M0,0 V4.5 M0,20 V15.5"/><circle cx="0" cy="10" r="5.5"/><path d="M-3.9,6.1 L3.9,13.9 M-3.9,13.9 L3.9,6.1"/>`,
@@ -193,7 +193,7 @@ const SYMBOLS = [
     body: `<path d="M0,0 V7"/><path d="M-6,7 H6"/><path d="M-6,7 A6,6 0 0 0 6,7"/><path d="M0,13 V20"/>`,
   },
   {
-    id: "sol_valve", cat: "output", letter: "Y", name: "電磁弁", nameEn: "Solenoid valve",
+    id: "sol_valve", cat: "output", letter: "Y", name: "電磁弁 (SV)", nameEn: "Solenoid valve",
     desc: "ソレノイドバルブ", typ: "SY5120-5LZ", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
     sim: "load", bounds: [-7,0, 14, 20],
     body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-5,14 L5,6"/>`,
@@ -228,13 +228,13 @@ const SYMBOLS = [
 
   /* ══════════ 電源・保護 ══════════ */
   {
-    id: "mcb1", cat: "power", letter: "F", name: "配線用遮断器/CP 1P", nameEn: "MCCB 1-pole",
+    id: "mcb1", cat: "power", letter: "F", name: "配線用遮断器 (NFB) 1P", nameEn: "MCCB 1-pole",
     desc: "モールドケース遮断器", typ: "CP30-BA 1P 5A", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
     sim: "breaker", bounds: [-9,-2, 12, 24],
     body: G_CB,
   },
   {
-    id: "mcb3", cat: "power", letter: "F", name: "配線用遮断器 (MCCB) 3P", nameEn: "MCCB 3-pole",
+    id: "mcb3", cat: "power", letter: "F", name: "配線用遮断器 (MCCB/NFB) 3P", nameEn: "MCCB 3-pole",
     desc: "モールドケース遮断器 3極", typ: "NF63-CV 3P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "breaker3", bounds: [-8,-2, 31, 24],
@@ -287,7 +287,7 @@ const SYMBOLS = [
     body: `<path d="M-5,2 V6 M5,2 V6"/><path d="M-6.8,6 L-5,10 L-3.2,6 Z M3.2,6 L5,10 L6.8,6 Z" fill="currentColor"/>`,
   },
   {
-    id: "mcb2", cat: "power", letter: "F", name: "配線用遮断器 (MCCB) 2P", nameEn: "MCCB 2-pole",
+    id: "mcb2", cat: "power", letter: "F", name: "配線用遮断器 (MCCB/NFB) 2P", nameEn: "MCCB 2-pole",
     desc: "モールドケース遮断器 2極 (単相用)", typ: "NF32-SV 2P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "breaker2", bounds: [-8,-2, 21, 24],

@@ -9,6 +9,7 @@
 const DB_DEFAULT_PINNED = [
   "cable_core", "plug_socket", "insul_end", "prot_earth", "func_earth",
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
+  "cp1", "cp2", "ms_coil", "ms_no", "ms_nc", "connector",
 ];
 
 const DB_SYMBOLS = [
@@ -55,7 +56,7 @@ const DB_SYMBOLS = [
   },
   {
     id: "chassis_earth", db: true, group: "接地", jis: "03-02-04", cat: "db", letter: "E",
-    name: "フレーム接続 (シャーシ)", nameEn: "Frame / chassis", desc: "機器フレーム・シャーシへの接続",
+    name: "フレーム接続 (FG・シャーシ)", nameEn: "Frame / chassis", desc: "機器フレーム・シャーシへの接続",
     pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-9.5,0, 16.5, 10.5],
     body: `<path d="M0,0 V5 M-6,5 H6 M-6,5 L-8.5,8.5 M-1.5,5 L-4,8.5 M3,5 L0.5,8.5 M6,5 L3.5,8.5"/>`,
   },
@@ -175,14 +176,14 @@ const DB_SYMBOLS = [
   /* ── 開閉・保護 (JIS C 0617-7) ── */
   {
     id: "elb2", db: true, group: "開閉・保護", cat: "db", letter: "F",
-    name: "漏電遮断器 (ELB) 2P", nameEn: "Earth-leakage breaker 2P", desc: "零相変流器つき遮断器 (単相用)", typ: "NV32-SV 2P",
+    name: "漏電遮断器 (ELB/ELCB) 2P", nameEn: "Earth-leakage breaker 2P", desc: "零相変流器つき遮断器 (単相用)", typ: "NV32-SV 2P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "breaker2", bounds: [-9,-2, 24, 26],
     body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-2.4,9 L7.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><path d="M5,19.8 A8,2.3 0 1 0 5,15.2 A8,2.3 0 1 0 5,19.8"/>`,
   },
   {
     id: "elb3", db: true, group: "開閉・保護", cat: "db", letter: "F",
-    name: "漏電遮断器 (ELB) 3P", nameEn: "Earth-leakage breaker 3P", desc: "零相変流器つき遮断器 (三相用)", typ: "NV63-CV 3P",
+    name: "漏電遮断器 (ELB/ELCB) 3P", nameEn: "Earth-leakage breaker 3P", desc: "零相変流器つき遮断器 (三相用)", typ: "NV63-CV 3P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "breaker3", bounds: [-9,-2, 34, 26],
     body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(20,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-2.4,9 L17.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><path d="M10,19.8 A13,2.3 0 1 0 10,15.2 A13,2.3 0 1 0 10,19.8"/>`,
@@ -286,6 +287,69 @@ const DB_SYMBOLS = [
     pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"},{x:10,y:0,n:"23"},{x:10,y:20,n:"24"}],
     sim: "contact2_no", bounds: [-18,-2, 30, 24],
     body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><path d="M-2.4,9 L7.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><path d="M-15,6 L-11,9 L-15,12"/><path d="M-11,9 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+  },
+
+  /* ── シーケンス制御でよく使う記号 (提供資料「シーケンス制御回路でよく使う記号」より) ── */
+  {
+    id: "cp1", db: true, group: "よく使う記号", cat: "db", letter: "F",
+    name: "サーキットプロテクタ (CP) 1P", nameEn: "Circuit protector 1P",
+    desc: "制御回路の小容量保護器。過電流で開路 (熱動+電磁)", typ: "CP30-BA 1P 10A",
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "breaker", bounds: [-9,-2, 12, 24],
+    body: G_NO + `<path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/><path d="M0,15.5 H-3 V19 H0"/>`,
+  },
+  {
+    id: "cp2", db: true, group: "よく使う記号", cat: "db", letter: "F",
+    name: "サーキットプロテクタ (CP) 2P", nameEn: "Circuit protector 2P",
+    desc: "単相制御回路の保護器 (2極連動)", typ: "CP30-BA 2P 10A",
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
+    sim: "breaker2", bounds: [-9,-2, 22, 24],
+    body: `<g>${G_NO}<path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/><path d="M0,15.5 H-3 V19 H0"/></g>` +
+      `<g transform="translate(10,0)">${G_NO}<path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/><path d="M0,15.5 H-3 V19 H0"/></g>` +
+      `<path d="M-2.4,9 L7.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+  },
+  {
+    id: "ms_coil", db: true, group: "よく使う記号", cat: "db", letter: "Q",
+    name: "電磁開閉器 (MS) コイル", nameEn: "Magnetic starter coil",
+    desc: "電磁接触器+サーマルリレー一体の操作コイル", typ: "MSO-T21 DC24V",
+    pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}], sim: "coil", mirror: true, maxContacts: 5,
+    bounds: [-7,0, 18, 20],
+    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/>` +
+      `<path d="M7,6 V8 H10 V12 H7 V14"/>`,   // 熱動素子 (サーマル一体を示す)
+  },
+  {
+    id: "ms_no", db: true, group: "よく使う記号", cat: "db", letter: "Q",
+    name: "電磁開閉器 (MS) A接点", nameEn: "Magnetic starter NO contact",
+    desc: "電磁開閉器の補助メーク接点。コイルにリンクして使用", typ: "",
+    pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}], sim: "contact_no", linked: true, bounds: [-8,-2, 11, 24],
+    body: G_NO,
+  },
+  {
+    id: "ms_nc", db: true, group: "よく使う記号", cat: "db", letter: "Q",
+    name: "電磁開閉器 (MS) B接点", nameEn: "Magnetic starter NC contact",
+    desc: "電磁開閉器の補助ブレーク接点。コイルにリンクして使用", typ: "",
+    pins: [{x:0,y:0,n:"21"},{x:0,y:20,n:"22"}], sim: "contact_nc", linked: true, bounds: [-8,-2, 11, 24],
+    body: G_NC,
+  },
+  {
+    id: "cont_no_main", db: true, group: "よく使う記号", jis: "07-13-02", cat: "db", letter: "Q",
+    name: "電磁接触器 主メーク接点 1極", nameEn: "Contactor main contact 1P",
+    desc: "固定接点に接触器機能の半円を付けたメーク接点", typ: "",
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "contact_no", linked: true, bounds: [-8,-2, 11, 24],
+    body: G_NO_CONT,
+  },
+  {
+    id: "cont_nc_main", db: true, group: "よく使う記号", cat: "db", letter: "Q",
+    name: "電磁接触器 主ブレーク接点 1極", nameEn: "Contactor main NC contact 1P",
+    desc: "接触器機能つきブレーク接点", typ: "",
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "contact_nc", linked: true, bounds: [-8,-2, 11, 24],
+    body: G_NC + `<path d="M-1.8,3.6 A1.8,1.8 0 0 0 1.8,3.6"/>`,
+  },
+  {
+    id: "connector", db: true, group: "よく使う記号", jis: "03-03-05", cat: "db", letter: "X",
+    name: "コネクタ (接続器)", nameEn: "Connector",
+    desc: "着脱可能な接続。オス (凸) とメス (凹) の対で表す",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "passthru", bounds: [-6,0, 12, 20],
+    body: `<path d="M0,0 V7"/><path d="M-3.5,7 L0,10.5 L3.5,7"/><path d="M-3.5,11 L0,14.5 L3.5,11"/><path d="M0,14.5 V20"/>`,
   },
 ];
 
