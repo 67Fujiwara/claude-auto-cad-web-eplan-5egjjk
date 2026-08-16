@@ -102,11 +102,18 @@ UI.buildPageTabs = () => {
   const wrap = document.getElementById("pageTabs");
   wrap.innerHTML = "";
   App.project.pages.forEach((pg, i) => {
-    const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}" title="${pg.dwgNo ? "図番 " + pg.dwgNo : ""}">
-      <span class="ptab-ins" title="このページの前に挿入">⊕</span>
+    const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}" title="図番 ${escAttr(pageDwgNo(pg))}">
+      <span class="ptab-ins" role="button" tabindex="0" aria-label="${escAttr(pg.name)} の前にページを挿入" title="このページの前に挿入">⊕</span>
       <span class="ptab-no">${pg.no}</span><span>${pg.name}</span>
-      ${App.project.pages.length > 1 ? '<span class="ptab-close" title="ページを削除">×</span>' : ""}
+      ${App.project.pages.length > 1 ? `<span class="ptab-close" role="button" tabindex="0" aria-label="${escAttr(pg.name)} を削除" title="ページを削除">×</span>` : ""}
     </div>`);
+    // ⊕ / × はキーボード (Enter / Space) でも操作できるようにする
+    el.querySelectorAll(".ptab-ins, .ptab-close").forEach(btn => {
+      btn.addEventListener("keydown", e => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault(); e.stopPropagation(); btn.click();
+      });
+    });
     el.addEventListener("click", e => {
       if (e.target.classList.contains("ptab-ins")) { UI.insertPageAt(i); return; }
       if (e.target.classList.contains("ptab-close")) {
@@ -775,22 +782,32 @@ UI.editWireNumbers = () => {
   condWires(page).forEach(w => {
     const net = wireNet.get(w.id);
     if (!net) return;
-    if (!nets.has(net)) nets.set(net, { num: w.num || "", wires: [], fixed: !!w.fixed, spec: w.spec || "" });
+    if (!nets.has(net)) nets.set(net, { num: w.num || "", wires: [], fixed: !!w.fixed, spec: w.spec || "", specs: new Set(), x: w.pts[0][0], y: w.pts[0][1] });
     const e = nets.get(net);
     e.wires.push(w);
     if (w.num) e.num = w.num;
     if (w.fixed) e.fixed = true;
     if (w.spec) e.spec = w.spec;
+    e.specs.add(w.spec || "");
+    if (w.pts[0][1] < e.y || (w.pts[0][1] === e.y && w.pts[0][0] < e.x)) { e.x = w.pts[0][0]; e.y = w.pts[0][1]; }
   });
   const rows = [...nets.entries()];
   if (!rows.length) { UI.setMsg("このページに配線がありません"); return; }
+  // 他ページで使われている線番 (重複を入力段階で気づけるように)
+  const otherNums = new Set();
+  App.project.pages.forEach(pg => {
+    if (pg === page) return;
+    condWires(pg).forEach(w => { if (w.num) otherNums.add(String(w.num)); });
+  });
+  const otherPagesNote = otherNums.size ? ` / 他ページで使用中の線番 ${otherNums.size} 件` : "";
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">
-      ページ ${page.no}「${escAttr(page.name)}」の線番 ${rows.length} 本。<br>
+      ページ ${page.no}「${escAttr(page.name)}」の線番 ${rows.length} 本${otherPagesNote}。<br>
       「手動」に✓の付いた線番だけが自動採番から保護されます。<br>
-      線番を書き換えると自動で✓が付き、空欄にすると自動採番に戻ります。
+      線番を書き換えると自動で✓が付き、空欄にすると自動採番に戻ります。<br>
+      電線仕様は書き換えた行だけをネット全体に適用します (無変更の行はワイヤ個別の仕様を残します)。
     </div>
-    <div class="wnum-head"><span>線番</span><span>手動</span><span>電線仕様</span><span>接続先</span></div>
+    <div class="wnum-head"><span>線番</span><span>手動</span><span>位置</span><span>電線仕様</span><span>接続先</span></div>
     <div id="wnRows" style="max-height:52vh;overflow:auto"></div>
   </div>`);
   const netLabel = (e) => {
@@ -803,19 +820,24 @@ UI.editWireNumbers = () => {
     }));
     return pins.slice(0, 3).join(" ⇔ ") + (pins.length > 3 ? ` ほか${pins.length - 3}` : "");
   };
-  rows.forEach(([, e]) => { e.num0 = e.num; });   // 表示時の値 (自動採番値) を控えておく
+  rows.forEach(([, e]) => { e.num0 = e.num; e.spec0 = e.spec; });   // 表示時の値を控えておく
   body.querySelector("#wnRows").innerHTML = rows.map(([net, e], i) => `
     <div class="wnum-row">
       <input id="wn${i}" class="mono" value="${escAttr(e.num)}" placeholder="自動"/>
       <label class="chk wnum-fix"><input type="checkbox" id="wf${i}" ${e.fixed ? "checked" : ""}/><span></span></label>
-      <input id="ws${i}" class="mono" value="${escAttr(e.spec)}" placeholder="例: KIV(BL)-1.25sq"/>
+      <span class="wnum-loc mono">${page.no}.${sheetCol(e.x)}${sheetRow(e.y)}</span>
+      <input id="ws${i}" class="mono" value="${escAttr(e.spec)}" placeholder="${e.specs.size > 1 ? "(ワイヤごとに異なる)" : "例: KIV(BL)-1.25sq"}"/>
       <span class="wnum-conn">${escAttr(netLabel(e)) || "—"}</span>
     </div>`).join("");
-  // 線番を書き換えたら自動的に「手動」扱いにする (無変更の行は自動のまま)
+  // 線番を書き換えたら自動的に「手動」扱いにする (無変更の行は自動のまま)。
+  // 他ページで使用中の線番を入力したらその場で知らせる
   rows.forEach(([, e], i) => {
-    body.querySelector(`#wn${i}`).addEventListener("input", ev => {
+    const inp = body.querySelector(`#wn${i}`);
+    inp.addEventListener("input", ev => {
       const v = ev.target.value.trim();
       body.querySelector(`#wf${i}`).checked = !!v && (v !== e.num0 || e.fixed);
+      inp.classList.toggle("dupe", !!v && otherNums.has(v) && v !== e.num0);
+      inp.title = inp.classList.contains("dupe") ? `線番 ${v} は他のページでも使われています` : "";
     });
   });
   const foot = h(`<div style="display:flex;gap:10px;justify-content:space-between;align-items:center;width:100%">
@@ -845,11 +867,13 @@ UI.editWireNumbers = () => {
     rows.forEach(([, e], i) => {
       const v = vals[i], fixed = fixes[i];
       const spec = body.querySelector(`#ws${i}`).value.trim();
+      const specChanged = spec !== (e.spec0 || "");
       e.wires.forEach(w => {
         w.num = fixed ? v : null;          // 自動の行は採番しなおす
         w.fixed = fixed;                   // 手動線番だけを自動採番から保護
         w.numShow = false;                 // 表示位置は autoNumberWires が最長区間で決める
-        if (spec) w.spec = spec; else delete w.spec;
+        // 電線仕様は書き換えた行だけネット全体へ。無変更ならワイヤ個別の仕様を保つ
+        if (specChanged) { if (spec) w.spec = spec; else delete w.spec; }
       });
     });
     autoNumberWires();   // 自動の行を採番し、ネットごとの表示位置を決める
