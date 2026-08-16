@@ -119,7 +119,9 @@ function aiGenerate(sel) {
     return null;
   }
   function driveContactFor(coilDev) {
-    return (coilDev.sym === "timer_on" || coilDev.sym === "timer_off") ? "aux_ton_no" : "aux_no";
+    if (coilDev.sym === "timer_on") return "aux_ton_no";   // 限時動作 (TON)
+    if (coilDev.sym === "timer_off") return "aux_toff_no"; // 限時復帰 (TOF) — 記号を使い分ける
+    return "aux_no";
   }
 
   /* ── 制御回路シート管理 (図枠に収まらなければ自動分割) ── */
@@ -277,9 +279,18 @@ function aiGenerate(sel) {
     addWire(page, [[x, ctrlRailY], [x, firstY]]);
 
     let rightMost = 6;
+    /** 3線式センサ (BUピン持ち) は 0V を自動配線する */
+    const wireSensorBU = (d) => {
+      const sym3 = SYMBOLS_BY_ID[d.sym];
+      const buIdx = sym3.pins.findIndex(p => p.n === "BU");
+      if (buIdx < 0) return;
+      const bu = devPins(d)[buIdx];
+      addWire(page, [[bu.x, bu.y], [bu.x, L.botRailY]]);
+    };
     els.forEach((el, i) => {
       const y = slotY(i);
-      addDevice(page, el.id, x, y, { tag: el.tag, linkTo: el.linkTo || null, desc: el.desc || "" });
+      const d = addDevice(page, el.id, x, y, { tag: el.tag, linkTo: el.linkTo || null, desc: el.desc || "" });
+      wireSensorBU(d);
       if (pitch > 20) addWire(page, [[x, y + 20], [x, y + pitch]]);
     });
     if (startGroup.length) {
@@ -293,7 +304,8 @@ function aiGenerate(sel) {
           addWire(page, [[x + off, gy + 20], [prevOff === 0 ? x : x + prevOff, gy + 20]]);
           prevOff = off;
         }
-        addDevice(page, el.id, x + off, gy, { tag: el.tag, linkTo: el.linkTo || null, desc: el.desc || "" });
+        const gd = addDevice(page, el.id, x + off, gy, { tag: el.tag, linkTo: el.linkTo || null, desc: el.desc || "" });
+        wireSensorBU(gd);
         prevRight = symExtents(el.id).right;
         rightMost = Math.max(rightMost, off + prevRight);
       });

@@ -70,7 +70,7 @@ function renderAll() {
   const { tx, ty, s } = Editor.view;
   const world = svg.querySelector("#world");
   world.setAttribute("transform", `translate(${tx},${ty}) scale(${s})`);
-  Editor.layers.sheet.innerHTML = sheetSVG(page);
+  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page);
   Editor.layers.wires.innerHTML = wiresSVG(page);
   Editor.layers.devices.innerHTML = devicesSVG(page);
   Editor.layers.texts.innerHTML = textsSVG(page);
@@ -143,6 +143,20 @@ function sheetSVG(page) {
   return out;
 }
 
+/* ── 破線枠 (盤外エリア / 機器グループ) ── */
+function zonesSVG(page) {
+  let out = "";
+  pageZones(page).forEach(z => {
+    const selected = App.selection.has(z.id);
+    out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="2" fill="none"
+      stroke="${selected ? SEL : "#5a6b85"}" stroke-width="${selected ? 0.7 : 0.45}" stroke-dasharray="4 2.4"/>`;
+    if (z.label) {
+      out += `<text x="${z.x + 2.5}" y="${z.y - 1.8}" font-size="3.6" fill="#5a6b85" font-family="sans-serif">${escXML(z.label)}</text>`;
+    }
+  });
+  return out;
+}
+
 /* ── ワイヤ ── */
 function wiresSVG(page) {
   let out = "";
@@ -166,6 +180,12 @@ function wiresSVG(page) {
       // 縦区間は配線から法線方向 (左) にオフセットして重なりを防ぐ
       const lx = horiz ? mx : mx - 0.6, ly = horiz ? my : my;
       out += `<text x="${lx}" y="${ly}" font-size="3" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+    }
+    // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
+    if (w.spec) {
+      const [mx, my, horiz] = wireLabelPos(w);
+      const sx = horiz ? mx : mx + 3.4, sy = horiz ? my + 4.6 : my;
+      out += `<text x="${sx}" y="${sy}" font-size="2.7" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
   });
   // ジャンクションドット
@@ -211,9 +231,11 @@ function devicesSVG(page) {
     }
     out += extra;
     out += symBodySVG(sym, { strokeWidth: 1.15 * 0.42 }); // 画面上で約0.5mm相当
+    out += `</g>`;
     // 端子番号 (13/14, A1/A2, X1/X2 …) — EPLAN同様ピン脇に表示。
     // 連動接点は同一コイル内の順位で 13/14 → 23/24 と自動採番。
     // 隣接ワイヤの線番と同名 (主回路の U1 等) なら二重表示を抑制。
+    // 回転グループの外で描くため、機器を回してもピン番号は水平を保つ。
     sym.pins.forEach((p, pi) => {
       if (!p.n || dev.sym === "terminal") return;
       const name = effectivePinName(dev, pi);
@@ -222,10 +244,11 @@ function devicesSVG(page) {
       const dupWire = page.wires.some(wr => wr.num === name &&
         wr.pts.some(pt => Math.abs(pt[0] - abs.x) < .01 && Math.abs(pt[1] - abs.y) < .01));
       if (dupWire) return;
-      const isTop = p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2);
-      out += `<text x="${p.x + 1}" y="${p.y + (isTop ? 3.4 : -1.6)}" font-size="2.5" fill="#8a93a6" stroke="none" font-family="monospace">${escXML(name)}</text>`;
+      const rotated = (dev.rot || 0) % 360 !== 0;
+      const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
+      const tx = abs.x + 1, ty = rotated ? abs.y - 1.6 : abs.y + (isTop ? 3.4 : -1.6);
+      out += `<text x="${tx}" y="${ty}" font-size="2.5" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
-    out += `</g>`;
     // タグ・機能テキスト (回転に追従させず水平表示)
     out += devLabelsSVG(dev, sym);
     // コイルの接点ミラー
@@ -421,6 +444,16 @@ function hitTest(wx, wy) {
     const w = page.wires[i];
     for (let j = 0; j < w.pts.length - 1; j++) {
       if (distToSeg(wx, wy, w.pts[j], w.pts[j + 1]) < 1.6) return { type: "wire", obj: w };
+    }
+  }
+  // 破線枠 (枠線の近傍のみ。内側は空クリック扱いにして中の機器を選べるように)
+  const zs = pageZones(page);
+  for (let i = zs.length - 1; i >= 0; i--) {
+    const z = zs[i];
+    const near = (a, b) => distToSeg(wx, wy, a, b) < 2;
+    if (near([z.x, z.y], [z.x + z.w, z.y]) || near([z.x + z.w, z.y], [z.x + z.w, z.y + z.h]) ||
+        near([z.x + z.w, z.y + z.h], [z.x, z.y + z.h]) || near([z.x, z.y + z.h], [z.x, z.y])) {
+      return { type: "zone", obj: z };
     }
   }
   return null;
@@ -641,6 +674,7 @@ function buildMoveAttachment() {
     wireIds: selWires.map(w => ({ id: w.id, pts0: deepCopy(w.pts) })),
     endpoints: map,
     textIds: page.texts.filter(t => App.selection.has(t.id)).map(t => ({ id: t.id, x0: t.x, y0: t.y })),
+    zoneIds: pageZones(page).filter(z => App.selection.has(z.id)).map(z => ({ id: z.id, x0: z.x, y0: z.y })),
   };
 }
 
@@ -714,6 +748,10 @@ function applyMove(attach, dx, dy) {
   attach.textIds.forEach(({ id, x0, y0 }) => {
     const t = page.texts.find(t => t.id === id);
     if (t) { t.x = x0 + dx; t.y = y0 + dy; }
+  });
+  (attach.zoneIds || []).forEach(({ id, x0, y0 }) => {
+    const z = pageZones(page).find(z => z.id === id);
+    if (z) { z.x = x0 + dx; z.y = y0 + dy; }
   });
   attach.wireIds.forEach(({ id, pts0 }) => {
     const wr = page.wires.find(w => w.id === id);
@@ -808,7 +846,13 @@ function onDblClick(e) {
   const hit = hitTest(w.x, w.y);
   if (hit && hit.type === "text") {
     UI.openTextInput(e.clientX, e.clientY, hit.obj.x, hit.obj.y, hit.obj);
-  } else if (hit && hit.type === "device") {
+  } else if (hit && hit.type === "wire") {
+    // 配線ダブルクリック = 線番のインライン編集
+    App.selection.clear();
+    App.selection.add(hit.obj.id);
+    UI.openWireNumInput(e.clientX, e.clientY, hit.obj);
+    requestRender();
+  } else if (hit && hit.type === "device" || hit && hit.type === "zone") {
     App.selection.clear();
     App.selection.add(hit.obj.id);
     UI.showProps(true);
@@ -842,6 +886,8 @@ function placeGhost() {
   if (!g) return;
   commit();
   const dev = addDevice(curPage(), g.symId, g.x, g.y, { rot: g.rot });
+  // 既存配線の上に置いた場合は配線を自動分割して割り込む (線の重なりを防ぐ)
+  spliceDeviceIntoWires(curPage(), dev);
   App.selection.clear();
   App.selection.add(dev.id);
   UI.setMsg(`${SYMBOLS_BY_ID[g.symId].name} ${dev.tag || ""} を配置 — 続けてクリックで連続配置、Escで終了`);
@@ -859,6 +905,7 @@ function deleteSelection() {
   page.devices = page.devices.filter(d => !App.selection.has(d.id));
   page.wires = page.wires.filter(w => !App.selection.has(w.id));
   page.texts = page.texts.filter(t => !App.selection.has(t.id));
+  page.zones = pageZones(page).filter(z => !App.selection.has(z.id));
   // リンク切れ解消
   App.project.pages.forEach(pg => pg.devices.forEach(d => {
     if (d.linkTo && !findDevice(d.linkTo)) d.linkTo = null;
@@ -1104,6 +1151,6 @@ function updateStatusCount() {
 function exportSheetSVG(page = null) {
   page = page || curPage();
   const body =
-    `<g>${sheetSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
+    `<g>${sheetSVG(page)}</g><g>${zonesSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 ${SHEET.w + 10} ${SHEET.h + 10}" font-family="sans-serif">${body}</svg>`;
 }

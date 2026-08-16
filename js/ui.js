@@ -30,9 +30,12 @@ UI.buildPalette = (filter = "") => {
   const tree = document.getElementById("symTree");
   tree.innerHTML = "";
   const f = filter.trim().toLowerCase();
+  const pinned = new Set(dbPinnedList());
   Object.entries(SYM_CATS).forEach(([catId, cat]) => {
-    const syms = SYMBOLS.filter(s => s.cat === catId &&
-      (!f || s.name.toLowerCase().includes(f) || s.nameEn.toLowerCase().includes(f) || (s.desc || "").toLowerCase().includes(f)));
+    // "データベース" 分類は DB からパレットに追加されたものだけを出す
+    const source = catId === "db" ? DB_SYMBOLS.filter(s => pinned.has(s.id)) : SYMBOLS.filter(s => s.cat === catId);
+    const syms = source.filter(s =>
+      (!f || s.name.toLowerCase().includes(f) || s.nameEn.toLowerCase().includes(f) || (s.desc || "").toLowerCase().includes(f) || (s.jis || "").includes(f)));
     if (!syms.length) return;
     const el = h(`<div class="sym-cat ${f || catId !== "misc" ? "open" : ""}">
       <div class="sym-cat-head">
@@ -184,11 +187,12 @@ UI.showProps = (focusTag = false) => {
       el.addEventListener("click", () => UI.jumpToDevice(el.dataset.target));
     });
   } else if (selWires.length === 1 && selDevs.length === 0 && selTexts.length === 0) {
-    // 配線単体: 線番編集 (複数選択パネルより先に判定すること)
+    // 配線単体: 線番 + 電線仕様 (複数選択パネルより先に判定すること)
     const w = selWires[0];
     pane.innerHTML = `
-      <div class="prop-head"><div class="prop-head-txt"><div class="t1">配線</div><div class="t2">${w.pts.length - 1} セグメント</div></div></div>
-      <div class="prop-row"><label>配線番号 ${w.fixed ? "(手動・自動採番から保護)" : ""}</label><input id="pNum" class="mono" value="${w.num || ""}"/></div>`;
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">配線</div><div class="t2">${w.pts.length - 1} セグメント — ダブルクリックでも線番編集可</div></div></div>
+      <div class="prop-row"><label>配線番号 ${w.fixed ? "(手動・自動採番から保護)" : ""}</label><input id="pNum" class="mono" value="${w.num || ""}"/></div>
+      <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`;
     pane.querySelector("#pNum").addEventListener("change", e => {
       commit();
       const v = e.target.value.trim();
@@ -197,6 +201,32 @@ UI.showProps = (focusTag = false) => {
       w.numShow = !!v;
       UI.refresh(false);
     });
+    pane.querySelector("#pSpec").addEventListener("change", e => {
+      commit();
+      w.spec = e.target.value.trim() || undefined;
+      UI.refresh(false);
+    });
+  } else if (App.selection.size === 1 && pageZones(page).some(z => App.selection.has(z.id))) {
+    // 破線枠 (盤外エリア / 機器グループ)
+    const z = pageZones(page).find(z => App.selection.has(z.id));
+    pane.innerHTML = `
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">破線枠</div><div class="t2">盤外エリア / 機器グループの囲み</div></div></div>
+      <div class="prop-row"><label>ラベル</label><input id="zLabel" value="${(z.label || "").replace(/"/g, "&quot;")}" placeholder="例: 盤外 / TR1 ターミナルリレー"/></div>
+      <div class="prop-grid2">
+        <div class="prop-row"><label>X (mm)</label><input id="zX" class="mono" type="number" step="5" value="${z.x}"/></div>
+        <div class="prop-row"><label>Y (mm)</label><input id="zY" class="mono" type="number" step="5" value="${z.y}"/></div>
+        <div class="prop-row"><label>幅 (mm)</label><input id="zW" class="mono" type="number" step="5" value="${z.w}"/></div>
+        <div class="prop-row"><label>高さ (mm)</label><input id="zH" class="mono" type="number" step="5" value="${z.h}"/></div>
+      </div>`;
+    const zbind = (id, fn) => pane.querySelector(id).addEventListener("change", e => {
+      commit(); fn(e.target.value); UI.refresh(false);
+    });
+    zbind("#zLabel", v => z.label = v.trim());
+    const num = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : snap(n); };
+    zbind("#zX", v => z.x = num(v, z.x));
+    zbind("#zY", v => z.y = num(v, z.y));
+    zbind("#zW", v => z.w = Math.max(20, num(v, z.w)));
+    zbind("#zH", v => z.h = Math.max(20, num(v, z.h)));
   } else if (selTexts.length === 1 && selDevs.length === 0 && selWires.length === 0) {
     // テキスト単体: 内容とサイズ
     const t = selTexts[0];
@@ -360,6 +390,8 @@ const MENUS = {
     { label: "印刷 (現在ページ)…", key: "Ctrl+P", fn: () => UI.print() },
   ],
   edit: [
+    { label: "シンボルデータベース…", key: "", fn: () => UI.openSymDB() },
+    { sep: true },
     { label: "元に戻す", key: "Ctrl+Z", fn: () => { if (undo()) UI.refresh(); } },
     { label: "やり直し", key: "Ctrl+Y", fn: () => { if (redo()) UI.refresh(); } },
     { sep: true },
@@ -386,6 +418,7 @@ const MENUS = {
     { sep: true },
     { label: "ページを追加", key: "", fn: () => UI.addPage() },
     { label: "テキスト", key: "T", fn: () => UI.setTool("text") },
+    { label: "破線枠 (盤外/グループ)", key: "", fn: () => UI.insertZone() },
   ],
   project: [
     { label: "設計ルールチェック (DRC)", key: "", fn: () => UI.runDRC() },
@@ -637,6 +670,107 @@ UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false
   bk.addEventListener("mousedown", e => { if (e.target === bk) close(); });
   root.appendChild(bk);
   return { close, el: bk };
+};
+
+/** 配線の線番インライン編集 (ダブルクリックから) */
+UI.openWireNumInput = (clientX, clientY, wire) => {
+  if (App.sim.running) return;
+  const root = document.getElementById("overlay-root");
+  const inp = h(`<input style="position:fixed;left:${clientX}px;top:${clientY - 14}px;z-index:300;
+    background:var(--panel-2);border:1px solid var(--accent);border-radius:6px;color:var(--text);
+    font-size:13px;padding:5px 9px;outline:none;width:110px;font-family:var(--mono)" placeholder="線番"/>`);
+  inp.value = wire.num || "";
+  root.appendChild(inp);
+  requestAnimationFrame(() => { inp.focus(); inp.select(); });
+  let closed = false;
+  const done = (save) => {
+    if (closed) return;
+    closed = true;
+    const v = inp.value.trim();
+    inp.remove();
+    if (save && v !== (wire.num || "")) {
+      commit();
+      wire.num = v || null;
+      wire.fixed = !!v;
+      wire.numShow = !!v;
+      UI.refresh(false);
+      UI.setMsg(v ? `線番を ${v} に変更しました (自動採番から保護)` : "線番を削除しました");
+    }
+  };
+  inp.addEventListener("keydown", e => {
+    if (e.key === "Enter") done(true);
+    if (e.key === "Escape") done(false);
+    e.stopPropagation();
+  });
+  inp.addEventListener("blur", () => done(true));
+};
+
+/** 破線枠 (盤外エリア / 機器グループ) を挿入 */
+UI.insertZone = () => {
+  if (App.sim.running) return;
+  commit();
+  const z = { id: uid("z"), x: 150, y: 100, w: 90, h: 70, label: "盤外" };
+  pageZones(curPage()).push(z);
+  App.selection.clear();
+  App.selection.add(z.id);
+  UI.showProps();
+  requestRender();
+  UI.setMsg("破線枠を挿入しました — 枠線をドラッグで移動、プロパティでラベル/サイズ変更 (例: 盤外、ターミナルリレーのグループ)");
+};
+
+/* ══════════════ シンボルデータベース ══════════════ */
+UI.openSymDB = () => {
+  let pinned = new Set(dbPinnedList());
+  let query = "", group = "";
+  const groups = [...new Set(DB_SYMBOLS.map(s => s.group))];
+  const body = h(`<div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+      <div class="side-search" style="margin:0;flex:1;min-width:200px">
+        <svg viewBox="0 0 16 16" width="13" height="13"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="dbSearch" placeholder="名称・図記号番号で検索…"/>
+      </div>
+      <div id="dbGroups" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+    </div>
+    <div id="dbGrid" class="wiz-cards" style="grid-template-columns:repeat(auto-fill,minmax(168px,1fr))"></div>
+  </div>`);
+
+  function renderGroups() {
+    const gb = body.querySelector("#dbGroups");
+    gb.innerHTML = [""].concat(groups).map(g =>
+      `<button class="btn-solid" data-g="${g}" style="flex:0 0 auto;padding:5px 11px;font-size:11.5px;${g === group ? "background:var(--accent-dim);border-color:var(--accent);color:var(--accent-2)" : ""}">${g || "すべて"}</button>`).join("");
+    gb.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { group = b.dataset.g; renderGroups(); renderGrid(); }));
+  }
+  function renderGrid() {
+    const grid = body.querySelector("#dbGrid");
+    const q = query.toLowerCase();
+    const list = DB_SYMBOLS.filter(s =>
+      (!group || s.group === group) &&
+      (!q || s.name.toLowerCase().includes(q) || (s.jis || "").includes(q) || s.nameEn.toLowerCase().includes(q)));
+    grid.innerHTML = list.map(s => `
+      <div class="wiz-card ${pinned.has(s.id) ? "sel" : ""}" data-id="${s.id}" style="cursor:default">
+        <div class="wc-thumb">${symThumbSVG(s, 46)}</div>
+        <div class="wc-name">${s.name}</div>
+        <div class="wc-desc">${s.jis ? `JIS C 0617 ${s.jis}` : s.group}</div>
+        <button class="btn-solid ${pinned.has(s.id) ? "" : "primary"}" data-pin="${s.id}"
+          style="flex:0 0 auto;padding:4px 10px;font-size:11px;margin-top:4px">
+          ${pinned.has(s.id) ? "✓ パレットから外す" : "パレットに追加"}</button>
+      </div>`).join("");
+    grid.querySelectorAll("[data-pin]").forEach(b => b.addEventListener("click", () => {
+      const id = b.dataset.pin;
+      if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
+      dbSetPinned([...pinned]);
+      UI.buildPalette(document.getElementById("symSearch").value);
+      renderGrid();
+    }));
+  }
+  body.querySelector("#dbSearch").addEventListener("input", e => { query = e.target.value; renderGrid(); });
+  renderGroups();
+  renderGrid();
+  UI.openModal({
+    title: "シンボルデータベース",
+    sub: `JIS C 0617 / IEC 60617 の規格図記号 ${DB_SYMBOLS.length} 種 — 「パレットに追加」で左のライブラリにいつでも引き出せます`,
+    body, wide: true,
+  });
 };
 
 /** ホイール1ノッチあたりのズーム倍率をスライダで調節 */

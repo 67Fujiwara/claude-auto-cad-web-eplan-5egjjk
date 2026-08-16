@@ -33,7 +33,12 @@ function newProject(name = "無題プロジェクト") {
   };
 }
 function newPage(name, no) {
-  return { id: uid("p"), no, name, devices: [], wires: [], texts: [] };
+  return { id: uid("p"), no, name, devices: [], wires: [], texts: [], zones: [] };
+}
+/** 旧データ互換: zones が無いページに追加 */
+function pageZones(page) {
+  if (!page.zones) page.zones = [];
+  return page.zones;
 }
 function curPage() { return App.project.pages[App.pageIdx]; }
 
@@ -124,6 +129,37 @@ function addWire(page, pts, opts = {}) {
   if (wire.pts.length < 2) return null;
   page.wires.push(wire);
   return wire;
+}
+
+/** 配線上へのシンボル後付け: ピンが載った配線をピン位置で分割し、
+    デバイスの2ピン間に完全に挟まれた区間は削除する。
+    (シンボル設置→配線 の流れと同じ見た目・接続になる) */
+function spliceDeviceIntoWires(page, dev) {
+  const pins = devPins(dev);
+  // 1) 各ピンで配線を分割
+  pins.forEach(pin => {
+    for (let wi = page.wires.length - 1; wi >= 0; wi--) {
+      const w = page.wires[wi];
+      for (let i = 0; i < w.pts.length - 1; i++) {
+        if (ptOnSeg(pin.x, pin.y, w.pts[i][0], w.pts[i][1], w.pts[i + 1][0], w.pts[i + 1][1])) {
+          const ptsA = [...w.pts.slice(0, i + 1), [pin.x, pin.y]];
+          const ptsB = [[pin.x, pin.y], ...w.pts.slice(i + 1)];
+          const mk = pts => ({ id: uid("w"), pts, num: w.num, fixed: w.fixed, numShow: false, spec: w.spec, stub: w.stub });
+          page.wires.splice(wi, 1, mk(ptsA), mk(ptsB));
+          break;
+        }
+      }
+    }
+  });
+  // 2) デバイスの2ピン間に一致する配線 (シンボルに隠れる区間) を削除
+  const isPin = p => pins.some(pin => Math.abs(pin.x - p[0]) < .01 && Math.abs(pin.y - p[1]) < .01);
+  page.wires = page.wires.filter(w => {
+    const a = w.pts[0], b = w.pts[w.pts.length - 1];
+    if (!isPin(a) || !isPin(b)) return true;
+    if (Math.abs(a[0] - b[0]) < .01 && Math.abs(a[1] - b[1]) < .01) return false; // 零長
+    // 直線1区間でピン→ピンなら本体に重なるため削除
+    return w.pts.length > 2;
+  });
 }
 
 function ptOnSeg(px, py, x1, y1, x2, y2) {
@@ -775,6 +811,7 @@ function retainSelection() {
     pg.devices.forEach(d => alive.add(d.id));
     pg.wires.forEach(w => alive.add(w.id));
     pg.texts.forEach(t => alive.add(t.id));
+    (pg.zones || []).forEach(z => alive.add(z.id));
   });
   [...App.selection].forEach(id => { if (!alive.has(id)) App.selection.delete(id); });
 }

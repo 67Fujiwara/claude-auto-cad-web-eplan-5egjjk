@@ -218,12 +218,22 @@ function pageToDXF(page) {
   ents += dxfText(tbX + 106, tbY + 28.6, 4.2, `${page.no} / ${App.project.pages.length}`, "TEXT");
   ents += dxfText(tbX + 2, tbY + 28, 3, "ElectraCAD Studio", "TEXT");
 
-  // ── 配線 + ジャンクション + 線番 ──
+  // ── 破線枠 (盤外エリア / グループ) ──
+  (page.zones || []).forEach(z => {
+    ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "FRAME");
+    if (z.label) ents += dxfText(z.x + 2.5, z.y - 1.8, 3.6, z.label, "TEXT");
+  });
+
+  // ── 配線 + ジャンクション + 線番 + 電線仕様 ──
   page.wires.forEach(wr => {
     ents += dxfPoly(wr.pts, "WIRE");
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr);
       ents += dxfText(horiz ? mx : mx - 0.6, my, 3, wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
+    }
+    if (wr.spec) {
+      const [mx, my, horiz] = wireLabelPos(wr);
+      ents += dxfText(horiz ? mx : mx + 3.4, horiz ? my + 4.6 : my, 2.7, wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
   junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, 1.05, "WIRE"); });
