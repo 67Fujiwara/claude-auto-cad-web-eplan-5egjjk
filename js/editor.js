@@ -124,10 +124,11 @@ function sheetSVG(page, opts = {}) {
   }
   // 表題欄 (JIS Z 8311: 右下・輪郭線に接する。図番/図名/企業名/署名/日付/尺度/投影法を記入)
   const meta = projectMeta();
+  const pm = pageSheetMeta(page);          // 用紙・尺度はページ固有設定を優先
   const S = v => v * fr;                       // 用紙実寸 mm → 作図領域 mm
   const tbr = titleBlockRect();
   const tbW = tbr.w, tbH = tbr.h, tbX = tbr.x, tbY = tbr.y;
-  const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
+  const [pw, ph] = PAPERS[pm.paper] || PAPERS.A3;
   // 列割りは engine の TITLE_BLOCK (画面と DXF で同一)
   const cwmm = TITLE_BLOCK.cols;
   const cx = [0, cwmm[0], cwmm[0] + cwmm[1], cwmm[0] + cwmm[1] + cwmm[2]];
@@ -160,9 +161,9 @@ function sheetSVG(page, opts = {}) {
     ${cell(c1, r2, 0, "設計 (署名)", meta.designer || "—")}
     ${cell(c2, r2, 1, "検図 (署名)", meta.checker || "—")}
     ${cell(c3, r2, 2, "日付", meta.date || todayStr())}
-    ${cell(c4, r2, 3, "尺度", meta.scale || "1:1")}
+    ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
     ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
-    ${cell(c2, r3, 1, "用紙 / 投影法", `${meta.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`)}
+    ${cell(c2, r3, 1, "用紙 / 投影法", `${pm.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`)}
     <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">ページ</text>
     <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${S(TEXT_H.large)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
     ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}
@@ -391,7 +392,7 @@ function mirrorSVG(coilDev) {
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
   const mfr = contentScale();           // 表の寸法は用紙上一定 (文字と同じ空間)
-  const csym0 = SYMBOLS_BY_ID[coilDev.sym];
+  const csym0 = symOf(coilDev.sym);
   // 多極デバイス (サーマル等) は極間の配線を避けて左下に表示
   const wide = csym0.bounds[2] > 20;
   const x = wide ? coilDev.x - 24 * mfr : coilDev.x + 3 * mfr;
@@ -479,7 +480,7 @@ function overlaySVG(page) {
   // 配置ゴースト
   if (Editor.ghost) {
     const g = Editor.ghost;
-    const sym = SYMBOLS_BY_ID[g.symId];
+    const sym = symOf(g.symId);
     out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 })}</g>`;
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
@@ -493,7 +494,7 @@ function overlaySVG(page) {
   return out;
 }
 function devPinsOf(ghost) {
-  const sym = SYMBOLS_BY_ID[ghost.symId];
+  const sym = symOf(ghost.symId);
   return sym.pins.map(p => pinAbs({ x: ghost.x, y: ghost.y, rot: ghost.rot || 0 }, p));
 }
 
@@ -659,7 +660,7 @@ function onMouseDown(e) {
   if (App.sim.running) {
     const hit = hitTest(w.x, w.y);
     if (hit && hit.type === "device") {
-      const sym = SYMBOLS_BY_ID[hit.obj.sym];
+      const sym = symOf(hit.obj.sym);
       if ((sym.sim === "contact_no" || sym.sim === "contact_nc") && !hit.obj.linkTo) {
         if (sym.momentary) {
           App.sim.states[hit.obj.id] = true;
@@ -790,7 +791,7 @@ function onMouseMove(e) {
       const newHover = hit && hit.type === "device" ? hit.obj.id : null;
       if (newHover !== Editor.hover.devId) { Editor.hover.devId = newHover; requestRender(); }
       if (App.sim.running && hit && hit.type === "device") {
-        const sym = SYMBOLS_BY_ID[hit.obj.sym];
+        const sym = symOf(hit.obj.sym);
         const clickable = ((sym.sim === "contact_no" || sym.sim === "contact_nc") && !hit.obj.linkTo) || sym.sim === "passthru3" || sym.sim === "passthru2";
         Editor.svg.style.cursor = clickable ? "pointer" : "default";
       }
@@ -980,7 +981,7 @@ function startGhost(symId, rot = 0) {
   UI.syncToolButtons();
   Editor.ghost = { symId, x: -1000, y: -1000, rot };
   Editor.svg.style.cursor = "copy";
-  UI.setMsg(`${SYMBOLS_BY_ID[symId].name} — クリックで連続配置 / R で回転 / Esc・右クリックで終了`);
+  UI.setMsg(`${symOf(symId).name} — クリックで連続配置 / R で回転 / Esc・右クリックで終了`);
 }
 function placeGhost() {
   const g = Editor.ghost;
@@ -991,7 +992,7 @@ function placeGhost() {
   spliceDeviceIntoWires(curPage(), dev);
   App.selection.clear();
   App.selection.add(dev.id);
-  UI.setMsg(`${SYMBOLS_BY_ID[g.symId].name} ${dev.tag || ""} を配置 — 続けてクリックで連続配置、Escで終了`);
+  UI.setMsg(`${symOf(g.symId).name} ${dev.tag || ""} を配置 — 続けてクリックで連続配置、Escで終了`);
   // ゴーストは維持して連続配置 (EPLANの挿入モード)
   UI.showProps();
   requestRender();

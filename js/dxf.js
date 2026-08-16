@@ -241,7 +241,7 @@ function dxfProjSymbol(x, y, u, proj) {
 function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
-  const csym0 = SYMBOLS_BY_ID[coilDev.sym];
+  const csym0 = symOf(coilDev.sym);
   const wide = csym0.bounds[2] > 20;
   const x = wide ? coilDev.x - S(24) : coilDev.x + S(3);
   const y0 = coilDev.y + S(24), rowH = S(4.2), MAXROWS = 4;
@@ -269,10 +269,11 @@ function pageToDXF(page) {
   let ents = "";
   const { w, h, margin: mg, marginLeft: ml, cols, rows } = SHEET;
   const meta = projectMeta();
+  const pm = pageSheetMeta(page);   // 用紙・尺度はページ固有設定を優先
   const f = sheetScale();
   const S = v => v * f;                      // 図枠・表題欄用 (用紙実寸 mm → 作図領域 mm)
   const C = v => v * contentScale();         // 図面内容用 (常に 1:1)
-  const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
+  const [pw, ph] = PAPERS[pm.paper] || PAPERS.A3;
 
   // ── 輪郭線 (とじ代 20mm) + 中心マーク ──
   ents += dxfPoly([[ml, mg], [w - mg, mg], [w - mg, h - mg], [ml, h - mg], [ml, mg]], "FRAME");
@@ -323,9 +324,9 @@ function pageToDXF(page) {
   tbCell(0, R, "設計 (署名)", meta.designer || "—");
   tbCell(1, R, "検図 (署名)", meta.checker || "—");
   tbCell(2, R, "日付", meta.date || todayStr());
-  tbCell(3, R, "尺度", meta.scale || "1:1");
+  tbCell(3, R, "尺度", pm.scale || "1:1");
   tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
-  tbCell(1, R * 2, "用紙 / 投影法", `${meta.paper} ${pw}\u00d7${ph} / ${meta.proj || "第三角法"}`);
+  tbCell(1, R * 2, "用紙 / 投影法", `${pm.paper} ${pw}\u00d7${ph} / ${meta.proj || "第三角法"}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
   ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
@@ -598,7 +599,7 @@ function parseDXF(text) {
   out.forEach(e => {
     if ((e.type === "TEXT") && (e.hAlign || e.vAlign) && e.x2 !== undefined) { e.x1 = e.x2; e.y1 = e.y2; }
   });
-  return out.filter(e => e.type !== "INSERT");
+  return out.filter(e => e.type !== "INSERT" || e.unresolved);
 }
 
 /** 取り込んだエンティティ群の外接矩形 (DXF 座標系) */
@@ -606,6 +607,7 @@ function dxfEntsBounds(ents) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const add = (x, y) => { if (isFinite(x) && isFinite(y)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); } };
   ents.forEach(e => {
+    if (e.type === "INSERT") return;                    // 定義が無いブロックは寸法に含めない
     if (e.type === "LINE") { add(e.x1, e.y1); add(e.x2, e.y2); }
     else if (e.type === "CIRCLE" || e.type === "ARC") { add(e.x1 - e.r, e.y1 - e.r); add(e.x1 + e.r, e.y1 + e.r); }
     else if (e.type === "TEXT" || e.type === "MTEXT") { add(e.x1, e.y1); add(e.x1 + textWidthMM(e.text || "", e.size || 3.5), e.y1 + (e.size || 3.5)); }
@@ -627,6 +629,7 @@ function dxfEntsToSVG(ents, opt = {}) {
   const Y = y => +(((oy - y) * k).toFixed(3));
   let out = "";
   ents.forEach(e => {
+    if (e.type === "INSERT") return;                    // 定義が無いブロックは描けない
     if (e.type === "LINE") out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}"/>`;
     else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
       const pts = (e.pts || []).filter(p => isFinite(p[0]) && isFinite(p[1]));

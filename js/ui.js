@@ -451,7 +451,7 @@ const MENUS = {
     { sep: true },
     { label: "上書き保存", key: "Ctrl+S", fn: () => UI.saveOver() },
     { label: "名前を付けて保存…", key: "Ctrl+Shift+S", fn: () => UI.saveAs() },
-    { label: "エクスポート (JSON)", key: "", fn: () => downloadFile(App.project.name + ".ecad.json", JSON.stringify(App.project, null, 1)) },
+    { label: "エクスポート (JSON)", key: "", fn: () => { syncProjectSymbols(); downloadFile(App.project.name + ".ecad.json", JSON.stringify(App.project, null, 1)); } },
     { label: "エクスポート (SVG・現在ページ)", key: "", fn: () => downloadFile(App.project.name + "_p" + curPage().no + ".svg", exportSheetSVG(), "image/svg+xml") },
     { sep: true },
     { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
@@ -628,6 +628,7 @@ UI.openFile = async () => {
       commit();
       App.project = p;
       mergeProjectSymbols();
+      saveImportedSymbols();
       App.fileHandle = handle;
       App.pendingHandle = null;
       rememberFileHandle(handle);
@@ -660,6 +661,7 @@ UI.openFile = async () => {
         commit();
         App.project = p;
         mergeProjectSymbols();
+        saveImportedSymbols();
         App.fileHandle = null; // input[type=file] 経由は上書き先を持てない
         App.pageIdx = 0;
         App.selection.clear();
@@ -720,6 +722,7 @@ UI.printAll = () => {
     </style></head><body>${pages}</body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 400);
+  applySheet(curPage());          // 図枠を現在ページに戻す
   UI.setMsg(`印刷ダイアログで「PDFに保存」を選ぶと全ページPDFになります (用紙: ${[...new Set(papers)].join(" / ")}横)`);
 };
 
@@ -863,6 +866,7 @@ UI.dxfImportDialog = (ents, fileName) => {
       if (w) { if (style !== "solid") w.aux = true; nWire++; }
     };
     ents.forEach(e => {
+      if (e.type === "INSERT") return;                 // 定義が無いブロックは配置しない
       if (e.type === "LINE" || e.type === "SOLID") {
         if (isFinite(e.x1) && isFinite(e.x2)) addAux([[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]]);
       } else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
@@ -915,6 +919,7 @@ UI.exportDXF = () => {
     // 連続ダウンロードのブロックを避けるため少しずつ間隔を空ける
     setTimeout(() => {
       downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`, pageToDXF(pg), "application/dxf");
+      applySheet(curPage());      // 図枠を現在ページに戻す
     }, i * 400);
   });
   UI.setMsg(`DXFを ${App.project.pages.length} ファイル出力します (AutoCADでそのまま開けます)`);

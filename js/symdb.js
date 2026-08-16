@@ -56,7 +56,7 @@ const DB_SYMBOLS = [
   {
     id: "chassis_earth", db: true, group: "接地", jis: "03-02-04", cat: "db", letter: "E",
     name: "フレーム接続 (シャーシ)", nameEn: "Frame / chassis", desc: "機器フレーム・シャーシへの接続",
-    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-7,0, 14, 11],
+    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-9,0, 17, 11],
     body: `<path d="M0,0 V5 M-6,5 H6 M-6,5 L-8.5,8.5 M-1.5,5 L-4,8.5 M3,5 L0.5,8.5 M6,5 L3.5,8.5"/>`,
   },
 
@@ -251,8 +251,8 @@ const DB_SYMBOLS = [
   {
     id: "fan", db: true, group: "実務機器", cat: "db", letter: "M",
     name: "換気ファン (FAN)", nameEn: "Fan", desc: "盤用換気扇", typ: "MF-950",
-    pins: [{x:0,y:0,n:"1"},{x:0,y:32,n:"2"}], sim: "load", bounds: [-9,0, 18, 32],
-    body: `<path d="M0,0 V8 M0,32 V24"/><circle cx="0" cy="16" r="8"/><path d="M0,16 C-2,11 2,11 0,8.5 M0,16 C5,14 5,18 7.4,16 M0,16 C2,21 -2,21 0,23.5 M0,16 C-5,18 -5,14 -7.4,16"/>`,
+    pins: [{x:0,y:0,n:"1"},{x:0,y:35,n:"2"}], sim: "load", bounds: [-9,0, 18, 35],
+    body: `<path d="M0,0 V8 M0,35 V24"/><circle cx="0" cy="16" r="8"/><path d="M0,16 C-2,11 2,11 0,8.5 M0,16 C5,14 5,18 7.4,16 M0,16 C2,21 -2,21 0,23.5 M0,16 C-5,18 -5,14 -7.4,16"/>`,
   },
 {
     id: "mms", db: true, group: "開閉・保護", cat: "db", letter: "Q",
@@ -276,9 +276,9 @@ const DB_SYMBOLS = [
   {
     id: "pb_lamp", db: true, group: "実務機器", cat: "db", letter: "S",
     name: "照光押しボタン", nameEn: "Illuminated pushbutton", desc: "押しボタンa接点+表示灯の複合 (灯側 X1/X2)", typ: "XB4-BW33B1",
-    pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"},{x:12,y:0,n:"X1"},{x:12,y:20,n:"X2"}],
-    sim: "contact_no", momentary: true, bounds: [-18,-2, 36, 24],
-    body: `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><g transform="translate(12,0)"><path d="M0,0 V4.5 M0,20 V15.5"/><circle cx="0" cy="10" r="5.5"/><path d="M-3.9,6.1 L3.9,13.9 M-3.9,13.9 L3.9,6.1"/></g>`,
+    pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"},{x:15,y:0,n:"X1"},{x:15,y:20,n:"X2"}],
+    sim: "contact_no", momentary: true, bounds: [-18,-2, 39, 24],
+    body: `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><g transform="translate(15,0)"><path d="M0,0 V4.5 M0,20 V15.5"/><circle cx="0" cy="10" r="5.5"/><path d="M-3.9,6.1 L3.9,13.9 M-3.9,13.9 L3.9,6.1"/></g>`,
   },
   {
     id: "sel3", db: true, group: "実務機器", cat: "db", letter: "S",

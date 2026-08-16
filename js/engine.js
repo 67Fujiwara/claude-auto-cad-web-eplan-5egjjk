@@ -322,7 +322,11 @@ function newPage(name, no) {
 function mergeProjectSymbols() {
   const list = App.project && App.project.symbols;
   if (!Array.isArray(list)) return;
-  list.forEach(sym => { if (sym && sym.id) SYMBOLS_BY_ID[sym.id] = sym; });
+  list.forEach(sym => {
+    if (!sym || !sym.id) return;
+    SYMBOLS_BY_ID[sym.id] = sym;
+    if (typeof DB_SYMBOLS !== "undefined" && !DB_SYMBOLS.some(x => x.id === sym.id)) DB_SYMBOLS.push(sym);
+  });
 }
 /** 図面で実際に使われている取り込みシンボルをプロジェクトへ保存する */
 function syncProjectSymbols() {
@@ -389,7 +393,7 @@ function nextTag(letter) {
 }
 
 function addDevice(page, symId, x, y, opts = {}) {
-  const sym = SYMBOLS_BY_ID[symId];
+  const sym = symOf(symId);
   const dev = {
     id: uid("d"), sym: symId, x: snap(x), y: snap(y), rot: opts.rot || 0,
     tag: opts.tag !== undefined ? opts.tag : (sym.letter ? nextTag(sym.letter) : ""),
@@ -904,7 +908,7 @@ function simStop() {
 const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
-  "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり",
+  "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
 ];
 
 function drcSources(page, pinNet) {
@@ -1106,6 +1110,9 @@ function runDRC() {
 
     page.devices.forEach(dev => {
       const sym = symOf(dev.sym);
+      if (sym.missing) {
+        issues.push({ sev: "err", msg: `${dev.tag || "機器"} のシンボル定義 (${dev.sym}) が見つかりません — 元の図面から再取り込みが必要です`, page: page.no, target: dev.id, loc: devLocation(dev) });
+      }
       // 未接続ピン (絶縁処理端末など「未接続であること」を示す記号は除外)
       if (!sym.noDrc) devPins(dev).forEach(pin => {
         const onWire = wireEndpoints.has(ptKey(pin.x, pin.y)) ||
