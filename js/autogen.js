@@ -38,7 +38,7 @@ function aiExpand(list) {
 }
 
 function symExtents(symId) {
-  const s = SYMBOLS_BY_ID[symId];
+  const s = symOf(symId);
   const [bx, , bw] = s.bounds;
   return { left: Math.max(0, -bx), right: Math.max(0, bx + bw) };
 }
@@ -313,7 +313,7 @@ function aiGenerate(sel) {
     }
     const bd = addDevice(page, body.id, x, bodyTop, { desc: body.desc || "", linkTo: body.linkTo || null, tag: body.tag });
     rightMost = Math.max(rightMost, symExtents(body.id).right);
-    if (useTerm && SYMBOLS_BY_ID[body.id].cat === "output") {
+    if (useTerm && symOf(body.id).cat === "output") {
       addDevice(page, "terminal", x, bodyTop + bodyH, { tag: `-X1:${termN++}`, desc: "" });
       if (bodyTop + bodyH + 20 < L.botRailY) addWire(page, [[x, bodyTop + bodyH + 20], [x, L.botRailY]]);
     } else {
@@ -429,7 +429,7 @@ function aiGenerate(sel) {
         // 条件センサを中継に落とした場合、主回路の直列条件から漏れている
         // ことを検図で必ず可視化する
         cur.page.genWarnings = cur.page.genWarnings || [];
-        cur.page.genWarnings.push(`条件センサ ${SYMBOLS_BY_ID[id].name} (${body.tag} 経由) が運転条件に組み込まれていません — ${body.tag} の接点を主回路の直列に手動追加してください`);
+        cur.page.genWarnings.push(`条件センサ ${symOf(id).name} (${body.tag} 経由) が運転条件に組み込まれていません — ${body.tag} の接点を主回路の直列に手動追加してください`);
       }
     }
     if (extra) report.push(`未割付の入力 ${extra} 点に中継リレーを自動追加`);
@@ -500,11 +500,11 @@ function aiGenerate(sel) {
             body: { id, h: bodyH }, funcText: outNames[id] || "",
           });
           cur.page.genWarnings = cur.page.genWarnings || [];
-          cur.page.genWarnings.push(`${SYMBOLS_BY_ID[id].name} の駆動接点が ${last.tag} の実装可能数を超えています — リレー型式の見直しが必要`);
+          cur.page.genWarnings.push(`${symOf(id).name} の駆動接点が ${last.tag} の実装可能数を超えています — リレー型式の見直しが必要`);
         }
       } else {
         const drv = starts.length ? starts[i % starts.length] : (conditions[i % Math.max(1, conditions.length)] || null);
-        if (!drv) report.push(`注意: ${SYMBOLS_BY_ID[id].name} を駆動する入力がありません`);
+        if (!drv) report.push(`注意: ${symOf(id).name} を駆動する入力がありません`);
         buildRung({
           startGroup: drv ? [{ id: drv, desc: inputDescs[drv] || "" }] : [],
           body: { id, h: bodyH }, funcText: outNames[id] || "",
@@ -563,7 +563,8 @@ function aiGenerate(sel) {
     const fixWire = (pg, pts, num) => { const w = addWire(pg, pts); if (w) { w.num = num; w.fixed = true; } };
     let bx = 70;
     motorsAll.forEach((phase, mi) => {
-      const mp = mi === 0 ? "" : `${mi + 1}`;
+      // 2台目以降は相名を機器で修飾する (1台目の "2L1" 等と衝突させない)
+      const mp = mi === 0 ? "" : `M${mi + 1}-`;
       const coil = contCoils[mi % Math.max(1, contCoils.length)] || null;
       if (phase === 3) {
         // ── 三相ブロック (3極) ──

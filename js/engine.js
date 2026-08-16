@@ -85,6 +85,18 @@ function scaleProjectGeometry(k) {
   });
 }
 
+/** 図面の中身を平行移動する (用紙・尺度の変更で図枠の原点が動いたときに追従させる) */
+function shiftProjectGeometry(dx, dy, pages) {
+  if (!dx && !dy) return;
+  const r = v => Math.round(v * 100) / 100;
+  (pages || App.project.pages).forEach(pg => {
+    pg.devices.forEach(d => { d.x = r(d.x + dx); d.y = r(d.y + dy); });
+    pg.wires.forEach(w => { w.pts = w.pts.map(p => [r(p[0] + dx), r(p[1] + dy)]); });
+    pg.texts.forEach(t => { t.x = r(t.x + dx); t.y = r(t.y + dy); });
+    pageZones(pg).forEach(z => { z.x = r(z.x + dx); z.y = r(z.y + dy); });
+  });
+}
+
 /** いま張られている図枠の尺度倍率 (図枠・表題欄のみに掛ける) */
 function sheetScale() { return SHEET.f || 1; }
 /** 図記号・文字・線幅の倍率。ユーザー指定によりシンボルは常に 1:1 */
@@ -131,7 +143,7 @@ function wireNumBox(w, mx, my, horiz) {
 }
 /** 電線仕様ラベルの外接矩形 (線番の反対側)。spec が無ければ null */
 function wireSpecBox(w, mx, my, horiz) {
-  if (!w.spec) return null;
+  if (!w.spec || w.numShow === false) return null;
   const f = contentScale(), h = TEXT_H.small * f;
   const wd = textWidthMM(String(w.spec), h);
   const sx = horiz ? mx : mx + WIRE_SPEC_OFF * f, sy = horiz ? my + 4.6 * f : my;
@@ -155,7 +167,10 @@ function wireLabelPos(w, page) {
   const obst = page ? pinLabelBoxes(page) : [];
   devs.forEach(d => {
     obst.push(insetRect(devBounds(d), 1.5 * f));
-    if (page) deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
+    if (page) {
+      deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
+      mirrorLabelBoxes(d).forEach(b => obst.push(b));
+    }
   });
   (notes || []).forEach(t => obst.push(textBounds(t)));
   // 実際に印字される位置 → その文字の外接矩形 (画面・DXF・検図で同じ式を使う)
@@ -248,6 +263,8 @@ function labelObstacles(page) {
   const out = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
     out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
+    // 接点ミラー表 (コイル直下のクロスリファレンス表) も避ける
+    mirrorLabelBoxes(d2).forEach(b => out.push({ owner: d2.id, ...b }));
   });
   // 配線 (実線=導体のみ)。作図線はラベルを避ける対象にしない
   const wt = 0.6 * f;
@@ -283,7 +300,8 @@ function placeDeviceLabels(page, dev, obstacles) {
   const horizontal = (dev.rot || 0) % 180 !== 0;
   const H = TEXT_H.normal * f;
   const mk = (text, x, y, anchor, isTag) => {
-    const o = { text, x, y, w: textWidthMM(text, H), h: H, anchor, size: H, isTag: !!isTag };
+    const hh = textHeightMM(text, H);
+    const o = { text, x, y, w: textWidthMM(text, hh), h: hh, anchor, size: H, isTag: !!isTag };
     o.box = labelBox(o);
     return o;
   };
@@ -323,12 +341,22 @@ function placeDeviceLabels(page, dev, obstacles) {
       : [["left", [2.2, 1.4, 0.8, 0.3]], ["right", [2.2, 1.4, 0.8, 0.3]], ...vert];
 
   const relevant = obstacles.filter(o => o.owner !== dev.id);
+  // 図枠 (輪郭線) の外は不可。はみ出し面積も重なりと同じ重みで効かせる
+  const fr = frameRect();
+  const outArea = (bx) => {
+    const dx = Math.max(0, fr.x - bx.x) + Math.max(0, bx.x + bx.w - (fr.x + fr.w));
+    const dy = Math.max(0, fr.y - bx.y) + Math.max(0, bx.y + bx.h - (fr.y + fr.h));
+    return dx * bx.h + dy * bx.w;
+  };
   let best = null;
   for (const [side, gaps] of order) {
     for (const d of gaps) {
       const cand = sideCand(side, d);
       let score = 0;
-      for (const o of cand) for (const r of relevant) score += overlapArea(o.box, r);
+      for (const o of cand) {
+        score += outArea(o.box);
+        for (const r of relevant) score += overlapArea(o.box, r);
+      }
       if (score === 0) return cand;
       if (!best || score < best.score) best = { cand, score };
     }
@@ -349,6 +377,41 @@ function computePageLabels(page) {
     boxes.forEach(o => placed.push({ owner: dev.id, ...o.box }));
   });
   return map;
+}
+
+/** リンク接点の相互参照 (/ページ.列) の位置と外接矩形。
+    端子番号・デバイスタグ・図記号を避け、収まらなければ重なり最小を選ぶ。 */
+function deviceXrefBox(page, dev) {
+  if (!dev.linkTo) return null;
+  const f = findDevice(dev.linkTo);
+  if (!f) return null;
+  const s = contentScale();
+  const b = devBounds(dev);
+  const text = "/" + devLocation(f.dev);
+  const h = TEXT_H.small * s, w = textWidthMM(text, h);
+  const obst = pinLabelBoxes(page);
+  page.devices.forEach(d2 => {
+    obst.push(insetRect(devBounds(d2), 1.2 * s));
+    deviceLabelBoxes(page, d2).forEach(o => obst.push(o.box));
+  });
+  const cands = [
+    [b.x + b.w + 1.6 * s, b.y + b.h / 2 + 1.2 * s],
+    [b.x + b.w + 1.6 * s, b.y + b.h / 2 + 5.2 * s],
+    [b.x + b.w + 1.6 * s, b.y + b.h / 2 - 2.8 * s],
+    [b.x + b.w + 1.6 * s, b.y + b.h + 3.4 * s],
+    [b.x + b.w + 1.6 * s, b.y - 1.4 * s],
+    [b.x - 1.6 * s - w, b.y + b.h / 2 + 5.2 * s],
+    [b.x - 1.6 * s - w, b.y - 1.4 * s],
+  ];
+  let best = null;
+  for (const [x, y] of cands) {
+    const box = { x, y: y - h, w, h };
+    let sc = 0;
+    for (const r of obst) sc += overlapArea(box, r);
+    if (sc === 0) return { x, y, text, box, size: h };
+    if (!best || sc < best.sc) best = { sc, res: { x, y, text, box, size: h } };
+  }
+  return best.res;
 }
 
 function deviceLabelBoxes(page, dev) {
@@ -380,7 +443,7 @@ function rectsOverlap(a, b, ratio = 0) {
 
 /** 注記テキストの概算 bbox */
 function textBounds(t) {
-  const h = (t.size || TEXT_H.normal) * contentScale();
+  const h = textHeightMM(t.text || "", (t.size || TEXT_H.normal) * contentScale());
   const w = textWidthMM(t.text || "", h);
   const anchor = t.anchor || "middle";
   const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;
@@ -399,7 +462,22 @@ function revisionRows() {
    (DXF の TEXT 高さは大文字高そのものなので TEXT_H をそのまま渡してよい) */
 const TEXT_CAP = 0.70;                 // 大文字高 / font-size (サンセリフ体の実測値)
 const TEXT_CAP_MONO = 0.73;            // 同上 (等幅書体)
+const TEXT_CAP_SERIF = 0.65;           // 同上 (明朝・セリフ体)
+/* 和文 (漢字・かな) の字面高は欧文の大文字高より大きい。JIS Z 8313-10 の
+   呼びは字面の高さなので、CJK を含む文字列は別の比率で換算する。
+   また同規格の和文の呼びは 3.5mm 以上なので、それを下回らないようにする。 */
+const TEXT_CAP_CJK = 0.85;
+const TEXT_H_MIN_CJK = 3.5;
+const RE_CJK = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFF60\u3040-\u30FF]/;
+function hasCJK(s) { return RE_CJK.test(String(s == null ? "" : s)); }
 function svgFontSize(h, mono) { return +(h / (mono ? TEXT_CAP_MONO : TEXT_CAP)).toFixed(3); }
+/** 文字列に応じた SVG font-size。和文を含むときは JIS Z 8313-10 の呼びに合わせる */
+function svgFontSizeFor(text, h, mono) {
+  if (!hasCJK(text)) return svgFontSize(h, mono);
+  return +(Math.max(h, TEXT_H_MIN_CJK) / TEXT_CAP_CJK).toFixed(3);
+}
+/** 文字列が実際に占める高さ (mm)。和文は最小呼びに引き上げられる */
+function textHeightMM(text, h) { return hasCJK(text) ? Math.max(h, TEXT_H_MIN_CJK) : h; }
 
 /** 文字列の概算幅 (mm)。size は JIS の文字高 h。CJK は全角として数える */
 function textWidthMM(s, size, bold = false) {
@@ -410,8 +488,9 @@ function textWidthMM(s, size, bold = false) {
       (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
       (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF00 && c <= 0xFF60) ||
       (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x3FFFD);
-    n += wide ? 1 : 0.58;
+    n += wide ? 1 : 0.60;          // 欧文の平均送りは実測 0.60em (従来 0.58 は約3%過小)
   }
+  if (hasCJK(s)) return n * (Math.max(size, TEXT_H_MIN_CJK) / TEXT_CAP_CJK) * (bold ? 1.05 : 1);
   return n * svgFontSize(size) * (bold ? 1.05 : 1);
 }
 /** 欄幅に収まる文字高を求める (最小 2.5mm。それ以下は呼び出し側で切る) */
@@ -625,9 +704,23 @@ function linkedContacts(coilDev) {
 const WIRE_STYLES = {
   solid:   { name: "実線 (配線)",                 dash: "",                     dxf: null },
   dash:    { name: "破線 (かくれ線・区画)",       dash: "3 0.75",               dxf: [3, -0.75] },
-  dashdot: { name: "一点鎖線 (中心線・基準線)",   dash: "6 0.75 0.125 0.75",    dxf: [6, -0.75, 0, -0.75] },
-  dashdotdot: { name: "二点鎖線 (想像線・隣接機器)", dash: "6 0.75 0.125 0.75 0.125 0.75", dxf: [6, -0.75, 0, -0.75, 0, -0.75] },
+  // ISO 128-20 の点要素は線幅の 0.5 倍程度。butt では消えるので round キャップで描く
+  dashdot: { name: "一点鎖線 (中心線・基準線)",   dash: "6 0.75 0.25 0.75",    dxf: [6, -0.75, 0, -0.75], round: true },
+  dashdotdot: { name: "二点鎖線 (想像線・隣接機器)", dash: "6 0.75 0.25 0.75 0.25 0.75", dxf: [6, -0.75, 0, -0.75, 0, -0.75], round: true },
 };
+/** 折線の全長 (mm) */
+function polyLengthMM(pts) {
+  let n = 0;
+  for (let i = 0; i < pts.length - 1; i++) n += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+  return n;
+}
+/** 配線に掛ける破線パターン (線素で始まり線素で終わるよう端数をならす) */
+function wireDashArray(w, f) {
+  const st = WIRE_STYLES[w.style] || WIRE_STYLES.solid;
+  if (!st.dash) return "";
+  const base = st.dash.split(" ").map(v => parseFloat(v) * f);
+  return fitDashPattern(base, polyLengthMM(w.pts) ).join(" ");
+}
 /* 導通するか。既定は「実線=配線 / それ以外=作図線」だが、w.aux を明示すれば
    線種と独立に指定できる (破線で描く盤外配線を回路として残す等)。 */
 function isWireConductive(w) {
@@ -795,6 +888,93 @@ function propagateLinkGroups(pagesData) {
     });
     if (!moved) break;
   }
+}
+
+/** 接点ミラー表の列位置 (端子番号列 / 相互参照列)。文字幅から動的に決めて桁被りを防ぐ */
+function mirrorCols(contacts) {
+  const h = TEXT_H.small;
+  let wPin = 0;
+  contacts.forEach(c => {
+    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
+    if (n0 && n1) wPin = Math.max(wPin, textWidthMM(`${n0}\u00b7${n1}`, h, false));
+  });
+  const pin = 7;
+  return { pin, ref: pin + Math.max(wPin + 1.2, 8) };
+}
+
+/** 接点ミラー表の原点。既定はコイルの右下だが、他機器・他のミラー表・図枠外を
+    避けられる位置を探す (見つからなければ重なり最小の候補)。 */
+function mirrorOrigin(coilDev) {
+  const f = contentScale();
+  const csym0 = symOf(coilDev.sym);
+  const wide = csym0.bounds[2] > 20;      // 多極機器は極間配線を避けて左下へ
+  const baseX = wide ? coilDev.x - 24 * f : coilDev.x + 3 * f;
+  const baseY = coilDev.y + 24 * f;
+  const page = (findDevice(coilDev.id) || {}).page;
+  if (!page) return { x: baseX, y0: baseY };
+  const w = mirrorTableSize(coilDev);
+  if (!w) return { x: baseX, y0: baseY };
+  const obst = [];
+  page.devices.forEach(d2 => {
+    if (d2.id === coilDev.id) return;
+    obst.push(insetRect(devBounds(d2), 1.2 * f));
+    // 先に配置が決まっている (id 順で前の) コイルのミラー表
+    if (d2.id < coilDev.id) mirrorLabelBoxes(d2).forEach(b => obst.push(b));
+  });
+  const fr = frameRect();
+  const outArea = bx => {
+    const dx = Math.max(0, fr.x - bx.x) + Math.max(0, bx.x + bx.w - (fr.x + fr.w));
+    const dy = Math.max(0, fr.y - bx.y) + Math.max(0, bx.y + bx.h - (fr.y + fr.h));
+    return dx * bx.h + dy * bx.w;
+  };
+  const cands = [[baseX, baseY], [baseX, baseY + 4.2 * f], [baseX + 6 * f, baseY],
+    [coilDev.x - 24 * f, baseY], [coilDev.x - 24 * f, baseY + 4.2 * f], [baseX, baseY - 6 * f]];
+  let best = null;
+  for (const [x, y0] of cands) {
+    const box = { x, y: y0 - 2 * f, w: w.w, h: w.h };
+    let sc = outArea(box);
+    for (const r of obst) sc += overlapArea(box, r);
+    if (sc === 0) return { x, y0 };
+    if (!best || sc < best.sc) best = { sc, res: { x, y0 } };
+  }
+  return best.res;
+}
+/** 接点ミラー表の外形寸法 (幅×高さ)。接点が無ければ null */
+function mirrorTableSize(coilDev) {
+  const contacts = linkedContacts(coilDev);
+  if (!contacts.length) return null;
+  const f = contentScale();
+  const shown = contacts.slice(0, 4);
+  const cols = mirrorCols(shown);
+  const h = TEXT_H.small * f;
+  let wMax = 0;
+  shown.forEach(c => { wMax = Math.max(wMax, cols.ref * f + textWidthMM("/" + devLocation(c), h)); });
+  return { w: wMax, h: shown.length * 4.2 * f + 2 * f };
+}
+
+/** 接点ミラー表の文字矩形 (検図・当たり判定用)。画面/DXF と同じ割付を使う */
+function mirrorLabelBoxes(coilDev) {
+  const contacts = linkedContacts(coilDev);
+  if (!contacts.length) return [];
+  const f = contentScale();
+  const org = mirrorOrigin(coilDev);
+  const x = org.x, y0 = org.y0;
+  const rowH = 4.2 * f, MAXROWS = 4;
+  const shown = contacts.slice(0, MAXROWS);
+  const cols = mirrorCols(shown);
+  const h = TEXT_H.small * f;
+  const out = [];
+  shown.forEach((c, i) => {
+    const cy = y0 + i * rowH + 2.3 * f;
+    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
+    if (n0 && n1) {
+      const t = `${n0}\u00b7${n1}`;
+      out.push({ x: x + cols.pin * f, y: cy - h, w: textWidthMM(t, h), h });
+    }
+    const r = "/" + devLocation(c);
+    out.push({ x: x + cols.ref * f, y: cy - h, w: textWidthMM(r, h), h });
+  });
+  return out;
 }
 
 /** 連動接点の実効端子番号: 同一コイル配下の n 番目の接点は 13/14 → n3/n4 に採番 */
@@ -1213,11 +1393,41 @@ function runDRC() {
         }
       }
     });
+    // 図枠外へはみ出した文字 (タグ・機能テキスト・線番・端子番号・注記)。
+    // JIS Z 8311 の輪郭線・とじ代の外に文字が出るのは出図不可
+    {
+      const fr2 = frameRect(), tol = 0.3;
+      const outside = bx => bx.x < fr2.x - tol || bx.y < fr2.y - tol ||
+        bx.x + bx.w > fr2.x + fr2.w + tol || bx.y + bx.h > fr2.y + fr2.h + tol;
+      const report = (bx, what, target) => {
+        if (!outside(bx)) return;
+        issues.push({ sev: "err", msg: `${what} が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target, loc: `${page.no}.${sheetCol(bx.x)}` });
+      };
+      page.devices.forEach(dev => {
+        deviceLabelBoxes(page, dev).forEach(o => report(o.box, `${displayTag(dev) || "機器"} の文字「${o.text}」`, dev.id));
+        const xr = deviceXrefBox(page, dev);
+        if (xr) report(xr.box, `${displayTag(dev) || "機器"} の相互参照`, dev.id);
+      });
+      pinLabelBoxes(page).forEach(bx => report(bx, "端子番号", bx.owner));
+      condWires(page).forEach(w => {
+        if (!w.num || w.numShow === false) return;
+        const [mx, my, hz] = wireLabelPos(w, page);
+        report(wireNumBox(w, mx, my, hz), `線番 ${w.num}`, w.id);
+        const sp = wireSpecBox(w, mx, my, hz);
+        if (sp) report(sp, `電線仕様「${w.spec}」`, w.id);
+      });
+      page.texts.forEach(t => report(textBounds(t), `注記「${t.text}」`, t.id));
+    }
+
     // 用紙に出る文字要素どうし・文字と図記号の重なり (検図の要)
     const f4 = contentScale();
     const labels = [];
     page.devices.forEach(dev => {
       deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev, what: `${displayTag(dev) || "機器"} の文字` }));
+      const xr = deviceXrefBox(page, dev);
+      if (xr) labels.push({ ...xr.box, dev, what: `${displayTag(dev) || "機器"} の相互参照` });
+      // 接点ミラー表 (コイル直下のクロスリファレンス表)
+      mirrorLabelBoxes(dev).forEach(o => labels.push({ ...o, dev, what: `${displayTag(dev) || "コイル"} の接点ミラー` }));
     });
     // 端子番号 (描画・ラベル配置と同じ矩形で判定する)
     const devById = new Map(page.devices.map(d => [d.id, d]));

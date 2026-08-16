@@ -163,7 +163,7 @@ function sheetSVG(page, opts = {}) {
     ${cell(c3, r2, 2, "日付", meta.date || todayStr())}
     ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
     ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
-    ${cell(c2, r3, 1, "用紙 / 投影法", `${pm.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`)}
+    ${cell(c2, r3, 1, "用紙 / 投影法", `${pm.paper} / ${meta.proj || "第三角法"}`)}
     <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
     <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large))}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
     ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}
@@ -219,7 +219,8 @@ function projSymbolSVG(x, y, u, proj) {
   if (proj === "該当なし (回路図)") return "";
   const first = proj === "第一角法";
   const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
-  const bx = x + (first ? 11 * u : 3.4 * u), sx = x + (first ? 3.4 * u : 11 * u);
+  // 2つの投影図は 0.5mm 以上離す (円すい台の端面線が同心円を貫通しないように)
+  const bx = x + (first ? 14.3 * u : 5.2 * u), sx = x + (first ? 5.2 * u : 14.3 * u);
   const sw = LINE_W.thin * u;
   return `<g stroke="${INK}" stroke-width="${sw}" fill="none">
     <path d="M${bx - big * 1.7},${cy - big} L${bx + big * 1.7},${cy - smallR} M${bx - big * 1.7},${cy + big} L${bx + big * 1.7},${cy + smallR}
@@ -262,7 +263,8 @@ function wiresSVG(page, opts = {}) {
       else if (sim.nNets.has(net)) { color = SIM_N; sw = LINE_W.extra * fr; }
     }
     const st = WIRE_STYLES[w.style] || WIRE_STYLES.solid;
-    const dash = st.dash ? ` stroke-dasharray="${st.dash.split(" ").map(v => v * fr).join(" ")}"` : "";
+    const da = wireDashArray(w, fr);
+    const dash = da ? ` stroke-dasharray="${da}" stroke-linecap="${st.round ? "round" : "butt"}"` : "";
     const selected = !print && App.selection.has(w.id);
     if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="${2.2 * fr}" fill="none" opacity="0.28" stroke-linecap="round"/>`;
     out += `<path d="${d}" stroke="${color}" stroke-width="${sw}" fill="none"${dash} data-id="${w.id}" class="wire"/>`;
@@ -276,7 +278,7 @@ function wiresSVG(page, opts = {}) {
       out += `<text x="${lx}" y="${ly}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
-    if (w.spec) {
+    if (w.spec && w.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz] = wireLabelPos(w, page);
       const sx = horiz ? mx : mx + WIRE_SPEC_OFF * fr, sy = horiz ? my + 4.6 * fr : my;
       out += `<text x="${sx}" y="${sy}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
@@ -314,7 +316,7 @@ function devicesSVG(page, opts = {}) {
     }
     out += extra;
     // シンボルの線は太線 0.5mm (グループの scale で用紙上一定になる)
-    out += symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 });
+    out += symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1, rot: dev.rot || 0 });
     out += `</g>`;
     // 端子番号 (13/14, A1/A2, X1/X2 …) — EPLAN同様ピン脇に表示。
     // 連動接点は同一コイル内の順位で 13/14 → 23/24 と自動採番。
@@ -374,14 +376,9 @@ function devLabelsSVG(dev, sym, page) {
   });
   // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)。
   // タグを右へ寄せた機器では、その下に置いて重ならないようにする
-  if (dev.linkTo) {
-    const f = findDevice(dev.linkTo);
-    if (f) {
-      const right = boxes.side === "right";
-      const lx = right ? b.x + b.w + 2.2 * fr : b.x + b.w + 1.6 * fr;
-      const ly = right ? b.y + b.h / 2 + (boxes.length + 1) * 4 * fr : b.y + b.h / 2 + 1.2 * fr;
-      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
-    }
+  const xr = deviceXrefBox(page || curPage(), dev);
+  if (xr) {
+    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSize(xr.size, true)}" fill="#7a4ec2" font-family="monospace">${escXML(xr.text)}</text>`;
   }
   return out;
 }
@@ -392,13 +389,11 @@ function mirrorSVG(coilDev) {
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
   const mfr = contentScale();           // 表の寸法は用紙上一定 (文字と同じ空間)
-  const csym0 = symOf(coilDev.sym);
-  // 多極デバイス (サーマル等) は極間の配線を避けて左下に表示
-  const wide = csym0.bounds[2] > 20;
-  const x = wide ? coilDev.x - 24 * mfr : coilDev.x + 3 * mfr;
-  const y0 = coilDev.y + 24 * mfr;
+  const org = mirrorOrigin(coilDev);      // 位置は検図・DXF と同じ探索結果を使う
+  const x = org.x, y0 = org.y0;
   const rowH = 4.2 * mfr;
   const MAXROWS = 4;
+  const cols = mirrorCols(contacts.slice(0, 4));   // 桁被りを防ぐ動的な列位置
   let out = `<g font-family="monospace">`;
   out += `<path d="M${coilDev.x},${coilDev.y + 20 * mfr} L${x},${y0 - 1.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr).join(" ")}"/>`;
   contacts.slice(0, MAXROWS).forEach((c, i) => {
@@ -413,11 +408,11 @@ function mirrorSVG(coilDev) {
     } else {
       out += `<path d="M${x},${cy + M(1.5)} h${M(2)} l${M(2.6)},${M(-2.8)} m${M(0.6)},${M(2.8)} h${M(0.8)}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" fill="none"/>`;
     }
-    out += `<text x="${x + M(7)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr)}" fill="${INK_SOFT}">${pinLabel}</text>`;
-    out += `<text x="${x + M(15)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr)}" fill="#7a4ec2">/${devLocation(c)}</text>`;
+    out += `<text x="${x + M(cols.pin)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="${INK_SOFT}">${pinLabel}</text>`;
+    out += `<text x="${x + M(cols.ref)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="#7a4ec2">/${devLocation(c)}</text>`;
   });
   if (contacts.length > MAXROWS) {
-    out += `<text x="${x}" y="${y0 + MAXROWS * rowH + 2 * mfr}" font-size="${svgFontSize(TEXT_H.small * mfr)}" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
+    out += `<text x="${x}" y="${y0 + MAXROWS * rowH + 2 * mfr}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
   }
   out += `</g>`;
   return out;

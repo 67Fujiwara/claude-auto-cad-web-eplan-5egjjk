@@ -49,7 +49,8 @@ UI.buildPalette = (filter = "") => {
     el.querySelector(".sym-cat-head").addEventListener("click", () => el.classList.toggle("open"));
     const body = el.querySelector(".sym-cat-body");
     syms.forEach(sym => {
-      const item = h(`<div class="sym-item" title="${sym.name} (${sym.nameEn})&#10;${sym.desc}">
+      const std = sym.jis ? `&#10;JIS C 0617 / IEC 60617 ${sym.jis}` : sym.stdNote ? `&#10;${sym.stdNote}` : sym.nonstd ? "&#10;規格外 (実務用の枠記号)" : "";
+      const item = h(`<div class="sym-item" title="${sym.name} (${sym.nameEn})&#10;${sym.desc}${std}">
         <div class="sym-thumb">${symThumbSVG(sym)}</div>
         <div class="sym-name">${sym.name}</div>
       </div>`);
@@ -881,7 +882,8 @@ UI.editWireNumbers = () => {
       const spec = body.querySelector(`#ws${i}`).value.trim();
       const specChanged = spec !== (e.spec0 || "");
       e.wires.forEach(w => {
-        w.num = fixed ? v : null;          // 自動の行は採番しなおす
+        // 自動の行は元の自動番号を残しておく (autoNumberWires が据え置く)
+        w.num = fixed ? v : (e.num0 || null);
         w.fixed = fixed;                   // 手動線番だけを自動採番から保護
         w.numShow = false;                 // 表示位置は autoNumberWires が最長区間で決める
         // 電線仕様は書き換えた行だけネット全体へ。無変更ならワイヤ個別の仕様を保つ
@@ -1230,7 +1232,7 @@ UI.openSymDB = () => {
       <div class="wiz-card ${pinned.has(s.id) ? "sel" : ""}" data-id="${s.id}" style="cursor:default">
         <div class="wc-thumb">${symThumbSVG(s, 46)}</div>
         <div class="wc-name">${s.name}</div>
-        <div class="wc-desc">${s.jis ? `JIS C 0617 ${s.jis}` : s.group}</div>
+        <div class="wc-desc">${s.jis ? `JIS C 0617 ${s.jis}` : s.stdNote ? s.stdNote : s.nonstd ? "規格外 (実務用の枠記号)" : s.group}</div>
         <button class="btn-solid ${pinned.has(s.id) ? "" : "primary"}" data-pin="${s.id}"
           style="flex:0 0 auto;padding:4px 10px;font-size:11px;margin-top:4px">
           ${pinned.has(s.id) ? "✓ パレットから外す" : "パレットに追加"}</button>
@@ -1292,6 +1294,7 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>ページ名</label><input id="tbPage" value="${escAttr(page.name)}"/></div>
       <div class="prop-row"><label>図番 (先頭ページ)</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="E-001"/></div>
       <div class="prop-row"><label>このページの図番</label><input id="tbDwgPage" class="mono" value="${page.dwgNoManual ? escAttr(page.dwgNo || "") : ""}" placeholder="${escAttr(pageDwgNo(page))} (自動)"/></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="tbDwgFix" ${page.dwgNoManual ? "checked" : ""}/><span>このページの図番を固定する</span></label></div>
       <div class="prop-row"><label>改訂</label><input id="tbRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
       <div class="prop-row"><label>設計</label><input id="tbDes" value="${escAttr(meta.designer || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
@@ -1414,9 +1417,11 @@ UI.sheetSetup = () => {
     page.name = q("#tbPage").value.trim() || page.name;
     meta.dwgNo = q("#tbDwg").value.trim();
     meta.dwgNoAuto = q("#tbDwgAuto").checked;
-    {   // ページ固有の図番: 自動採番値と違う値を入れたときだけ手動固定にする
+    {   // ページ固有の図番。すでに固定していたページは、開いて適用しただけで
+      //   解除されないように「固定する」チェックの状態を尊重する
       const pv = q("#tbDwgPage").value.trim();
-      if (pv && pv !== pageDwgNo(page)) { page.dwgNo = pv; page.dwgNoManual = true; }
+      const keep = q("#tbDwgFix").checked;
+      if (pv && (keep || pv !== pageDwgNo(page))) { page.dwgNo = pv; page.dwgNoManual = true; }
       else { delete page.dwgNoManual; }
     }
     meta.rev = q("#tbRev").value.trim() || "0";
@@ -1433,6 +1438,9 @@ UI.sheetSetup = () => {
 
     const paperChanged = paperChanging;
     const scope = q("#tbScope").value;
+    // 図枠の原点 (とじ代・輪郭線) が動くぶんだけ中身を平行移動し、
+    // 尺度を変えた瞬間に図面が枠から出ないようにする
+    const frBefore = { x: SHEET.marginLeft, y: SHEET.margin };
     if (paperChanging) {                          // 用紙・尺度を変えたときだけ反映する
       if (scope === "page") {
         page.paper = q("#tbPaper").value;
@@ -1448,6 +1456,10 @@ UI.sheetSetup = () => {
     }
     UI.renumberPages();          // 図番の接頭辞・自動採番設定を全ページへ即反映
     applySheet(page);
+    if (paperChanging) {
+      const dx = SHEET.marginLeft - frBefore.x, dy = SHEET.margin - frBefore.y;
+      shiftProjectGeometry(dx, dy, scope === "page" ? [page] : null);
+    }
     const nameInput = document.getElementById("projectName");
     if (nameInput) nameInput.value = App.project.name;
     m.close();

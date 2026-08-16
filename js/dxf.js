@@ -150,20 +150,25 @@ function dxfSymPrimitives(sym) {
     const t = translateOf(attrs || "");
     if (t.skip) continue; // rotate付き要素は省略 (現行ライブラリでは未使用)
     const ox = top.tx + t.tx, oy = top.ty + t.ty;
+    // 破線 (機械的結合・囲い・遮蔽) は導体と区別できるよう DXF でも線種を保つ
+    const lt = attr(attrs, "stroke-dasharray") ? "DASHED" : null;
     if (tag === "path") {
       const d = attr(attrs, "d");
-      if (d) dxfParsePath(d).forEach(poly => prims.push({ type: "poly", pts: poly.map(p => [p[0] + ox, p[1] + oy]) }));
+      if (d) dxfParsePath(d).forEach(poly => prims.push({ type: "poly", lt, pts: poly.map(p => [p[0] + ox, p[1] + oy]) }));
     } else if (tag === "rect") {
       const x = +attr(attrs, "x"), y = +attr(attrs, "y");
       const w = +attr(attrs, "width"), h = +attr(attrs, "height");
-      prims.push({ type: "poly", pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
+      prims.push({ type: "poly", lt, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
     } else if (tag === "circle") {
-      prims.push({ type: "circle", cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
+      prims.push({ type: "circle", lt, cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
     } else if (tag === "text") {
+      // SVG の font-size は em 寸法。DXF の TEXT 高さ (group 40) は大文字高なので換算する
+      const fam = (attr(attrs, "font-family") || "sans-serif").toLowerCase();
+      const cap = fam.includes("mono") ? TEXT_CAP_MONO : fam.includes("serif") && !fam.includes("sans") ? TEXT_CAP_SERIF : TEXT_CAP;
       pendingText = {
         type: "text",
         x: +attr(attrs, "x") + ox, y: +attr(attrs, "y") + oy,
-        size: +(attr(attrs, "font-size") || 3.5),
+        size: +((+(attr(attrs, "font-size") || 5) * cap).toFixed(3)),
         anchor: attr(attrs, "text-anchor") || "start",
       };
       lastIndex = tagRe.lastIndex;
@@ -189,8 +194,11 @@ function dxfPoly(pts, layer, ltype) {
   for (let i = 0; i < pts.length - 1; i++) out += dxfLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer, ltype);
   return out;
 }
-function dxfCircle(cx, cy, r, layer) {
-  return dxfEntity([[0, "CIRCLE"], [8, layer], [10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)]]);
+function dxfCircle(cx, cy, r, layer, ltype) {
+  const p = [[0, "CIRCLE"], [8, layer]];
+  if (ltype) p.push([6, ltype]);
+  p.push([10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)]);
+  return dxfEntity(p);
 }
 /* 和文は DXF の Unicode エスケープ (\U+XXXX) で書き出す。R12 でも AutoCAD が
    解釈でき、コードページ設定に依存せず文字化けしない。 */
@@ -226,7 +234,8 @@ function dxfProjSymbol(x, y, u, proj) {
   if (proj === "該当なし (回路図)") return "";
   const first = proj === "第一角法";
   const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
-  const bx = x + (first ? 11 * u : 3.4 * u), sx = x + (first ? 3.4 * u : 11 * u);
+  // 2つの投影図は 0.5mm 以上離す (円すい台の端面線が同心円を貫通しないように)
+  const bx = x + (first ? 14.3 * u : 5.2 * u), sx = x + (first ? 5.2 * u : 14.3 * u);
   let out = "";
   out += dxfPoly([[bx - big * 1.7, cy - big], [bx + big * 1.7, cy - smallR]], "FRAME_THIN");
   out += dxfPoly([[bx - big * 1.7, cy + big], [bx + big * 1.7, cy + smallR]], "FRAME_THIN");
@@ -241,10 +250,8 @@ function dxfProjSymbol(x, y, u, proj) {
 function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
-  const csym0 = symOf(coilDev.sym);
-  const wide = csym0.bounds[2] > 20;
-  const x = wide ? coilDev.x - S(24) : coilDev.x + S(3);
-  const y0 = coilDev.y + S(24), rowH = S(4.2), MAXROWS = 4;
+  const org = mirrorOrigin(coilDev);      // 位置は画面・検図と同じ探索結果を使う
+  const x = org.x, y0 = org.y0, rowH = S(4.2), MAXROWS = 4;
   let out = dxfPoly([[coilDev.x, coilDev.y + S(20)], [x, y0 - S(1.5)]], "WIRENUM", "DASHED");
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
@@ -254,8 +261,9 @@ function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
     out += dxfPoly([[x, cy + S(1.5)], [x + S(2), cy + S(1.5)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
     out += dxfPoly([[x + S(4.6), cy + S(1.5)], [x + S(5.4), cy + S(1.5)]], "WIRENUM");
     if (csym.sim === "contact_nc") out += dxfPoly([[x + S(2), cy + S(-1.3)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
-    if (n0 && n1) out += dxfText(x + S(8), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
-    out += dxfText(x + S(18), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
+    const cols = mirrorCols(contacts);
+    if (n0 && n1) out += dxfText(x + S(cols.pin), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
+    out += dxfText(x + S(cols.ref), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
   });
   if (contacts.length > MAXROWS) {
     out += dxfText(x, y0 + MAXROWS * rowH + S(2), S(TEXT_H.small), `+${contacts.length - MAXROWS}`, "WIRENUM");
@@ -326,7 +334,7 @@ function pageToDXF(page) {
   tbCell(2, R, "日付", meta.date || todayStr());
   tbCell(3, R, "尺度", pm.scale || "1:1");
   tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
-  tbCell(1, R * 2, "用紙 / 投影法", `${pm.paper} ${pw}\u00d7${ph} / ${meta.proj || "第三角法"}`);
+  tbCell(1, R * 2, "用紙 / 投影法", `${pm.paper} / ${meta.proj || "第三角法"}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
   ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
@@ -377,7 +385,7 @@ function pageToDXF(page) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
       ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
-    if (wr.spec) {
+    if (wr.spec && wr.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz] = wireLabelPos(wr, page);
       ents += dxfText(horiz ? mx : mx + C(WIRE_SPEC_OFF), horiz ? my + C(4.6) : my, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
@@ -390,12 +398,14 @@ function pageToDXF(page) {
     if (!sym) return;
     const xf = dxfDevXform(dev);
     dxfSymPrimitives(sym).forEach(pr => {
+      const lyr = pr.lt ? "AUXLINE" : "SYMBOL";      // 破線は補助線レイヤへ (導体と分離)
       if (pr.type === "poly") {
-        ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), "SYMBOL");
+        ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), lyr, pr.lt);
       } else if (pr.type === "circle") {
         const [cx, cy] = xf(pr.cx, pr.cy);
-        ents += dxfCircle(cx, cy, pr.r, "SYMBOL");
+        ents += dxfCircle(cx, cy, pr.r, lyr, pr.lt);
       } else if (pr.type === "text") {
+        // 記号内の文字は回転させない (JIS Z 8313-0: 文字は図面の下辺から読める向き)
         const [tx, ty] = xf(pr.x, pr.y);
         ents += dxfText(tx, ty, pr.size * contentScale(), pr.text, "SYMBOL", pr.anchor || "middle");
       }
@@ -414,15 +424,8 @@ function pageToDXF(page) {
     const b = devBounds(dev);
     const lboxes = deviceLabelBoxes(page, dev);
     lboxes.forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor); });
-    if (dev.linkTo) {
-      const fd = findDevice(dev.linkTo);
-      if (fd) {
-        const right = lboxes.side === "right";
-        const lx = right ? b.x + b.w + C(2.2) : b.x + b.w + C(1.6);
-        const ly = right ? b.y + b.h / 2 + C((lboxes.length + 1) * 4) : b.y + b.h / 2 + C(1.2);
-        ents += dxfText(lx, ly, C(TEXT_H.small), "/" + devLocation(fd.dev), "WIRENUM");
-      }
-    }
+    const xr = deviceXrefBox(page, dev);      // 位置は画面と同じ探索結果を使う
+    if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "WIRENUM");
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)
     if (sym.mirror) ents += dxfMirrorTable(dev, C);
   });
@@ -444,6 +447,12 @@ function pageToDXF(page) {
     "9", "$INSUNITS", "70", "4",
     "9", "$DWGCODEPAGE", "3", "ANSI_932",
     "9", "$TEXTSTYLE", "7", "JP",
+    "9", "$MEASUREMENT", "70", "1",
+    "9", "$LTSCALE", "40", "1.0",
+    "9", "$EXTMIN", "10", "0.0", "20", "0.0", "30", "0.0",
+    "9", "$EXTMAX", "10", SHEET.w.toFixed(3), "20", SHEET.h.toFixed(3), "30", "0.0",
+    "9", "$LIMMIN", "10", "0.0", "20", "0.0",
+    "9", "$LIMMAX", "10", SHEET.w.toFixed(3), "20", SHEET.h.toFixed(3),
     "0", "ENDSEC",
     "0", "SECTION", "2", "TABLES",
     "0", "TABLE", "2", "STYLE", "70", "1",
