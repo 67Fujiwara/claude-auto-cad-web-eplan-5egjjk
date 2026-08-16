@@ -225,12 +225,13 @@ function projSymbolSVG(x, y, u, proj) {
 }
 
 /* ── 破線枠 (盤外エリア / 機器グループ) ── */
-function zonesSVG(page) {
+function zonesSVG(page, opts = {}) {
   let out = "";
+  const print = !!opts.print;
   const fr = sheetScale();
   const dash = WIRE_STYLES.dash.dash.split(" ").map(v => v * fr).join(" ");
   pageZones(page).forEach(z => {
-    const selected = App.selection.has(z.id);
+    const selected = !print && App.selection.has(z.id);
     out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr}" fill="none"
       stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr}" stroke-dasharray="${dash}"/>`;
     if (z.label) {
@@ -241,8 +242,9 @@ function zonesSVG(page) {
 }
 
 /* ── ワイヤ ── */
-function wiresSVG(page) {
+function wiresSVG(page, opts = {}) {
   let out = "";
+  const print = !!opts.print;
   const sim = App.sim.running ? App.sim.energized : null;
   const fr = sheetScale();
   page.wires.forEach(w => {
@@ -257,11 +259,11 @@ function wiresSVG(page) {
     }
     const st = WIRE_STYLES[w.style] || WIRE_STYLES.solid;
     const dash = st.dash ? ` stroke-dasharray="${st.dash.split(" ").map(v => v * fr).join(" ")}"` : "";
-    const selected = App.selection.has(w.id);
+    const selected = !print && App.selection.has(w.id);
     if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="${2.2 * fr}" fill="none" opacity="0.28" stroke-linecap="round"/>`;
     out += `<path d="${d}" stroke="${color}" stroke-width="${sw}" fill="none"${dash} data-id="${w.id}" class="wire"/>`;
-    // 当たり判定用の太い透明パス
-    out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="${4 * fr}" fill="none" data-id="${w.id}" class="wire-hit"/>`;
+    // 当たり判定用の太い透明パス (画面のみ)
+    if (!print) out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="${4 * fr}" fill="none" data-id="${w.id}" class="wire-hit"/>`;
     // 配線番号 (numShow=false のワイヤはネット内の代表ワイヤに表示を譲る)
     if (w.num && w.numShow !== false && cond) {
       const [mx, my, horiz] = wireLabelPos(w);
@@ -296,15 +298,16 @@ function wireLabelPos(w) {
 }
 
 /* ── デバイス ── */
-function devicesSVG(page) {
+function devicesSVG(page, opts = {}) {
   let out = "";
+  const print = !!opts.print;
   const simOn = App.sim.running;
   const fr = sheetScale();
   page.devices.forEach(dev => {
     const sym = SYMBOLS_BY_ID[dev.sym];
     if (!sym) return;
-    const selected = App.selection.has(dev.id);
-    const hovered = Editor.hover.devId === dev.id;
+    const selected = !print && App.selection.has(dev.id);
+    const hovered = !print && Editor.hover.devId === dev.id;
     let color = INK;
     let extra = "";
     if (simOn) {
@@ -415,7 +418,7 @@ function mirrorSVG(coilDev) {
   const rowH = 4.2 * mfr;
   const MAXROWS = 4;
   let out = `<g font-family="monospace">`;
-  out += `<path d="M${coilDev.x + 2.5 * mfr},${coilDev.y + 21.5 * mfr} L${x},${y0 - 2.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${1 * mfr} ${1 * mfr}"/>`;
+  out += `<path d="M${coilDev.x + 2.5 * mfr},${coilDev.y + 21.5 * mfr} L${x},${y0 - 2.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr).join(" ")}"/>`;
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = SYMBOLS_BY_ID[c.sym];
@@ -439,12 +442,13 @@ function mirrorSVG(coilDev) {
 }
 
 /* ── テキスト ── */
-function textsSVG(page) {
+function textsSVG(page, opts = {}) {
   let out = "";
+  const print = !!opts.print;
   const fr = sheetScale();
   page.texts.forEach(t => {
     const h = textHeight(t) * fr;   // 用紙上の文字高 × 尺度
-    const selected = App.selection.has(t.id);
+    const selected = !print && App.selection.has(t.id);
     if (selected) {
       const wApprox = t.text.length * h * 0.62 + 2 * fr;
       out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"/>`;
@@ -973,8 +977,7 @@ function onDblClick(e) {
 
 /** 表題欄 (右下) の内側か */
 function inTitleBlock(x, y) {
-  const tb = titleBlockRect();
-  return x >= tb.x && x <= tb.x + tb.w && y >= tb.y && y <= tb.y + tb.h;
+  return titleBlocksRects().some(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
 }
 
 function finishWireDraft() {
@@ -1272,7 +1275,8 @@ function updateStatusCount() {
 function exportSheetSVG(page = null) {
   page = page || curPage();
   const body =
-    `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
+    `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page, { print: true })}</g>` +
+    `<g>${wiresSVG(page, { print: true })}</g><g>${devicesSVG(page, { print: true })}</g><g>${textsSVG(page, { print: true })}</g>`;
   // viewBox は用紙そのもの (余白を足すと印刷時に尺度がずれるため)
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SHEET.w} ${SHEET.h}" width="${SHEET.w / sheetScale()}mm" height="${SHEET.h / sheetScale()}mm" font-family="sans-serif">${body}</svg>`;
 }

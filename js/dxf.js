@@ -109,7 +109,7 @@ function dxfSymPrimitives(sym) {
   const key = sym.id + "@" + sheetScale();
   if (__dxfPrimCache.has(key)) return __dxfPrimCache.get(key);
   const prims = [];
-  const src = scaleSymbolText(sym.body, sheetScale());
+  const src = scaleSymbolGeom(sym.body, sheetScale());
   // <g transform="translate(a,b)"> の入れ子を追跡
   const stack = [{ tx: 0, ty: 0 }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
@@ -222,6 +222,27 @@ function dxfProjSymbol(x, y, u, proj) {
   return out;
 }
 
+/** コイル下の接点ミラー表 (画面 mirrorSVG と同じ内容) */
+function dxfMirrorTable(coilDev, S) {
+  const contacts = linkedContacts(coilDev);
+  if (!contacts.length) return "";
+  const csym0 = SYMBOLS_BY_ID[coilDev.sym];
+  const wide = csym0.bounds[2] > 20;
+  const x = wide ? coilDev.x - S(24) : coilDev.x + S(3);
+  const y0 = coilDev.y + S(24), rowH = S(4.2), MAXROWS = 4;
+  let out = dxfPoly([[coilDev.x + S(2.5), coilDev.y + S(21.5)], [x, y0 - S(2.5)]], "WIRENUM", "DASHED");
+  contacts.slice(0, MAXROWS).forEach((c, i) => {
+    const cy = y0 + i * rowH;
+    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
+    if (n0 && n1) out += dxfText(x + S(7), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
+    out += dxfText(x + S(15), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
+  });
+  if (contacts.length > MAXROWS) {
+    out += dxfText(x, y0 + MAXROWS * rowH + S(2), S(TEXT_H.small), `+${contacts.length - MAXROWS}`, "WIRENUM");
+  }
+  return out;
+}
+
 /** 1ページ → DXF 文字列 */
 function pageToDXF(page) {
   let ents = "";
@@ -285,7 +306,7 @@ function pageToDXF(page) {
   tbCell(1, R * 2, "用紙 / 投影法", `${meta.paper} ${pw}x${ph} / ${meta.proj || "第三角法"}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
-  ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(1), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
+  ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
 
   // ── 改訂履歴欄 (画面と同じ寸法。管理図面に必須) ──
   const rev = revisionRect();
@@ -356,29 +377,31 @@ function pageToDXF(page) {
         ents += dxfText(tx, ty, pr.size, pr.text, "SYMBOL", pr.anchor || "middle");
       }
     });
-    // ピン番号
+    // ピン番号 (オフセットは用紙上一定 = 画面と同じ量)
     sym.pins.forEach((p, pi) => {
       if (!p.n || dev.sym === "terminal") return;
       const name = effectivePinName(dev, pi);
       if (!name) return;
-      const [px, py] = xf(p.x + 1, p.y + (p.y <= 0 ? 3.4 : -1.6));
+      const [px, py] = xf(p.x + S(1), p.y + (p.y <= 0 ? S(3.4) : S(-1.6)));
       ents += dxfText(px, py, S(TEXT_H.small), name, "PIN");
     });
-    // タグ / 機能テキスト / クロスリファレンス
+    // タグ / 機能テキスト / クロスリファレンス (画面と同じオフセット・同じ文字高)
     const b = devBounds(dev);
     const tag = displayTag(dev);
     const horizontal = (dev.rot || 0) % 180 !== 0;
     if (horizontal) {
-      if (tag) ents += dxfText(b.x + b.w - 2.5, b.y - 2, S(TEXT_H.normal), tag, "TEXT");
-      if (dev.desc) ents += dxfText(b.x + b.w / 2, b.y + b.h + 4, S(TEXT_H.normal), dev.desc, "TEXT", "middle");
+      if (tag) ents += dxfText(b.x + b.w - S(2.5), b.y - S(2), S(TEXT_H.normal), tag, "TEXT");
+      if (dev.desc) ents += dxfText(b.x + b.w / 2, b.y + b.h + S(4.4), S(TEXT_H.normal), dev.desc, "TEXT", "middle");
     } else {
-      if (tag) ents += dxfText(b.x - 2.2, b.y + b.h / 2 - 0.6, S(TEXT_H.normal), tag, "TEXT", "end");
-      if (dev.desc) ents += dxfText(b.x - 2.2, b.y + b.h / 2 + (tag ? 3.4 : 0.8), S(TEXT_H.normal), dev.desc, "TEXT", "end");
+      if (tag) ents += dxfText(b.x - S(2.2), b.y + b.h / 2 - S(0.8), S(TEXT_H.normal), tag, "TEXT", "end");
+      if (dev.desc) ents += dxfText(b.x - S(2.2), b.y + b.h / 2 + S(tag ? 4 : 1), S(TEXT_H.normal), dev.desc, "TEXT", "end");
     }
     if (dev.linkTo) {
-      const f = findDevice(dev.linkTo);
-      if (f) ents += dxfText(b.x + b.w + 1.6, b.y + b.h / 2 + 1.2, S(TEXT_H.small), "/" + devLocation(f.dev), "WIRENUM");
+      const fd = findDevice(dev.linkTo);
+      if (fd) ents += dxfText(b.x + b.w + S(1.6), b.y + b.h / 2 + S(1.2), S(TEXT_H.small), "/" + devLocation(fd.dev), "WIRENUM");
     }
+    // コイル下の接点ミラー (画面と同じ内容・同じ寸法)
+    if (sym.mirror) ents += dxfMirrorTable(dev, S);
   });
 
   // ── フリーテキスト ──
@@ -387,7 +410,11 @@ function pageToDXF(page) {
   });
 
   // ── DXF 全体 (R12) ──
-  const layers = DXF_LAYERS.map(l => dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, 7], [6, "CONTINUOUS"]])).join("");
+  /* R12 は線幅を持たないため、太さの区分は色番号 (ペン) で伝える。
+     7=太線 0.5mm / 6=中間 / 8=細線 0.25mm / 5=輪郭 0.7mm */
+  const LAYER_COLOR = { FRAME: 5, WIRE: 7, AUXLINE: 8, SYMBOL: 7, TEXT: 7, WIRENUM: 6, PIN: 8 };
+  const layers = DXF_LAYERS.map(l =>
+    dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, LAYER_COLOR[l] || 7], [6, "CONTINUOUS"]])).join("");
   return [
     "0", "SECTION", "2", "HEADER",
     "9", "$ACADVER", "1", "AC1009",

@@ -356,15 +356,19 @@ SYMBOLS.forEach(s => SYMBOLS_BY_ID[s.id] = s);
 /** シンボルの描画SVG文字列 (ローカル座標系) */
 function symBodySVG(sym, opts = {}) {
   const sw = opts.strokeWidth || SYM_STROKE;
-  const body = opts.textScale ? scaleSymbolText(sym.body, opts.textScale) : sym.body;
+  const body = opts.textScale ? scaleSymbolGeom(sym.body, opts.textScale) : sym.body;
   return `<g fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
 }
 
-/** シンボル内の文字を用紙上 2.5mm 以上に保つ (縮尺図面での可読性・JIS Z 8313) */
-function scaleSymbolText(body, f) {
-  if (!(f > 1)) return body;
-  return body.replace(/font-size="([\d.]+)"/g, (m, v) =>
-    `font-size="${Math.max(parseFloat(v), 2.5 * f)}"`);
+/** シンボル内の文字・線幅・破線を尺度に追従させる。
+    文字は用紙上 2.5mm 以上 (JIS Z 8313)、線幅と破線要素は用紙上一定 (JIS Z 8312)。 */
+function scaleSymbolGeom(body, f) {
+  if (f === 1) return body;
+  return body
+    .replace(/font-size="([\d.]+)"/g, (m, v) => `font-size="${Math.max(parseFloat(v), 2.5 * f)}"`)
+    .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${parseFloat(v) * f}"`)
+    .replace(/stroke-dasharray="([^"]+)"/g, (m, v) =>
+      `stroke-dasharray="${v.trim().split(/[\s,]+/).map(n => parseFloat(n) * f).join(" ")}"`);
 }
 
 /** サムネイル用SVG (ライブラリパレット / プロパティ表示用) */
