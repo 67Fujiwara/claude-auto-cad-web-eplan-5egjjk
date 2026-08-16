@@ -20,7 +20,7 @@ const DXF_LTYPES = [
   { name: "DIVIDE", desc: "Long-dash double-dot (JIS Z 8312 type 05)", pat: WIRE_STYLES.dashdotdot.dxf },
 ];
 function dxfLtypeTable() {
-  const f = sheetScale();   // 線種パターンも用紙上一定にする
+  const f = contentScale();   // 線種は図面内容と同じ倍率
   return DXF_LTYPES.map(lt0 => {
     const lt = { ...lt0, pat: lt0.pat.map(v => v * f) };
     const total = lt.pat.reduce((s, v) => s + Math.abs(v), 0);
@@ -108,10 +108,10 @@ function dxfArcToPoints(x1, y1, x2, y2, rx, ry, laf, sf) {
 
 /** シンボルボディ → プリミティブ配列 (ローカル座標) */
 function dxfSymPrimitives(sym) {
-  const key = sym.id + "@" + sheetScale();
+  const key = sym.id + "@" + contentScale();
   if (__dxfPrimCache.has(key)) return __dxfPrimCache.get(key);
   const prims = [];
-  const src = scaleSymbolGeom(sym.body, 1);
+  const src = scaleSymbolGeom(sym.body, contentScale());
   // <g transform="translate(a,b)"> の入れ子を追跡
   const stack = [{ tx: 0, ty: 0 }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
@@ -217,7 +217,7 @@ function dxfText(x, y, size, text, layer, anchor = "start", angle = 0) {
 /** デバイス座標変換 (回転 + 平行移動) */
 function dxfDevXform(dev) {
   const r = (dev.rot || 0) * Math.PI / 180;
-  const c = Math.cos(r), s = Math.sin(r), k = sheetScale();   // 図記号は尺度倍
+  const c = Math.cos(r), s = Math.sin(r), k = contentScale();   // 図記号は常に 1:1
   return (x, y) => [dev.x + (x * k) * c - (y * k) * s, dev.y + (x * k) * s + (y * k) * c];
 }
 
@@ -238,7 +238,7 @@ function dxfProjSymbol(x, y, u, proj) {
 }
 
 /** コイル下の接点ミラー表 (画面 mirrorSVG と同じ内容) */
-function dxfMirrorTable(coilDev, S) {
+function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
   const csym0 = SYMBOLS_BY_ID[coilDev.sym];
@@ -249,7 +249,7 @@ function dxfMirrorTable(coilDev, S) {
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
-    const csym = SYMBOLS_BY_ID[c.sym];
+    const csym = symOf(c.sym);
     // ミニ接点グリフ (b接点は横バーつき) — DXF だけ種別が分からなくならないように
     out += dxfPoly([[x, cy + S(1.5)], [x + S(2), cy + S(1.5)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
     out += dxfPoly([[x + S(4.6), cy + S(1.5)], [x + S(5.4), cy + S(1.5)]], "WIRENUM");
@@ -270,7 +270,8 @@ function pageToDXF(page) {
   const { w, h, margin: mg, marginLeft: ml, cols, rows } = SHEET;
   const meta = projectMeta();
   const f = sheetScale();
-  const S = v => v * f;                      // 用紙実寸 mm → 作図領域 mm
+  const S = v => v * f;                      // 図枠・表題欄用 (用紙実寸 mm → 作図領域 mm)
+  const C = v => v * contentScale();         // 図面内容用 (常に 1:1)
   const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
 
   // ── 輪郭線 (とじ代 20mm) + 中心マーク ──
@@ -359,7 +360,7 @@ function pageToDXF(page) {
   // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {
     ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED");
-    if (z.label) ents += dxfText(z.x + S(2.5), z.y - S(1.8), S(TEXT_H.normal), z.label, "TEXT");
+    if (z.label) ents += dxfText(z.x + C(2.5), z.y - C(1.8), C(TEXT_H.normal), z.label, "TEXT");
   });
 
   // ── 配線 + ジャンクション + 線番 + 電線仕様 ──
@@ -373,18 +374,18 @@ function pageToDXF(page) {
     ents += dxfPoly(wr.pts, "WIRE", lt);
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
-      ents += dxfText(horiz ? mx : mx - S(0.6), my, S(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx - C(0.6), my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
-      ents += dxfText(horiz ? mx : mx + S(3.4), horiz ? my + S(4.6) : my, S(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx + C(3.4), horiz ? my + C(4.6) : my, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
-  junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, S(LINE_W.thick * 1.5), "WIRE"); });
+  junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, C(LINE_W.thick * 1.5), "WIRE"); });
 
   // ── デバイス ──
   page.devices.forEach(dev => {
-    const sym = SYMBOLS_BY_ID[dev.sym];
+    const sym = symOf(dev.sym);
     if (!sym) return;
     const xf = dxfDevXform(dev);
     dxfSymPrimitives(sym).forEach(pr => {
@@ -395,7 +396,7 @@ function pageToDXF(page) {
         ents += dxfCircle(cx, cy, pr.r, "SYMBOL");
       } else if (pr.type === "text") {
         const [tx, ty] = xf(pr.x, pr.y);
-        ents += dxfText(tx, ty, pr.size * sheetScale(), pr.text, "SYMBOL", pr.anchor || "middle");
+        ents += dxfText(tx, ty, pr.size * contentScale(), pr.text, "SYMBOL", pr.anchor || "middle");
       }
     });
     // ピン番号 (画面と同じく回転後の絶対座標に水平で置く)
@@ -405,8 +406,8 @@ function pageToDXF(page) {
       const name = vis.name, abs = vis.abs;
       const rotated = (dev.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
-      const tx = abs.x + S(1), ty = rotated ? abs.y - S(1.6) : abs.y + (isTop ? S(3.4) : S(-1.6));
-      ents += dxfText(tx, ty, S(TEXT_H.small), name, "PIN");
+      const tx = abs.x + C(1), ty = rotated ? abs.y - C(1.6) : abs.y + (isTop ? C(3.4) : C(-1.6));
+      ents += dxfText(tx, ty, C(TEXT_H.small), name, "PIN");
     });
     // タグ / 機能テキスト (配置は画面と同じ deviceLabelBoxes に従う)
     const b = devBounds(dev);
@@ -416,18 +417,18 @@ function pageToDXF(page) {
       const fd = findDevice(dev.linkTo);
       if (fd) {
         const right = lboxes.side === "right";
-        const lx = right ? b.x + b.w + S(2.2) : b.x + b.w + S(1.6);
-        const ly = right ? b.y + b.h / 2 + S((lboxes.length + 1) * 4) : b.y + b.h / 2 + S(1.2);
-        ents += dxfText(lx, ly, S(TEXT_H.small), "/" + devLocation(fd.dev), "WIRENUM");
+        const lx = right ? b.x + b.w + C(2.2) : b.x + b.w + C(1.6);
+        const ly = right ? b.y + b.h / 2 + C((lboxes.length + 1) * 4) : b.y + b.h / 2 + C(1.2);
+        ents += dxfText(lx, ly, C(TEXT_H.small), "/" + devLocation(fd.dev), "WIRENUM");
       }
     }
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)
-    if (sym.mirror) ents += dxfMirrorTable(dev, S);
+    if (sym.mirror) ents += dxfMirrorTable(dev, C);
   });
 
   // ── フリーテキスト ──
   page.texts.forEach(t => {
-    ents += dxfText(t.x, t.y, textHeight(t) * f, t.text, "TEXT", t.anchor || "middle");
+    ents += dxfText(t.x, t.y, textHeight(t) * contentScale(), t.text, "TEXT", t.anchor || "middle");
   });
 
   // ── DXF 全体 (R12) ──
@@ -461,63 +462,143 @@ function pageToDXF(page) {
    TEXT / MTEXT / SOLID を読み、図面へ作図するか、シンボルとして登録する)
    ═══════════════════════════════════════════════════════════════ */
 
-/** DXF 文字列 → エンティティ配列 (単位 mm・Y は画面座標へ反転済み) */
+/** DXF 文字列 → エンティティ配列 (単位 mm)。
+    LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC / TEXT / MTEXT / SOLID に対応し、
+    BLOCKS と INSERT (挿入点・尺度・回転) も展開する。 */
 function parseDXF(text) {
-  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  const src = String(text).replace(/\r\n?/g, "\n").split("\n");
   const pairs = [];
-  for (let i = 0; i + 1 < lines.length; i += 2) {
-    const code = parseInt(lines[i].trim(), 10);
-    if (Number.isNaN(code)) continue;
-    pairs.push([code, lines[i + 1]]);
+  for (let i = 0; i + 1 < src.length; i++) {
+    const code = parseInt(src[i].trim(), 10);
+    if (Number.isNaN(code) || src[i].trim() === "") continue;   // 空行・ずれから再同期する
+    pairs.push([code, src[i + 1]]);
+    i++;
   }
-  const ents = [];
-  let i = 0;
-  // ENTITIES セクションまで進む (無ければ全体を走査する)
-  const secIdx = pairs.findIndex(([c, v], k) => c === 2 && v.trim() === "ENTITIES" && pairs[k - 1] && pairs[k - 1][0] === 0);
-  if (secIdx >= 0) i = secIdx + 1;
-  const unesc = s => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+  const unesc = t => String(t).replace(/\\U\+([0-9A-Fa-f]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/\\[A-Za-z][^;]*;/g, "").replace(/[{}]/g, "");
-  let cur = null, curType = null, verts = null;
-  const push = () => {
-    if (!cur || !curType) return;
-    if (curType === "POLYLINE") { cur.pts = verts || []; }
-    ents.push({ type: curType, ...cur });
-    cur = null; curType = null; verts = null;
-  };
-  for (; i < pairs.length; i++) {
-    const [c, raw] = pairs[i];
-    const v = raw.trim();
-    if (c === 0) {
-      if (v === "VERTEX" && curType === "POLYLINE") { cur.__vx = {}; continue; }
-      if (v === "SEQEND") continue;
-      push();
-      if (v === "ENDSEC" || v === "EOF") break;
-      curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID"].includes(v) ? v : null;
-      cur = curType ? { layer: "0", pts: [] } : null;
-      if (curType === "POLYLINE") verts = [];
-      continue;
+
+  /* 1) BLOCKS を集める */
+  const blocks = {};
+  let bi = 0, curBlockName = null, blockEnts = null;
+  const sections = [];
+  pairs.forEach(([c, v], k) => { if (c === 0 && v.trim() === "SECTION") sections.push(k); });
+  const readEnts = (from, to, sink) => {
+    let cur = null, curType = null, verts = null, inVertex = false, mtext = "";
+    const push = () => {
+      if (!cur || !curType) return;
+      if (curType === "POLYLINE") cur.pts = verts || [];
+      if (curType === "MTEXT" && mtext) cur.text = unesc(mtext);
+      sink.push({ type: curType, ...cur });
+      cur = null; curType = null; verts = null; inVertex = false; mtext = "";
+    };
+    for (let i = from; i < to; i++) {
+      const [c, raw] = pairs[i];
+      const v = raw.trim();
+      if (c === 0) {
+        if (v === "VERTEX" && curType === "POLYLINE") { inVertex = true; cur.__vx = null; cur.__vy = null; continue; }
+        if (v === "SEQEND") { inVertex = false; continue; }
+        push();
+        curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID", "INSERT"].includes(v) ? v : null;
+        cur = curType ? { layer: "0", pts: [] } : null;
+        if (curType === "POLYLINE") verts = [];
+        continue;
+      }
+      if (!cur) continue;
+      const num = parseFloat(v);
+      switch (c) {
+        case 8: cur.layer = v; break;
+        case 2: if (curType === "INSERT") cur.blockName = v; break;
+        case 1: if (curType === "MTEXT") mtext += raw; else cur.text = unesc(raw); break;
+        case 3: if (curType === "MTEXT") mtext += raw; break;
+        case 10:
+          if (curType === "POLYLINE" && inVertex) { cur.__vx = num; }
+          else if (curType === "LWPOLYLINE") cur.pts.push([num, null]);
+          else cur.x1 = num;                      // POLYLINE ヘッダの 10/20 は常に 0 なので使わない
+          break;
+        case 20:
+          if (curType === "POLYLINE" && inVertex) { cur.__vy = num; if (cur.__vx !== null) verts.push([cur.__vx, num]); }
+          else if (curType === "LWPOLYLINE" && cur.pts.length) cur.pts[cur.pts.length - 1][1] = num;
+          else cur.y1 = num;
+          break;
+        case 11: cur.x2 = num; break;
+        case 21: cur.y2 = num; break;
+        case 40: cur.r = num; cur.size = num; break;
+        case 41: if (curType === "INSERT") cur.sx = num; break;
+        case 42: if (curType === "INSERT") cur.sy = num; break;
+        case 50: if (curType === "INSERT") cur.rot = num; else cur.a1 = num; break;
+        case 51: cur.a2 = num; break;
+        case 70: cur.flags = num; break;
+        case 72: cur.hAlign = num; break;
+        case 73: cur.vAlign = num; break;
+        default: break;
+      }
     }
-    if (!cur) continue;
-    const num = parseFloat(v);
-    switch (c) {
-      case 8: cur.layer = v; break;
-      case 1: cur.text = unesc(raw); break;
-      case 10: cur.x1 = num; if (curType === "LWPOLYLINE") cur.pts.push([num, null]); if (curType === "POLYLINE") cur.__vxx = num; break;
-      case 20: cur.y1 = num;
-        if (curType === "LWPOLYLINE" && cur.pts.length) cur.pts[cur.pts.length - 1][1] = num;
-        if (curType === "POLYLINE" && cur.__vxx !== undefined) { verts.push([cur.__vxx, num]); cur.__vxx = undefined; }
-        break;
-      case 11: cur.x2 = num; break;
-      case 21: cur.y2 = num; break;
-      case 40: cur.r = num; cur.size = num; break;
-      case 50: cur.a1 = num; break;
-      case 51: cur.a2 = num; break;
-      case 70: cur.flags = num; break;
-      default: break;
+    push();
+  };
+  // BLOCKS セクション
+  const blkStart = pairs.findIndex(([c, v], k) => c === 2 && v.trim() === "BLOCKS" && pairs[k - 1] && pairs[k - 1][0] === 0);
+  if (blkStart >= 0) {
+    let i = blkStart + 1;
+    while (i < pairs.length) {
+      const [c, v] = pairs[i];
+      if (c === 0 && v.trim() === "ENDSEC") break;
+      if (c === 0 && v.trim() === "BLOCK") {
+        let name = "", j = i + 1, bx = 0, by = 0;
+        for (; j < pairs.length && !(pairs[j][0] === 0); j++) {
+          if (pairs[j][0] === 2) name = pairs[j][1].trim();
+          if (pairs[j][0] === 10) bx = parseFloat(pairs[j][1]);
+          if (pairs[j][0] === 20) by = parseFloat(pairs[j][1]);
+        }
+        let end = j;
+        while (end < pairs.length && !(pairs[end][0] === 0 && pairs[end][1].trim() === "ENDBLK")) end++;
+        const sink = [];
+        readEnts(j, end, sink);
+        blocks[name] = { base: [bx, by], ents: sink };
+        i = end + 1;
+        continue;
+      }
+      i++;
     }
   }
-  push();
-  return ents;
+  /* 2) ENTITIES を読む */
+  const entStart = pairs.findIndex(([c, v], k) => c === 2 && v.trim() === "ENTITIES" && pairs[k - 1] && pairs[k - 1][0] === 0);
+  const raw = [];
+  if (entStart >= 0) {
+    let end = entStart;
+    while (end < pairs.length && !(pairs[end][0] === 0 && ["ENDSEC", "EOF"].includes(pairs[end][1].trim()))) end++;
+    readEnts(entStart + 1, end, raw);
+  } else {
+    readEnts(0, pairs.length, raw);
+  }
+  /* 3) INSERT を展開 (1段のみ入れ子も展開する) */
+  const out = [];
+  const place = (ents, ox, oy, sx, sy, rot, depth) => {
+    const c = Math.cos(rot * Math.PI / 180), s2 = Math.sin(rot * Math.PI / 180);
+    const T = (x, y) => [ox + (x * sx) * c - (y * sy) * s2, oy + (x * sx) * s2 + (y * sy) * c];
+    ents.forEach(e => {
+      if (e.type === "INSERT") {
+        const b = blocks[e.blockName];
+        if (!b || depth > 3) { out.push({ ...e, unresolved: !b }); return; }
+        const [px, py] = T(e.x1 || 0, e.y1 || 0);
+        place(b.ents.map(x => ({ ...x })), px - (b.base[0] || 0), py - (b.base[1] || 0),
+          sx * (e.sx || 1), sy * (e.sy || 1), rot + (e.rot || 0), depth + 1);
+        return;
+      }
+      const n = { ...e };
+      if (n.x1 !== undefined && n.y1 !== undefined) { const [a, b2] = T(n.x1, n.y1); n.x1 = a; n.y1 = b2; }
+      if (n.x2 !== undefined && n.y2 !== undefined) { const [a, b2] = T(n.x2, n.y2); n.x2 = a; n.y2 = b2; }
+      if (n.pts && n.pts.length) n.pts = n.pts.map(p => (isFinite(p[0]) && isFinite(p[1])) ? T(p[0], p[1]) : p);
+      if (n.r !== undefined) n.r = n.r * Math.abs(sx);
+      if (n.size !== undefined) n.size = n.size * Math.abs(sy);
+      out.push(n);
+    });
+  };
+  place(raw, 0, 0, 1, 1, 0, 0);
+  // 揃え指定つき TEXT は 11/21 (揃え点) が実位置
+  out.forEach(e => {
+    if ((e.type === "TEXT") && (e.hAlign || e.vAlign) && e.x2 !== undefined) { e.x1 = e.x2; e.y1 = e.y2; }
+  });
+  return out.filter(e => e.type !== "INSERT");
 }
 
 /** 取り込んだエンティティ群の外接矩形 (DXF 座標系) */
@@ -527,7 +608,8 @@ function dxfEntsBounds(ents) {
   ents.forEach(e => {
     if (e.type === "LINE") { add(e.x1, e.y1); add(e.x2, e.y2); }
     else if (e.type === "CIRCLE" || e.type === "ARC") { add(e.x1 - e.r, e.y1 - e.r); add(e.x1 + e.r, e.y1 + e.r); }
-    else if (e.type === "TEXT" || e.type === "MTEXT") { add(e.x1, e.y1); add(e.x1 + (e.text || "").length * (e.size || 3) * 0.6, e.y1 + (e.size || 3)); }
+    else if (e.type === "TEXT" || e.type === "MTEXT") { add(e.x1, e.y1); add(e.x1 + textWidthMM(e.text || "", e.size || 3.5), e.y1 + (e.size || 3.5)); }
+    else if (e.type === "SOLID") { [[e.x1, e.y1], [e.x2, e.y2]].forEach(([x, y]) => add(x, y)); }
     else (e.pts || []).forEach(p => add(p[0], p[1]));
   });
   if (!isFinite(x0)) return null;
@@ -560,6 +642,8 @@ function dxfEntsToSVG(ents, opt = {}) {
       const p2 = [cx + r * Math.cos(a2), cy - r * Math.sin(a2)];
       let sweepAng = (e.a2 - e.a1 + 360) % 360;
       out += `<path d="M${p1[0].toFixed(3)},${p1[1].toFixed(3)} A${r.toFixed(3)},${r.toFixed(3)} 0 ${sweepAng > 180 ? 1 : 0} 0 ${p2[0].toFixed(3)},${p2[1].toFixed(3)}"/>`;
+    } else if (e.type === "SOLID") {
+      if (isFinite(e.x1) && isFinite(e.x2)) out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}"/>`;
     } else if (e.type === "TEXT" || e.type === "MTEXT") {
       const sz = Math.max(2.5, (e.size || 3.5) * k);
       out += `<text x="${X(e.x1)}" y="${Y(e.y1)}" font-size="${+sz.toFixed(2)}" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;

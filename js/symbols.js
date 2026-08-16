@@ -62,10 +62,10 @@ const SYMBOLS = [
   },
   {
     id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ", nameEn: "Limit switch",
-    desc: "メーク接点 (JIS 07-08-01)", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
-    sim: "contact_no", momentary: false, bounds: [-12,-2, 15, 24],
-    // 07-08-01: メーク接点 + 可動接点側の三角形 (カム等で操作されることを示す)
-    body: G_NO + `<path d="M-4.8,5 L-9.6,10 L-4.8,15" fill="none"/>`,
+    desc: "位置スイッチ・メーク接点", jis: "07-08-01", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
+    sim: "contact_no", momentary: false, bounds: [-12,-2, 14, 24],
+    // 07-08-01: メーク接点 + 可動接点先端の直角三角形 (位置スイッチ)
+    body: G_NO + `<path d="M-4.8,5 L-9.6,5 L-9.6,9.8 Z"/>`,
   },
   {
     id: "prox", cat: "input", letter: "B", name: "近接センサ", nameEn: "Proximity sensor",
@@ -187,10 +187,10 @@ const SYMBOLS = [
   },
   {
     id: "buzzer", cat: "output", letter: "P", name: "ブザー", nameEn: "Buzzer",
-    desc: "警報音響機器 (JIS 08-10-10)", typ: "M2BJ-B24", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
-    sim: "load", bounds: [-8,-1, 16, 22],
+    desc: "警報音響機器", jis: "08-10-10", typ: "M2BJ-B24", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
+    sim: "load", bounds: [-8,0, 16, 20],
     // 08-10-10: 上辺が直線・下側が半円のお椀形。引出線は両端から下へ
-    body: `<path d="M0,0 V6"/><path d="M-6,6 H6"/><path d="M-6,6 A6,6 0 0 0 6,6"/><path d="M0,12 V20"/>`,
+    body: `<path d="M0,0 V7"/><path d="M-6,7 H6"/><path d="M-6,7 A6,6 0 0 0 6,7"/><path d="M0,13 V20"/>`,
   },
   {
     id: "sol_valve", cat: "output", letter: "Y", name: "電磁弁", nameEn: "Solenoid valve",
@@ -220,10 +220,10 @@ const SYMBOLS = [
   },
   {
     id: "main_cont", cat: "output", letter: "Q", name: "主接点 (3極)", nameEn: "Main contacts 3P",
-    desc: "電磁接触器の主接点", linked: true,
+    desc: "電磁接触器の主メーク接点 3極", jis: "07-13-02", typ: "SD-T21", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
-    sim: "contact3_no", bounds: [-8,-2, 31, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g><path d="M-3,9 L17,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    sim: "contact3_no", bounds: [-6,-2, 29, 24],
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g><path d="M-2.4,9 L17.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
 
   /* ══════════ 電源・保護 ══════════ */
@@ -309,7 +309,7 @@ const SYMBOLS = [
   },
   {
     id: "trafo", cat: "power", letter: "T", name: "変圧器 (シールド付)", nameEn: "Shielded transformer",
-    desc: "制御トランス 2巻線+静電シールド (JIS C 0617)", typ: "PT-100E", horizontalPins: true,
+    desc: "制御トランス 2巻線+静電遮蔽", jis: "06-10-02", typ: "PT-100E", horizontalPins: true,
     pins: [{x:-10,y:0,n:"1"},{x:10,y:0,n:"2"},{x:-10,y:40,n:"3"},{x:10,y:40,n:"4"}],
     sim: "trafo", bounds: [-15,0, 30, 40],
     body: `<path d="M-10,0 V16 M10,0 V16 M-10,40 V24 M10,24 V40"/>` +
@@ -318,7 +318,7 @@ const SYMBOLS = [
       // 二次巻線: 4コブ
       `<path d="M-10,24 A2.5,2.5 0 0 1 -5,24 A2.5,2.5 0 0 1 0,24 A2.5,2.5 0 0 1 5,24 A2.5,2.5 0 0 1 10,24"/>` +
       // 静電遮蔽 (破線) — 06-10-02 は遮蔽のみを描く
-      `<path d="M-13,20 H13" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+      `<path d="M-12.75,20 H12.75" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "earth", cat: "power", letter: "E", name: "接地 (一般)", nameEn: "Earth",
@@ -408,5 +408,6 @@ function symThumbSVG(sym, size = 46) {
   const [bx, by, bw, bh] = sym.bounds;
   const pad = 3;
   const vb = `${bx - pad} ${by - pad} ${bw + pad * 2} ${bh + pad * 2}`;
-  return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + pad * 2) / (bw + pad * 2)}" style="max-height:100%">${symBodySVG(sym, { strokeWidth: 1.1 })}</svg>`;
+  const thumb = { ...sym, body: scaleSymbolGeom(sym.body, 1.1 / 0.5) };   // 連結破線 (0.25mm) も見えるように
+  return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + pad * 2) / (bw + pad * 2)}" style="max-height:100%">${symBodySVG(thumb, { strokeWidth: 1.1, textScale: 1 })}</svg>`;
 }

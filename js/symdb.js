@@ -287,15 +287,6 @@ const DB_SYMBOLS = [
     sim: "contact2_no", bounds: [-18,-2, 30, 24],
     body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><path d="M-15,6 L-11,9 L-15,12"/><path d="M-11,9 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
-  {
-    id: "main_cont3_jis", db: true, group: "開閉・保護", jis: "07-13-02", cat: "db", letter: "Q",
-    name: "電磁接触器 主メーク接点 3極", nameEn: "Contactor main contacts 3P",
-    desc: "07-13-02 の主メーク接点を3極並べたもの (機械的連結は破線)", typ: "SD-T21", linked: true,
-    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
-    sim: "contact3_no", bounds: [-8,-2, 31, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` +
-      `<path d="M-3,9 L17,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
-  },
 ];
 
 /* パレットに引き出されているDBシンボル (localStorage) */

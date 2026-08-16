@@ -295,7 +295,7 @@ function devicesSVG(page, opts = {}) {
   const simOn = App.sim.running;
   const fr = contentScale();
   page.devices.forEach(dev => {
-    const sym = SYMBOLS_BY_ID[dev.sym];
+    const sym = symOf(dev.sym);
     if (!sym) return;
     const selected = !print && App.selection.has(dev.id);
     const hovered = !print && Editor.hover.devId === dev.id;
@@ -402,7 +402,7 @@ function mirrorSVG(coilDev) {
   out += `<path d="M${coilDev.x},${coilDev.y + 20 * mfr} L${x},${y0 - 1.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr).join(" ")}"/>`;
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
-    const csym = SYMBOLS_BY_ID[c.sym];
+    const csym = symOf(c.sym);
     const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
     const pinLabel = (n0 && n1) ? `${n0}·${n1}` : "";
     const M = v => v * mfr;
@@ -1207,7 +1207,7 @@ function pasteClipboard() {
     const d = page.devices[page.devices.length - cb.devs.length + i];
     if (d.linkTo && idMap[d.linkTo]) d.linkTo = idMap[d.linkTo];
     if (d.tag && !d.linkTo) {
-      const sym = SYMBOLS_BY_ID[d.sym];
+      const sym = symOf(d.sym);
       if (sym.letter) d.tag = nextTag(sym.letter);
     }
   });

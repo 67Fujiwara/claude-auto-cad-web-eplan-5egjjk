@@ -165,7 +165,7 @@ function wireLabelPos(w, page) {
 /** ピン番号を表示するか (隣接配線の線番と同名なら二重表示を避ける)。
     画面・DXF で同じ判定を使う。 */
 function pinLabelVisible(page, dev, pinIdx) {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   const p = sym.pins[pinIdx];
   if (!p || !p.n || dev.sym === "terminal") return null;
   const name = effectivePinName(dev, pinIdx);
@@ -179,7 +179,7 @@ function pinLabelVisible(page, dev, pinIdx) {
 /** 機器ラベル (タグ・機能テキスト) の配置。左に置くと隣の機器へ被る場合は
     右側へ寄せる。画面描画と検図で同じ結果を使うためエンジンに置く。 */
 function deviceLabelBoxes(page, dev) {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   const f = contentScale();
   const b = devBounds(dev);
   const tag = displayTag(dev), desc = dev.desc;
@@ -303,6 +303,7 @@ function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 function newProject(name = "無題プロジェクト") {
   return {
     name,
+    symbols: [],        // この図面が使う取り込みシンボルの定義 (自己完結させる)
     meta: {
       paper: "A3", scale: "1:1", dwgNo: "", rev: "0",
       designer: "", checker: "", date: todayStr(), author: "ElectraCAD Studio",
@@ -317,6 +318,25 @@ function todayStr() {
 function newPage(name, no) {
   return { id: uid("p"), no, name, devices: [], wires: [], texts: [], zones: [] };
 }
+/** プロジェクトに同梱されたシンボル定義を辞書へ取り込む (読込・undo 後に呼ぶ) */
+function mergeProjectSymbols() {
+  const list = App.project && App.project.symbols;
+  if (!Array.isArray(list)) return;
+  list.forEach(sym => { if (sym && sym.id) SYMBOLS_BY_ID[sym.id] = sym; });
+}
+/** 図面で実際に使われている取り込みシンボルをプロジェクトへ保存する */
+function syncProjectSymbols() {
+  if (!App.project) return;
+  const used = new Set();
+  App.project.pages.forEach(pg => pg.devices.forEach(d => used.add(d.sym)));
+  const keep = [];
+  used.forEach(id => {
+    const sym = SYMBOLS_BY_ID[id];
+    if (sym && sym.imported) keep.push(sym);
+  });
+  App.project.symbols = keep;
+}
+
 /** 旧データ互換: zones が無いページに追加 */
 function pageZones(page) {
   if (!page.zones) page.zones = [];
@@ -325,6 +345,17 @@ function pageZones(page) {
 function curPage() { return App.project.pages[App.pageIdx]; }
 
 /* ══════════════ デバイス ══════════════ */
+/* 定義が見つからないシンボル (取り込みシンボルを含む図面を別環境で開いた等) の
+   代替。落とさずに「?」枠で描き、検図でエラーとして知らせる。 */
+const MISSING_SYM = {
+  id: "__missing", cat: "misc", letter: "", name: "未登録シンボル", nameEn: "Missing symbol",
+  desc: "この図面が使うシンボル定義が見つかりません", pins: [{ x: 0, y: 0, n: "1" }, { x: 0, y: 20, n: "2" }],
+  sim: "passthru", bounds: [-8, -2, 16, 24], missing: true,
+  body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-7" y="4" width="14" height="12" stroke-dasharray="3 0.75" stroke-width="0.25"/>` +
+    `<text x="0" y="12.6" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">?</text>`,
+};
+function symOf(symId) { return SYMBOLS_BY_ID[symId] || MISSING_SYM; }
+
 /* 図記号・文字・線の太さは尺度によらず常に 1:1 で描く (シンボルの大きさは
    変えない)。尺度を変えると図枠 (用紙) だけが広くなり、1枚に収められる
    回路が増える。 */
@@ -334,11 +365,11 @@ function pinAbs(dev, pin) {
   return { x: dev.x + pin.x * c - pin.y * s, y: dev.y + pin.x * s + pin.y * c };
 }
 function devPins(dev) {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   return sym.pins.map((p, i) => ({ ...pinAbs(dev, p), name: p.n, idx: i }));
 }
 function devBounds(dev) {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   const [bx, by, bw, bh] = sym.bounds;
   const corners = [[bx, by], [bx + bw, by], [bx, by + bh], [bx + bw, by + bh]]
     .map(([x, y]) => pinAbs(dev, { x, y }));
@@ -434,7 +465,9 @@ function isWireConductive(w) {
 function condWires(page) { return page.wires.filter(isWireConductive); }
 
 function addWire(page, pts, opts = {}) {
-  const wire = { id: uid("w"), pts: pts.map(p => [snap(p[0]), snap(p[1])]), num: opts.num || null };
+  // raw: グリッドに丸めない (DXF 取り込みなど、元図形の座標を保つ場合)
+  const q = opts.raw ? (v => Math.round(v * 100) / 100) : snap;
+  const wire = { id: uid("w"), pts: pts.map(p => [q(p[0]), q(p[1])]), num: opts.num || null };
   if (opts.style && opts.style !== "solid") wire.style = opts.style;
   // 長さ0の連続点を除去
   wire.pts = wire.pts.filter((p, i) => i === 0 || p[0] !== wire.pts[i - 1][0] || p[1] !== wire.pts[i - 1][1]);
@@ -513,7 +546,7 @@ function UnionFind() {
  *  - "open":   スイッチ要素はすべて開 (配線番号は接点を跨いで伝播しない)
  */
 function conductivePairs(dev, mode = "closed") {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   switch (sym.sim) {
     case "contact_no":
       if (mode === "open" || mode === "split") return [];
@@ -569,7 +602,7 @@ function propagateLinkGroups(pagesData) {
   const groups = new Map(); // tag → [{pd, net}]
   pagesData.forEach(pd => {
     pd.page.devices.forEach(dev => {
-      if (SYMBOLS_BY_ID[dev.sym].sim !== "link" || !dev.tag) return;
+      if (symOf(dev.sym).sim !== "link" || !dev.tag) return;
       const net = pd.pinNet(dev, 0);
       if (!net) return;
       const key = dev.tag.replace(/^-/, "").toUpperCase();
@@ -593,12 +626,12 @@ function propagateLinkGroups(pagesData) {
 
 /** 連動接点の実効端子番号: 同一コイル配下の n 番目の接点は 13/14 → n3/n4 に採番 */
 function effectivePinName(dev, idx) {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   const base = sym.pins[idx] ? sym.pins[idx].n : "";
   if (!dev.linkTo || !/^[1-8][1-8]$/.test(base)) return base;
   const f = findDevice(dev.linkTo);
   if (!f) return base;
-  const siblings = linkedContacts(f.dev).filter(c => /^[1-8][1-8]$/.test((SYMBOLS_BY_ID[c.sym].pins[0] || {}).n || ""));
+  const siblings = linkedContacts(f.dev).filter(c => /^[1-8][1-8]$/.test((symOf(c.sym).pins[0] || {}).n || ""));
   const pos = siblings.findIndex(c => c.id === dev.id);
   if (pos < 0) return base;
   return String(pos + 1) + base[1];
@@ -703,7 +736,7 @@ function autoNumberWires() {
     const netNum = new Map();
     // 1) 電源系ネット・電位リンクには電位名を付ける
     page.devices.forEach(dev => {
-      const sym = SYMBOLS_BY_ID[dev.sym];
+      const sym = symOf(dev.sym);
       if (sym.sim === "psu") {
         const pNet = pinNet(dev, 2), nNet = pinNet(dev, 3);
         if (pNet) netNum.set(pNet, "+24V");
@@ -739,7 +772,7 @@ function autoNumberWires() {
 
 /* ══════════════ 通電シミュレーション ══════════════ */
 function simActiveState(dev) {
-  const sym = SYMBOLS_BY_ID[dev.sym];
+  const sym = symOf(dev.sym);
   if (sym.sim === "contact_no" || sym.sim === "contact_nc" || sym.sim === "contact2_no" || sym.sim === "contact3_no") {
     if (dev.linkTo) {
       // コイル連動接点: タイマは遅延を考慮
@@ -762,7 +795,7 @@ function simCollectPage(page) {
   const { pinNet, wireNet } = computeNets(page, "sim");
   const pNets = new Set(), nNets = new Set(), acNets = new Set();
   page.devices.forEach(dev => {
-    const sym = SYMBOLS_BY_ID[dev.sym];
+    const sym = symOf(dev.sym);
     if (sym.sim === "psu") {
       const p = pinNet(dev, 2), n0 = pinNet(dev, 3);
       if (p) pNets.add(p);
@@ -798,7 +831,7 @@ function simSolve() {
     const byPage = new Map();
     pagesData.forEach(pd => {
       pd.page.devices.forEach(dev => {
-        const sym = SYMBOLS_BY_ID[dev.sym];
+        const sym = symOf(dev.sym);
         let en = false;
         if (sym.sim === "coil" || sym.sim === "load") {
           const a = pd.pinNet(dev, 0), b = pd.pinNet(dev, 1);
@@ -830,7 +863,7 @@ function updateTimers() {
   const now = performance.now();
   let changed = false;
   App.project.pages.forEach(page => page.devices.forEach(dev => {
-    const sym = SYMBOLS_BY_ID[dev.sym];
+    const sym = symOf(dev.sym);
     if (sym.sim !== "coil" || !sym.timer) return;
     const en = !!App.sim.states[dev.id];
     let t = App.sim.timers[dev.id];
@@ -877,7 +910,7 @@ const DRC_RULES = [
 function drcSources(page, pinNet) {
   const pNets = new Set(), nNets = new Set();
   page.devices.forEach(d => {
-    const s = SYMBOLS_BY_ID[d.sym];
+    const s = symOf(d.sym);
     if (s.sim === "psu") { pNets.add(pinNet(d, 2)); nNets.add(pinNet(d, 3)); }
     if (s.sim === "source1") { pNets.add(pinNet(d, 0)); nNets.add(pinNet(d, 1)); }
     if (s.sim === "link") {
@@ -936,7 +969,7 @@ function runDRC() {
     const overlaps = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
     page.devices.forEach(dev => {
       const b = devBounds(dev);
-      const tag = displayTag(dev) || SYMBOLS_BY_ID[dev.sym].name;
+      const tag = displayTag(dev) || symOf(dev.sym).name;
       if (outOfFrame(b)) {
         issues.push({ sev: "err", msg: `${tag} が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
       } else {
@@ -965,7 +998,7 @@ function runDRC() {
     page.devices.forEach(dev => {
       deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev, what: `${displayTag(dev) || "機器"} の文字` }));
       // ピン番号 (描画と同じ位置で判定する)
-      const symD = SYMBOLS_BY_ID[dev.sym];
+      const symD = symOf(dev.sym);
       symD.pins.forEach((p, pi) => {
         const vis = pinLabelVisible(page, dev, pi);
         if (!vis) return;
@@ -1014,7 +1047,13 @@ function runDRC() {
     // 縮小尺度では図記号だけが用紙上小さくなるため、回路図ページでは必ず知らせる
     if (sheetScale() > 1 && page.devices.length) {
       const f3 = sheetScale();
-      issues.push({ sev: "warn", msg: `尺度 ${projectMeta().scale} では図記号が用紙上 1/${f3} の大きさになります (回路図は NS または 1:1 を推奨)`, page: page.no, target: null, loc: `${page.no}.-` });
+      const minH = TEXT_H.small / f3;   // 用紙上の最小文字高
+      issues.push({
+        sev: minH < 2.5 ? "err" : "warn",
+        msg: `尺度 ${pageSheetMeta(page).scale} では図記号・文字が用紙上 1/${f3} になります` +
+             (minH < 2.5 ? ` — 最小文字高 ${minH.toFixed(2)}mm は JIS Z 8313 の 2.5mm を下回ります (回路図は NS または 1:1 を推奨)` : ""),
+        page: page.no, target: null, loc: `${page.no}.-`,
+      });
     }
 
     // 注記テキスト・破線枠も同じ検査にかける
@@ -1066,7 +1105,7 @@ function runDRC() {
     });
 
     page.devices.forEach(dev => {
-      const sym = SYMBOLS_BY_ID[dev.sym];
+      const sym = symOf(dev.sym);
       // 未接続ピン (絶縁処理端末など「未接続であること」を示す記号は除外)
       if (!sym.noDrc) devPins(dev).forEach(pin => {
         const onWire = wireEndpoints.has(ptKey(pin.x, pin.y)) ||
@@ -1124,7 +1163,7 @@ function buildBOM() {
   const rows = new Map();
   App.project.pages.forEach(page => page.devices.forEach(dev => {
     if (dev.linkTo) return; // 連動接点は親デバイスの一部
-    const sym = SYMBOLS_BY_ID[dev.sym];
+    const sym = symOf(dev.sym);
     if (BOM_EXCLUDE.has(sym.id)) return;
     // 端子は本数だけ数える (タグ -X1:n を -X1 に集約)
     const baseTag = sym.id === "terminal" ? (dev.tag || "-X1").split(":")[0] : null;
@@ -1166,7 +1205,7 @@ function buildConnectionList() {
         const net = pinNet(dev, pin.idx);
         if (!net) return;
         if (!netPins.has(net)) netPins.set(net, []);
-        const sym = SYMBOLS_BY_ID[dev.sym];
+        const sym = symOf(dev.sym);
         const label = dev.sym === "terminal" || sym.sim === "link"
           ? (dev.tag || sym.name)
           : `${displayTag(dev) || sym.name}:${effectivePinName(dev, pin.idx) || pin.idx + 1}`;
@@ -1201,7 +1240,7 @@ function buildTerminalList() {
       pinsOfNet.get(net).push({ dev, pin });
     }));
     const pinLabel = (d, idx) => {
-      const s = SYMBOLS_BY_ID[d.sym];
+      const s = symOf(d.sym);
       if (d.sym === "terminal" || s.sim === "link") return d.tag || s.name;
       return `${displayTag(d) || s.name}:${effectivePinName(d, idx) || idx + 1}`;
     };
@@ -1256,6 +1295,7 @@ function undo() {
   if (!App.undoStack.length) return false;
   App.redoStack.push(JSON.stringify(App.project));
   App.project = JSON.parse(App.undoStack.pop());
+  mergeProjectSymbols();
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
   applySheet(); // 用紙・尺度も一緒に巻き戻す
   retainSelection();
@@ -1269,6 +1309,7 @@ function redo() {
   if (!App.redoStack.length) return false;
   App.undoStack.push(JSON.stringify(App.project));
   App.project = JSON.parse(App.redoStack.pop());
+  mergeProjectSymbols();
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
   applySheet();
   retainSelection();
@@ -1281,6 +1322,7 @@ function redo() {
 /* ══════════════ 保存 / 読込 ══════════════ */
 const LS_KEY = "electracad.project.v1";
 function saveLocal() {
+  syncProjectSymbols();
   try { localStorage.setItem(LS_KEY, JSON.stringify(App.project)); } catch (e) { /* 容量超過等は無視 */ }
 }
 function loadLocal() {

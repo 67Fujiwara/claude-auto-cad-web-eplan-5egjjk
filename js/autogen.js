@@ -101,7 +101,7 @@ function aiGenerate(sel) {
 
   // ── 接点リソース管理 (コイルごとの実装可能接点数) ──
   const contactBudget = new Map();
-  const regCoil = dev => contactBudget.set(dev.id, SYMBOLS_BY_ID[dev.sym].maxContacts || 4);
+  const regCoil = dev => contactBudget.set(dev.id, symOf(dev.sym).maxContacts || 4);
   const takeContact = id => {
     const b = contactBudget.get(id) || 0;
     if (b > 0) { contactBudget.set(id, b - 1); return true; }
@@ -281,7 +281,7 @@ function aiGenerate(sel) {
     let rightMost = 6;
     /** 3線式センサ (BUピン持ち) は 0V を自動配線する */
     const wireSensorBU = (d) => {
-      const sym3 = SYMBOLS_BY_ID[d.sym];
+      const sym3 = symOf(d.sym);
       const buIdx = sym3.pins.findIndex(p => p.n === "BU");
       if (buIdx < 0) return;
       const bu = devPins(d)[buIdx];

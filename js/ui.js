@@ -134,11 +134,11 @@ UI.showProps = (focusTag = false) => {
   const only1 = App.selection.size === 1; // 単体パネルは1点選択時のみ (混在選択は一覧パネル)
   if (selDevs.length === 1 && only1) {
     const dev = selDevs[0];
-    const sym = SYMBOLS_BY_ID[dev.sym];
+    const sym = symOf(dev.sym);
     const cat = SYM_CATS[sym.cat];
     const coils = [];
     App.project.pages.forEach(pg => pg.devices.forEach(d => {
-      if (SYMBOLS_BY_ID[d.sym].mirror) coils.push(d);
+      if (symOf(d.sym).mirror) coils.push(d);
     }));
     pane.innerHTML = `
       <div class="prop-head">
@@ -155,10 +155,10 @@ UI.showProps = (focusTag = false) => {
         <div class="prop-row"><label>X (mm)</label><input id="pX" class="mono" type="number" step="5" value="${dev.x}"/></div>
         <div class="prop-row"><label>Y (mm)</label><input id="pY" class="mono" type="number" step="5" value="${dev.y}"/></div>
       </div>
-      ${SYMBOLS_BY_ID[dev.sym].linked || sym.sim?.startsWith("contact") ? `
+      ${symOf(dev.sym).linked || sym.sim?.startsWith("contact") ? `
       <div class="prop-row"><label>コイルにリンク (クロスリファレンス)</label>
         <select id="pLink"><option value="">— リンクなし —</option>
-        ${coils.map(c => `<option value="${c.id}" ${dev.linkTo === c.id ? "selected" : ""}>${c.tag} (${SYMBOLS_BY_ID[c.sym].name})</option>`).join("")}
+        ${coils.map(c => `<option value="${c.id}" ${dev.linkTo === c.id ? "selected" : ""}>${c.tag} (${symOf(c.sym).name})</option>`).join("")}
         </select></div>` : ""}
       ${sym.timer ? `<div class="prop-row"><label>遅延時間 (秒)</label><input id="pDelay" class="mono" type="number" step="0.5" min="0" value="${dev.props.delay || 2}"/></div>` : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}
@@ -328,7 +328,7 @@ UI.mirrorHTML = (coilDev) => {
   return `<div class="prop-sect">連動接点 (${contacts.length})</div>
     <div class="xref-list">
       ${contacts.map(c => `<div class="xref-item" data-target="${c.id}">
-        <span class="xr-tag">${SYMBOLS_BY_ID[c.sym].name}</span>
+        <span class="xr-tag">${symOf(c.sym).name}</span>
         <span class="xr-loc">/${devLocation(c)}</span>
       </div>`).join("")}
     </div>`;
@@ -627,6 +627,7 @@ UI.openFile = async () => {
       if (App.sim.running) UI.toggleSim();
       commit();
       App.project = p;
+      mergeProjectSymbols();
       App.fileHandle = handle;
       App.pendingHandle = null;
       rememberFileHandle(handle);
@@ -658,6 +659,7 @@ UI.openFile = async () => {
         if (App.sim.running) UI.toggleSim(); // 読込確定後にのみ停止
         commit();
         App.project = p;
+        mergeProjectSymbols();
         App.fileHandle = null; // input[type=file] 経由は上書き先を持てない
         App.pageIdx = 0;
         App.selection.clear();
@@ -690,7 +692,7 @@ UI.zoomCenter = (f) => {
 };
 UI.print = () => {
   const svg = exportSheetSVG();
-  const paper = projectMeta().paper || "A3";
+  const paper = pageSheetMeta(curPage()).paper || "A3";
   const win = window.open("", "_blank");
   win.document.write(`<html><head><title>${App.project.name}</title><style>
     @page { size: ${paper} landscape; margin: 0; }
@@ -702,13 +704,15 @@ UI.print = () => {
 
 /** 全ページを1つの印刷ジョブに (印刷ダイアログで「PDFに保存」を選ぶとPDF出力) */
 UI.printAll = () => {
-  const pages = App.project.pages.map(pg =>
-    `<div class="sheet">${exportSheetSVG(pg)}</div>`).join("");
-  const paper = projectMeta().paper || "A3";
+  const pages = App.project.pages.map((pg, i) =>
+    `<div class="sheet sheet${i}">${exportSheetSVG(pg)}</div>`).join("");
+  // ページごとに用紙が違う場合に備え、名前付き @page で1ページずつ用紙を指定する
+  const papers = App.project.pages.map(pg => pageSheetMeta(pg).paper || "A3");
+  const pageCSS = papers.map((pp, i) => `@page p${i} { size: ${pp} landscape; margin: 0 } .sheet${i} { page: p${i} }`).join("\n      ");
   const win = window.open("", "_blank");
   win.document.write(`<html><head><title>${App.project.name} (全${App.project.pages.length}ページ)</title>
     <style>
-      @page { size: ${paper} landscape; margin: 0; }
+      ${pageCSS}
       body { margin: 0; }
       .sheet { width: 100vw; height: 100vh; page-break-after: always; display: flex; align-items: center; justify-content: center; }
       .sheet:last-child { page-break-after: auto; }
@@ -716,7 +720,7 @@ UI.printAll = () => {
     </style></head><body>${pages}</body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 400);
-  UI.setMsg(`印刷ダイアログで「PDFに保存」を選ぶと全ページPDFになります (用紙: ${paper}横 / 尺度 ${projectMeta().scale})`);
+  UI.setMsg(`印刷ダイアログで「PDFに保存」を選ぶと全ページPDFになります (用紙: ${[...new Set(papers)].join(" / ")}横)`);
 };
 
 /** 全ページを DXF (AutoCAD互換) でダウンロード */
@@ -735,7 +739,7 @@ UI.importDXF = () => {
     rd.onload = () => {
       let ents;
       try { ents = parseDXF(rd.result); } catch (e) { alert("DXF の解析に失敗しました: " + e.message); return; }
-      if (!ents.length) { alert("作図要素が見つかりませんでした (対応: LINE / POLYLINE / CIRCLE / ARC / TEXT / SOLID)"); return; }
+      if (!ents.length) { alert("作図要素が見つかりませんでした。\n対応: LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC / TEXT / MTEXT / SOLID / INSERT (ブロック展開)\nブロックの定義が別ファイルにある場合は、元のCADで EXPLODE してから出力してください。"); return; }
       UI.dxfImportDialog(ents, file.name);
     };
     rd.readAsText(file, "utf-8");
@@ -748,17 +752,25 @@ UI.dxfImportDialog = (ents, fileName) => {
   const b = dxfEntsBounds(ents);
   const counts = {};
   ents.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+  const unresolved = ents.filter(e => e.unresolved).length;
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">
       <b>${escAttr(fileName)}</b> から ${ents.length} 要素を読み込みました<br>
       ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(" ・ ")}<br>
       原寸 ${b ? `${b.w.toFixed(1)} × ${b.h.toFixed(1)} mm` : "—"}
+      ${unresolved ? `<br><b style="color:var(--warn,#e5a03d)">⚠ 定義が見つからないブロックが ${unresolved} 個あります。元のCADで EXPLODE (分解) してから出力してください。</b>` : ""}
     </div>
     <div class="prop-row"><label>拡大縮小</label>
       <select id="dxScale">
         <option value="1">原寸 (1:1)</option>
         <option value="fit20">高さ 20mm に合わせる (シンボル向き)</option>
         <option value="0.5">1/2</option><option value="2">2倍</option>
+      </select></div>
+    <div class="prop-row"><label>線種 (作図線として配置する場合)</label>
+      <select id="dxStyle">
+        <option value="solid">実線 (配線として扱う)</option>
+        <option value="dash" selected>破線 (作図線・非導通)</option>
+        <option value="dashdot">一点鎖線 (作図線・非導通)</option>
       </select></div>
     <div class="prop-row"><label>取り込み方法</label>
       <select id="dxMode">
@@ -769,6 +781,7 @@ UI.dxfImportDialog = (ents, fileName) => {
       <div class="prop-grid2">
         <div class="prop-row"><label>シンボル名</label><input id="dxName" value="${escAttr(fileName.replace(/\.dxf$/i, ""))}"/></div>
         <div class="prop-row"><label>デバイス文字 (letter)</label><input id="dxLetter" class="mono" value="E" maxlength="2"/></div>
+        <div class="prop-row"><label>型式 (部品表用)</label><input id="dxType" class="mono" value="" placeholder="任意"/></div>
       </div>
       <div class="prop-row"><label>端子 (ピン)</label><select id="dxPins">
         <option value="2v">上下2端子 (縦方向・既定)</option>
@@ -814,17 +827,20 @@ UI.dxfImportDialog = (ents, fileName) => {
       const letter = (q("#dxLetter").value.trim() || "E").toUpperCase();
       const r = dxfEntsToSVG(ents, { scale: k });
       const pinMode = q("#dxPins").value;
-      const pins = pinMode === "2v" ? [{ x: r.w / 2, y: 0, n: "1" }, { x: r.w / 2, y: r.h, n: "2" }]
-        : pinMode === "2h" ? [{ x: 0, y: r.h / 2, n: "1" }, { x: r.w, y: r.h / 2, n: "2" }] : [];
+      // 端子はグリッド (5mm) に乗せ、配線が必ず接続できるようにする
+      const gx = snap(r.w / 2), gy = snap(r.h / 2), gw = snap(r.w), gh = snap(r.h);
+      const pins = pinMode === "2v" ? [{ x: gx, y: 0, n: "1" }, { x: gx, y: Math.max(GRID, gh), n: "2" }]
+        : pinMode === "2h" ? [{ x: 0, y: gy, n: "1" }, { x: Math.max(GRID, gw), y: gy, n: "2" }] : [];
       const sym = {
         id: "imp_" + uid("s"), db: true, group: "取り込み", cat: "db", letter,
-        name, nameEn: name, desc: `DXF 取り込み (${fileName})`,
+        name, nameEn: name, desc: `DXF 取り込み (${fileName})`, typ: (q("#dxType") ? q("#dxType").value.trim() : ""),
         pins, sim: pins.length === 2 ? "passthru" : "none",
         bounds: [-2, -2, r.w + 4, r.h + 4], body: r.body, imported: true,
       };
       DB_SYMBOLS.push(sym);
       SYMBOLS_BY_ID[sym.id] = sym;
       saveImportedSymbols();
+      syncProjectSymbols();
       dbSetPinned([...new Set([...dbPinnedList(), sym.id])]);
       UI.buildPalette();
       m.close();
@@ -840,22 +856,33 @@ UI.dxfImportDialog = (ents, fileName) => {
     let nWire = 0, nText = 0;
     const bb = dxfEntsBounds(ents);
     const X = x => ox + (x - bb.x0) * k, Y = y => oy + (bb.y1 - y) * k;
+    const style = q("#dxStyle").value;                 // 取り込む線の線種
+    const addAux = pts => {
+      // 取り込み図形はグリッドに丸めない (円弧・斜線の形が崩れるため)
+      const w = addWire(page, pts, style === "solid" ? { raw: true } : { style, raw: true });
+      if (w) { if (style !== "solid") w.aux = true; nWire++; }
+    };
     ents.forEach(e => {
-      if (e.type === "LINE") {
-        const w = addWire(page, [[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]], { style: "dash" });
-        if (w) { w.aux = true; nWire++; }
+      if (e.type === "LINE" || e.type === "SOLID") {
+        if (isFinite(e.x1) && isFinite(e.x2)) addAux([[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]]);
       } else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
         const pts = (e.pts || []).filter(p => isFinite(p[0]) && isFinite(p[1])).map(p => [X(p[0]), Y(p[1])]);
-        if (pts.length >= 2) {
-          if (e.flags & 1) pts.push(pts[0]);
-          const w = addWire(page, pts, { style: "dash" });
-          if (w) { w.aux = true; nWire++; }
+        if (pts.length >= 2) { if (e.flags & 1) pts.push(pts[0]); addAux(pts); }
+      } else if (e.type === "CIRCLE" || e.type === "ARC") {
+        // 円・円弧は折線で近似して作図線にする (穴・R が消えないように)
+        const a0 = e.type === "CIRCLE" ? 0 : (e.a1 || 0);
+        const a1v = e.type === "CIRCLE" ? 360 : ((e.a2 - e.a1 + 360) % 360 || 360) + (e.a1 || 0);
+        const n = Math.max(8, Math.ceil(Math.abs(a1v - a0) / 15));
+        const pts = [];
+        for (let i = 0; i <= n; i++) {
+          const t = (a0 + (a1v - a0) * i / n) * Math.PI / 180;
+          pts.push([X(e.x1 + e.r * Math.cos(t)), Y(e.y1 + e.r * Math.sin(t))]);
         }
+        addAux(pts);
       } else if (e.type === "TEXT" || e.type === "MTEXT") {
         page.texts.push({ id: uid("t"), x: X(e.x1), y: Y(e.y1), text: e.text || "", size: Math.max(2.5, (e.size || 3.5) * k), anchor: "start" });
         nText++;
       }
-      // CIRCLE / ARC は作図線としては近似できないため、図形はシンボル登録を案内する
     });
     m.close();
     UI.refresh();
@@ -1156,8 +1183,8 @@ UI.sheetSetup = () => {
     q("#tbInfo").innerHTML = `作図領域は <b>${Math.round(pw * f)} × ${Math.round(ph * f)} mm</b> になります` +
       (sc === "NS" ? " (非尺度)。" : f === 1 ? " (現尺)。"
         : `。用紙 ${pw}×${ph} mm に ${sc} で印刷される想定で、実物の${f > 1 ? `${f} 倍の範囲を1枚に収められます` : `${1 / f} 倍に拡大して描けます`}。`) +
-      `<br>線の太さ・文字の高さ・線種は尺度に追従し、用紙上では常に同じ大きさで印刷されます。` +
-      (f !== 1 ? `<br><b>図記号 (シンボル) は実寸のまま</b>なので、用紙上では ${f > 1 ? `1/${f}` : `${1 / f} 倍`} の大きさになります。回路図は NS または 1:1、実寸で描く配置図などに縮尺をお使いください。` : "") +
+      `<br>図記号・文字・線の太さは尺度によらず常に 1:1 です。尺度を上げると図枠 (作図領域) だけが広がり、1枚に多くの回路を収められます。` +
+      (f !== 1 ? `<br>用紙に印刷すると図記号・文字は ${f > 1 ? `1/${f}` : `${1 / f} 倍`} の大きさになります (${f > 1 ? "文字が小さくなるため検図で警告します" : "拡大されます"})。` : "") +
       (over.total
         ? `<br><b style="color:var(--warn,#e5a03d)">⚠ この用紙では機器 ${over.devs} 点・配線 ${over.wires} 本が図枠外または表題欄に重なります。</b>`
         : `<br>現在の図形はすべて新しい図枠に収まります。`);
@@ -1165,7 +1192,8 @@ UI.sheetSetup = () => {
   /** 指定の用紙・尺度に切り替えた場合のはみ出し数を試算する (SHEET は元に戻す) */
   function countOverflow(paper, scale) {
     const save = { paper: meta.paper, scale: meta.scale };
-    meta.paper = paper; meta.scale = scale; applySheet({});
+    const saveP = { p: page.paper, s: page.scale };
+    page.paper = paper; page.scale = scale; applySheet(page);
     const fr2 = frameRect(), blocks = titleBlocksRects();
     const hit = (b) => b.x < fr2.x || b.y < fr2.y || b.x + b.w > fr2.x + fr2.w || b.y + b.h > fr2.y + fr2.h ||
       blocks.some(r => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y);
@@ -1180,6 +1208,9 @@ UI.sheetSetup = () => {
         if (outside || onBlk) wires++;
       });
     });
+    page.paper = saveP.p; page.scale = saveP.s;
+    if (!saveP.p) delete page.paper;
+    if (!saveP.s) delete page.scale;
     meta.paper = save.paper; meta.scale = save.scale; applySheet(page);
     return { devs, wires, total: devs + wires };
   }
@@ -1219,13 +1250,18 @@ UI.sheetSetup = () => {
 
     const paperChanged = paperChanging;
     const scope = q("#tbScope").value;
-    if (scope === "page") {                       // このページだけ差し替える
-      page.paper = q("#tbPaper").value;
-      page.scale = q("#tbScale").value;
-    } else {                                      // 全ページ共通の既定に戻す
-      meta.paper = q("#tbPaper").value;
-      meta.scale = q("#tbScale").value;
-      App.project.pages.forEach(pg => { delete pg.paper; delete pg.scale; });
+    if (paperChanging) {                          // 用紙・尺度を変えたときだけ反映する
+      if (scope === "page") {
+        page.paper = q("#tbPaper").value;
+        page.scale = q("#tbScale").value;
+      } else {
+        const indiv = App.project.pages.filter(pg => pg.paper || pg.scale);
+        if (indiv.length && !confirm(
+          `${indiv.length} ページに個別の用紙・尺度が設定されています。\n全ページを ${q("#tbPaper").value} / ${q("#tbScale").value} に統一しますか？`)) return;
+        meta.paper = q("#tbPaper").value;
+        meta.scale = q("#tbScale").value;
+        App.project.pages.forEach(pg => { delete pg.paper; delete pg.scale; });
+      }
     }
     applySheet(page);
     const nameInput = document.getElementById("projectName");
@@ -1637,6 +1673,7 @@ UI.refresh = (rebuildTabs = true) => {
 
 function boot() {
   App.project = loadLocal() || demoProject();
+  mergeProjectSymbols();
   applySheet(); // 保存された用紙・尺度で作図領域を張る
   document.getElementById("projectName").value = App.project.name;
   const pn = document.getElementById("projectName");
