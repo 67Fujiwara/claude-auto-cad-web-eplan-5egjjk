@@ -29,8 +29,9 @@ const DB_SYMBOLS = [
   {
     id: "insul_end", db: true, group: "導体・接続", jis: "03-01-15", cat: "db", letter: "W",
     name: "絶縁処理した端末", nameEn: "Insulated conductor end", desc: "特別な絶縁処理した未接続導体・ケーブル端",
-    pins: [{x:0,y:20,n:""}], sim: "none", bounds: [-7,0, 14, 20],
-    body: `<path d="M0,20 V8 A3.2,3.2 0 1 1 -3,11.4"/>`,
+    pins: [{x:0,y:20,n:""}], sim: "none", bounds: [-10,0, 13, 20],
+    // 導体の端に接して描く輪。輪は導体の延長に接し、自由端は輪の下側で止める
+    body: `<path d="M0,20 V12 A3.8,3.8 0 1 0 -0.9,14.4"/>`,
   },
   {
     id: "plug_socket", db: true, group: "導体・接続", jis: "03-03-05", cat: "db", letter: "X",

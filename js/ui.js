@@ -129,6 +129,7 @@ UI.showProps = (focusTag = false) => {
   const selDevs = page.devices.filter(d => App.selection.has(d.id));
   const selWires = page.wires.filter(w => App.selection.has(w.id));
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
+  const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
   if (selDevs.length === 1) {
     const dev = selDevs[0];
@@ -190,9 +191,25 @@ UI.showProps = (focusTag = false) => {
     // 配線単体: 線番 + 電線仕様 (複数選択パネルより先に判定すること)
     const w = selWires[0];
     pane.innerHTML = `
-      <div class="prop-head"><div class="prop-head-txt"><div class="t1">配線</div><div class="t2">${w.pts.length - 1} セグメント — ダブルクリックでも線番編集可</div></div></div>
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">${isWireConductive(w) ? "配線" : "作図線"}</div><div class="t2">${w.pts.length - 1} セグメント${isWireConductive(w) ? " — ダブルクリックでも線番編集可" : " — 電気的な接続ではありません"}</div></div></div>
+      <div class="prop-row"><label>線種</label><select id="pStyle">${
+        Object.entries(WIRE_STYLES).map(([k, v]) =>
+          `<option value="${k}"${(w.style || "solid") === k ? " selected" : ""}>${v.name}</option>`).join("")
+      }</select></div>
+      ${isWireConductive(w) ? `
       <div class="prop-row"><label>配線番号 ${w.fixed ? "(手動・自動採番から保護)" : ""}</label><input id="pNum" class="mono" value="${w.num || ""}"/></div>
-      <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`;
+      <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`
+      : `<div class="prop-note">実線以外は作図線として扱います。接続ドット・線番は付かず、
+         ネット解析・シミュレーション・検図 (DRC) の対象外です。</div>`}`;
+    pane.querySelector("#pStyle").addEventListener("change", e => {
+      commit();
+      const v = e.target.value;
+      if (v === "solid") delete w.style; else w.style = v;
+      if (!isWireConductive(w)) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
+      UI.refresh(false);
+      UI.showProps();
+    });
+    if (!isWireConductive(w)) return;
     pane.querySelector("#pNum").addEventListener("change", e => {
       commit();
       const v = e.target.value.trim();
@@ -236,14 +253,30 @@ UI.showProps = (focusTag = false) => {
       <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2" value="${t.size || 4}"/></div>`;
     pane.querySelector("#pTxt").addEventListener("change", e => { commit(); t.text = e.target.value; UI.refresh(false); });
     pane.querySelector("#pTsz").addEventListener("change", e => { commit(); const n = parseFloat(e.target.value); if (!isNaN(n)) t.size = Math.max(2, n); UI.refresh(false); });
-  } else if (selDevs.length + selWires.length + selTexts.length > 1) {
-    const total = selDevs.length + selWires.length + selTexts.length;
+  } else if (selDevs.length + selWires.length + selTexts.length + selZones.length > 1) {
+    const total = selDevs.length + selWires.length + selTexts.length + selZones.length;
     pane.innerHTML = `
       <div class="prop-empty">
         <div style="font-size:22px;font-weight:700;color:var(--text)">${total}</div>
         個のオブジェクトを選択中<br><br>
-        デバイス ${selDevs.length} ・ 配線 ${selWires.length} ・ テキスト ${selTexts.length}
-      </div>`;
+        デバイス ${selDevs.length} ・ 配線 ${selWires.length} ・ テキスト ${selTexts.length}${selZones.length ? ` ・ 破線枠 ${selZones.length}` : ""}
+      </div>
+      ${selWires.length > 1 ? `<div class="prop-row" style="margin-top:14px"><label>選択した配線 ${selWires.length} 本の線種</label><select id="pStyleAll">
+        <option value="">— 変更しない —</option>
+        ${Object.entries(WIRE_STYLES).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join("")}
+      </select></div>` : ""}`;
+    const bulk = pane.querySelector("#pStyleAll");
+    if (bulk) bulk.addEventListener("change", e => {
+      const v = e.target.value;
+      if (!v) return;
+      commit();
+      selWires.forEach(w => {
+        if (v === "solid") delete w.style; else w.style = v;
+        if (!isWireConductive(w)) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
+      });
+      UI.refresh(false);
+      UI.setMsg(`${selWires.length} 本の線種を「${WIRE_STYLES[v].name}」に変更しました`);
+    });
   } else {
     pane.innerHTML = `
       <div class="prop-empty">
@@ -381,9 +414,12 @@ const MENUS = {
     { label: "新規プロジェクト", key: "", fn: () => UI.newProject() },
     { label: "開く (JSON)…", key: "", fn: () => UI.openFile() },
     { sep: true },
-    { label: "保存 (ブラウザ)", key: "Ctrl+S", fn: () => { saveLocal(); UI.setMsg("ブラウザに保存しました"); } },
+    { label: "上書き保存", key: "Ctrl+S", fn: () => UI.saveOver() },
+    { label: "名前を付けて保存…", key: "Ctrl+Shift+S", fn: () => UI.saveAs() },
     { label: "エクスポート (JSON)", key: "", fn: () => downloadFile(App.project.name + ".ecad.json", JSON.stringify(App.project, null, 1)) },
     { label: "エクスポート (SVG・現在ページ)", key: "", fn: () => downloadFile(App.project.name + "_p" + curPage().no + ".svg", exportSheetSVG(), "image/svg+xml") },
+    { sep: true },
+    { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
     { sep: true },
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
     { label: "PDF出力 (全ページ印刷)…", key: "", fn: () => UI.printAll() },
@@ -531,15 +567,45 @@ UI.newProject = () => {
   if (!confirm("現在のプロジェクトを破棄して新規作成しますか？\n(ブラウザ保存済みデータも上書きされます)")) return;
   if (App.sim.running) UI.toggleSim(); // 確定後にのみ停止 (キャンセルは完全な無操作)
   App.project = newProject();
+  App.fileHandle = null;
   App.pageIdx = 0;
   App.selection.clear();
   App.undoStack.length = 0;
   App.redoStack.length = 0;
+  applySheet();
+  UI.updateSaveButton();
   saveLocal();
   UI.refresh();
   zoomFit();
 };
-UI.openFile = () => {
+UI.openFile = async () => {
+  // File System Access API があればハンドルを保持し、以後の保存を上書き保存にする
+  if (FS_API && window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: "ElectraCAD プロジェクト", accept: { "application/json": [".json"] } }],
+      });
+      const text = await (await handle.getFile()).text();
+      const p = JSON.parse(text);
+      if (!p.pages) throw new Error("bad");
+      if (App.sim.running) UI.toggleSim();
+      commit();
+      App.project = p;
+      App.fileHandle = handle;
+      App.pageIdx = 0;
+      App.selection.clear();
+      applySheet();
+      document.getElementById("projectName").value = p.name;
+      UI.updateSaveButton();
+      UI.refresh();
+      zoomFit();
+      UI.setMsg(`読み込みました — ${handle.name} (保存ボタンで上書き保存)`);
+    } catch (e) {
+      if (e && (e.name === "AbortError" || e.name === "NotAllowedError")) return; // キャンセル
+      alert("読み込みに失敗しました: 不正なファイル形式です");
+    }
+    return;
+  }
   const inp = document.createElement("input");
   inp.type = "file";
   inp.accept = ".json,.ecad.json";
@@ -554,8 +620,11 @@ UI.openFile = () => {
         if (App.sim.running) UI.toggleSim(); // 読込確定後にのみ停止
         commit();
         App.project = p;
+        App.fileHandle = null; // input[type=file] 経由は上書き先を持てない
         App.pageIdx = 0;
         App.selection.clear();
+        applySheet();
+        UI.updateSaveButton();
         document.getElementById("projectName").value = p.name;
         UI.refresh();
         zoomFit();
@@ -573,6 +642,7 @@ UI.selectAll = () => {
   page.devices.forEach(d => App.selection.add(d.id));
   page.wires.forEach(w => App.selection.add(w.id));
   page.texts.forEach(t => App.selection.add(t.id));
+  pageZones(page).forEach(z => App.selection.add(z.id));
   UI.showProps();
   requestRender();
 };
@@ -592,10 +662,11 @@ UI.print = () => {
 UI.printAll = () => {
   const pages = App.project.pages.map(pg =>
     `<div class="sheet">${exportSheetSVG(pg)}</div>`).join("");
+  const paper = projectMeta().paper || "A3";
   const win = window.open("", "_blank");
   win.document.write(`<html><head><title>${App.project.name} (全${App.project.pages.length}ページ)</title>
     <style>
-      @page { size: A3 landscape; margin: 0; }
+      @page { size: ${paper} landscape; margin: 0; }
       body { margin: 0; }
       .sheet { width: 100vw; height: 100vh; page-break-after: always; display: flex; align-items: center; justify-content: center; }
       .sheet:last-child { page-break-after: auto; }
@@ -603,7 +674,7 @@ UI.printAll = () => {
     </style></head><body>${pages}</body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 400);
-  UI.setMsg("印刷ダイアログで「PDFに保存」を選ぶと全ページPDFになります (用紙: A3横)");
+  UI.setMsg(`印刷ダイアログで「PDFに保存」を選ぶと全ページPDFになります (用紙: ${paper}横 / 尺度 ${projectMeta().scale})`);
 };
 
 /** 全ページを DXF (AutoCAD互換) でダウンロード */
@@ -796,12 +867,143 @@ UI.zoomSpeedDialog = () => {
   UI.openModal({ title: "ズーム速度", sub: "マウスホイールの拡大縮小の強さ", body });
 };
 
+/* ══════════════ 図枠・表題欄の設定 ══════════════ */
+/** 表題欄の各項目と用紙・尺度を編集する。用紙/尺度を変えると作図領域
+    (図枠) が 用紙サイズ × 尺度 に張り替えられる。 */
+UI.sheetSetup = () => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中は図枠を変更できません"); return; }
+  const meta = projectMeta();
+  const page = curPage();
+  const opt = (v, cur, label) => `<option value="${v}"${v === cur ? " selected" : ""}>${label || v}</option>`;
+  const body = h(`<div>
+    <div class="prop-sect">表題欄</div>
+    <div class="prop-grid2">
+      <div class="prop-row"><label>プロジェクト</label><input id="tbProj" value="${escAttr(App.project.name)}"/></div>
+      <div class="prop-row"><label>ページ名</label><input id="tbPage" value="${escAttr(page.name)}"/></div>
+      <div class="prop-row"><label>図番</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="E-${String(page.no).padStart(3, "0")}"/></div>
+      <div class="prop-row"><label>改訂</label><input id="tbRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
+      <div class="prop-row"><label>設計</label><input id="tbDes" value="${escAttr(meta.designer || "")}" placeholder="—"/></div>
+      <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
+      <div class="prop-row"><label>日付</label><input id="tbDate" class="mono" value="${escAttr(meta.date || todayStr())}" placeholder="2026-01-31"/></div>
+      <div class="prop-row"><label>作成</label><input id="tbAuth" value="${escAttr(meta.author || "ElectraCAD Studio")}"/></div>
+    </div>
+    <div class="prop-sect">用紙と尺度</div>
+    <div class="prop-grid2">
+      <div class="prop-row"><label>用紙 (横置き)</label><select id="tbPaper">
+        ${Object.entries(PAPERS).map(([k, [pw, ph]]) => opt(k, meta.paper, `${k} (${pw}×${ph} mm)`)).join("")}
+      </select></div>
+      <div class="prop-row"><label>尺度</label><select id="tbScale">
+        ${SCALES.map(s => opt(s, meta.scale)).join("")}
+      </select></div>
+    </div>
+    <div class="prop-note" id="tbInfo"></div>
+  </div>`);
+  const q = id => body.querySelector(id);
+  const info = () => {
+    const [pw, ph] = PAPERS[q("#tbPaper").value] || PAPERS.A3;
+    const f = scaleFactor(q("#tbScale").value);
+    q("#tbInfo").innerHTML = `作図領域は <b>${Math.round(pw * f)} × ${Math.round(ph * f)} mm</b> になります` +
+      (f === 1 ? " (実寸)。" : `。用紙 ${pw}×${ph} mm に ${q("#tbScale").value} で印刷される想定で、実物の${f > 1 ? f + " 倍の範囲を1枚に収められます" : (1 / f) + " 倍に拡大して描けます"}。`) +
+      `<br>既存の図形は移動しません。図枠外にはみ出した機器は検図 (DRC) で警告されます。`;
+  };
+  q("#tbPaper").addEventListener("change", info);
+  q("#tbScale").addEventListener("change", info);
+  info();
+
+  const foot = h(`<div style="display:flex;gap:10px;justify-content:flex-end">
+    <button class="btn-solid" id="tbCancel">キャンセル</button>
+    <button class="btn-solid primary" id="tbOk">適用</button>
+  </div>`);
+  const m = UI.openModal({ title: "図枠・表題欄の設定", sub: "表題欄の記入項目と用紙サイズ・尺度", body, foot });
+  foot.querySelector("#tbCancel").addEventListener("click", m.close);
+  foot.querySelector("#tbOk").addEventListener("click", () => {
+    commit();
+    App.project.name = q("#tbProj").value.trim() || App.project.name;
+    page.name = q("#tbPage").value.trim() || page.name;
+    meta.dwgNo = q("#tbDwg").value.trim();
+    meta.rev = q("#tbRev").value.trim() || "0";
+    meta.designer = q("#tbDes").value.trim();
+    meta.checker = q("#tbChk").value.trim();
+    meta.date = q("#tbDate").value.trim();
+    meta.author = q("#tbAuth").value.trim();
+    const paperChanged = meta.paper !== q("#tbPaper").value || meta.scale !== q("#tbScale").value;
+    meta.paper = q("#tbPaper").value;
+    meta.scale = q("#tbScale").value;
+    applySheet();
+    const nameInput = document.getElementById("projectName");
+    if (nameInput) nameInput.value = App.project.name;
+    m.close();
+    UI.refresh();
+    if (paperChanged) { zoomFit(); UI.setMsg(`用紙 ${meta.paper} / 尺度 ${meta.scale} — 作図領域 ${SHEET.w}×${SHEET.h} mm に変更しました`); }
+    else UI.setMsg("表題欄を更新しました");
+  });
+};
+function escAttr(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+/* ══════════════ 保存 (上書き / 名前を付けて) ══════════════ */
+const FS_API = typeof window !== "undefined" && !!window.showSaveFilePicker;
+function projectJSON() { return JSON.stringify(App.project, null, 1); }
+function defaultFileName() { return (App.project.name || "無題プロジェクト") + ".ecad.json"; }
+
+/** 右上の保存ボタン / Ctrl+S: 開いた (または名前を付けて保存した) ファイルへ上書き保存 */
+UI.saveOver = async () => {
+  saveLocal(); // ブラウザ保存は常に更新 (次回起動時の復元用)
+  if (App.fileHandle) {
+    try {
+      const ws = await App.fileHandle.createWritable();
+      await ws.write(projectJSON());
+      await ws.close();
+      UI.setMsg(`上書き保存しました — ${App.fileHandle.name}`);
+      return;
+    } catch (e) {
+      UI.setMsg("上書き保存に失敗しました: " + (e && e.message ? e.message : e));
+      return;
+    }
+  }
+  if (FS_API) { await UI.saveAs(); return; }
+  // File System Access API 非対応 (Firefox/Safari 等) はダウンロード保存にフォールバック
+  downloadFile(defaultFileName(), projectJSON());
+  UI.setMsg("ファイルを書き出しました (このブラウザは上書き保存に未対応です)");
+};
+
+/** 名前を付けて保存 — 以後この保存ボタンは同じファイルへ上書きする */
+UI.saveAs = async () => {
+  saveLocal();
+  if (!FS_API) {
+    downloadFile(defaultFileName(), projectJSON());
+    UI.setMsg("ファイルを書き出しました (このブラウザは上書き保存に未対応です)");
+    return;
+  }
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: defaultFileName(),
+      types: [{ description: "ElectraCAD プロジェクト", accept: { "application/json": [".json"] } }],
+    });
+    const ws = await handle.createWritable();
+    await ws.write(projectJSON());
+    await ws.close();
+    App.fileHandle = handle;
+    UI.updateSaveButton();
+    UI.setMsg(`保存しました — ${handle.name} (以後は保存ボタンで上書き)`);
+  } catch (e) { /* ユーザーがキャンセル */ }
+};
+
+/** 保存ボタンのツールチップに上書き先を出す */
+UI.updateSaveButton = () => {
+  const btn = document.getElementById("btnSave");
+  if (!btn) return;
+  btn.title = App.fileHandle
+    ? `上書き保存 (Ctrl+S) — ${App.fileHandle.name}`
+    : "上書き保存 (Ctrl+S) — 保存先ファイルを選びます";
+};
+
 UI.showShortcuts = () => {
   const rows = [
     ["V / Esc", "選択ツール"], ["W", "配線ツール"], ["H / Space", "パン"], ["T", "テキスト"],
     ["R", "回転 (配置プレビュー中も可)"], ["Del", "削除"], ["F", "全体表示"], ["+ / −", "ズーム"],
     ["Ctrl+Z / Y", "元に戻す / やり直し"], ["Ctrl+C / V", "コピー / カーソル位置に貼り付け"],
-    ["Ctrl+A", "すべて選択"], ["Ctrl+S", "保存"], ["F2", "AI自動作図"], ["F5", "シミュレーション"],
+    ["Ctrl+A", "すべて選択"], ["Ctrl+S", "上書き保存"], ["Ctrl+Shift+S", "名前を付けて保存"],
+    ["F2", "AI自動作図"], ["F5", "シミュレーション"],
     ["矢印キー", "選択を5mm移動"], ["ホイール", "ズーム"], ["中ボタンドラッグ", "パン"],
     ["Enter / ダブルクリック", "配線を確定"], ["Backspace", "配線作図中: 1頂点戻る"],
     ["右→左ドラッグ", "交差選択 (触れたものを選択)"], ["左→右ドラッグ", "窓選択 (完全に囲んだものを選択)"],
@@ -1020,7 +1222,7 @@ UI.setupKeys = () => {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key; // CapsLock 対策
     // ブラウザ既定動作を奪うキーは入力中でも先に処理 (F5リロード・保存ダイアログ防止)
     if (e.key === "F5") { e.preventDefault(); if (!inInput) UI.toggleSim(); return; }
-    if (ctrl && k === "s") { e.preventDefault(); saveLocal(); UI.setMsg("ブラウザに保存しました"); return; }
+    if (ctrl && k === "s") { e.preventDefault(); if (e.shiftKey) UI.saveAs(); else UI.saveOver(); return; }
     if (ctrl && k === "p") { e.preventDefault(); if (!inInput) UI.print(); return; }
     if (inInput) return;
     if (ctrl && k === "z" && !e.shiftKey) { e.preventDefault(); if (undo()) { UI.refresh(); UI.setMsg("元に戻しました"); } return; }
@@ -1080,6 +1282,7 @@ UI.refresh = (rebuildTabs = true) => {
 
 function boot() {
   App.project = loadLocal() || demoProject();
+  applySheet(); // 保存された用紙・尺度で作図領域を張る
   document.getElementById("projectName").value = App.project.name;
   const pn = document.getElementById("projectName");
   pn.addEventListener("change", e => {
@@ -1109,7 +1312,8 @@ function boot() {
   document.getElementById("btnDRC").addEventListener("click", UI.runDRC);
   document.getElementById("btnBOM").addEventListener("click", UI.showBOM);
   document.getElementById("btnSim").addEventListener("click", UI.toggleSim);
-  document.getElementById("btnSave").addEventListener("click", () => { saveLocal(); UI.setMsg("ブラウザに保存しました"); });
+  document.getElementById("btnSave").addEventListener("click", () => UI.saveOver());
+  UI.updateSaveButton();
   document.getElementById("btnAIWizard").addEventListener("click", UI.openWizard);
   document.getElementById("btnZoomIn").addEventListener("click", () => UI.zoomCenter(1.25));
   document.getElementById("btnZoomOut").addEventListener("click", () => UI.zoomCenter(0.8));

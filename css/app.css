@@ -298,6 +298,11 @@ input, select, textarea { font-family: inherit; }
   display: flex; align-items: center; gap: 8px;
 }
 .prop-sect::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+.prop-note {
+  margin-top: 10px; padding: 9px 11px; border-radius: 7px;
+  background: var(--panel-2, rgba(255,255,255,.03)); border: 1px solid var(--line-soft);
+  font-size: 11.5px; line-height: 1.6; color: var(--text-faint);
+}
 
 .xref-list { display: flex; flex-direction: column; gap: 4px; }
 .xref-item {

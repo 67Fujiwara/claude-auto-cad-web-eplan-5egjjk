@@ -5,7 +5,41 @@
 "use strict";
 
 const GRID = 5;              // スナップグリッド 5mm
-const SHEET = { w: 420, h: 297, margin: 10, cols: 10, rows: 6 }; // A3横
+const SHEET = { w: 420, h: 297, margin: 10, cols: 10, rows: 6 }; // 既定 A3横 (図枠設定で変わる)
+
+/* 用紙 (横置き実寸 mm) と尺度。図面の作図領域は 用紙 × 尺度分母/分子 になる。
+   例: A3 (420×297) を 1:2 で描くと作図領域は 840×594 となり、実物の
+   2倍の範囲を1枚に収められる (印刷時は用紙サイズに縮小される)。 */
+const PAPERS = {
+  A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841],
+};
+const SCALES = ["2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"];
+function scaleFactor(scale) {
+  const m = /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/.exec(String(scale || "1:1"));
+  if (!m) return 1;
+  const num = parseFloat(m[1]), den = parseFloat(m[2]);
+  if (!(num > 0) || !(den > 0)) return 1;
+  return den / num;
+}
+function projectMeta() {
+  if (!App.project.meta) App.project.meta = {};
+  const m = App.project.meta;
+  if (!m.paper) m.paper = "A3";
+  if (!m.scale) m.scale = "1:1";
+  return m;
+}
+/** meta (用紙・尺度) から作図領域 SHEET を再計算する */
+function applySheet() {
+  const m = projectMeta();
+  const [pw, ph] = PAPERS[m.paper] || PAPERS.A3;
+  const f = scaleFactor(m.scale);
+  SHEET.w = Math.round(pw * f);
+  SHEET.h = Math.round(ph * f);
+  SHEET.margin = Math.round(10 * f * 10) / 10;
+  SHEET.cols = Math.max(4, Math.min(24, Math.round(10 * pw / 420)));
+  SHEET.rows = Math.max(3, Math.min(16, Math.round(6 * ph / 297)));
+  return SHEET;
+}
 
 const App = {
   project: null,
@@ -29,8 +63,16 @@ function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 function newProject(name = "無題プロジェクト") {
   return {
     name,
+    meta: {
+      paper: "A3", scale: "1:1", dwgNo: "", rev: "0",
+      designer: "", checker: "", date: todayStr(), author: "ElectraCAD Studio",
+    },
     pages: [newPage("メイン回路", 1)],
   };
+}
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function newPage(name, no) {
   return { id: uid("p"), no, name, devices: [], wires: [], texts: [], zones: [] };
@@ -122,8 +164,21 @@ function linkedContacts(coilDev) {
 }
 
 /* ══════════════ ワイヤ ══════════════ */
+/* 線種。solid のみが電気的な配線で、破線・一点鎖線は作図線 (作図補助・
+   区画表現) として扱い、ネット解析・シミュレーション・DRC・線番・
+   端子表・接続リストのいずれからも除外する。 */
+const WIRE_STYLES = {
+  solid:   { name: "実線 (配線)",     dash: "" },
+  dash:    { name: "破線 (作図線)",   dash: "4 2.2" },
+  dashdot: { name: "一点鎖線 (作図線)", dash: "8 2 1.4 2" },
+};
+function isWireConductive(w) { return !w.style || w.style === "solid"; }
+/** 電気的に有効な (実線の) 配線だけを返す */
+function condWires(page) { return page.wires.filter(isWireConductive); }
+
 function addWire(page, pts, opts = {}) {
   const wire = { id: uid("w"), pts: pts.map(p => [snap(p[0]), snap(p[1])]), num: opts.num || null };
+  if (opts.style && opts.style !== "solid") wire.style = opts.style;
   // 長さ0の連続点を除去
   wire.pts = wire.pts.filter((p, i) => i === 0 || p[0] !== wire.pts[i - 1][0] || p[1] !== wire.pts[i - 1][1]);
   if (wire.pts.length < 2) return null;
@@ -140,6 +195,7 @@ function spliceDeviceIntoWires(page, dev) {
   pins.forEach(pin => {
     for (let wi = page.wires.length - 1; wi >= 0; wi--) {
       const w = page.wires[wi];
+      if (!isWireConductive(w)) continue; // 作図線は分割しない
       for (let i = 0; i < w.pts.length - 1; i++) {
         if (ptOnSeg(pin.x, pin.y, w.pts[i][0], w.pts[i][1], w.pts[i + 1][0], w.pts[i + 1][1])) {
           const ptsA = [...w.pts.slice(0, i + 1), [pin.x, pin.y]];
@@ -154,6 +210,7 @@ function spliceDeviceIntoWires(page, dev) {
   // 2) デバイスの2ピン間に一致する配線 (シンボルに隠れる区間) を削除
   const isPin = p => pins.some(pin => Math.abs(pin.x - p[0]) < .01 && Math.abs(pin.y - p[1]) < .01);
   page.wires = page.wires.filter(w => {
+    if (!isWireConductive(w)) return true;
     const a = w.pts[0], b = w.pts[w.pts.length - 1];
     if (!isPin(a) || !isPin(b)) return true;
     if (Math.abs(a[0] - b[0]) < .01 && Math.abs(a[1] - b[1]) < .01) return false; // 零長
@@ -296,16 +353,17 @@ function effectivePinName(dev, idx) {
  */
 function computeNets(page, mode = "closed") {
   const uf = UnionFind();
+  const wires = condWires(page); // 作図線 (破線・一点鎖線) は導通しない
   // ワイヤ: 各区間の端点を union
-  page.wires.forEach(w => {
+  wires.forEach(w => {
     for (let i = 0; i < w.pts.length - 1; i++) {
       uf.union(ptKey(w.pts[i][0], w.pts[i][1]), ptKey(w.pts[i + 1][0], w.pts[i + 1][1]));
     }
   });
   // T接続: ワイヤ端点が他ワイヤの区間中点に載る場合
-  page.wires.forEach(w1 => {
+  wires.forEach(w1 => {
     [w1.pts[0], w1.pts[w1.pts.length - 1]].forEach(ep => {
-      page.wires.forEach(w2 => {
+      wires.forEach(w2 => {
         if (w1 === w2) return;
         for (let i = 0; i < w2.pts.length - 1; i++) {
           if (ptOnSeg(ep[0], ep[1], w2.pts[i][0], w2.pts[i][1], w2.pts[i + 1][0], w2.pts[i + 1][1])) {
@@ -318,7 +376,7 @@ function computeNets(page, mode = "closed") {
   // デバイスピン: ワイヤ区間の中間に載っているピンをその区間へ接続
   page.devices.forEach(dev => {
     devPins(dev).forEach(pin => {
-      page.wires.forEach(w => {
+      wires.forEach(w => {
         for (let i = 0; i < w.pts.length - 1; i++) {
           if (ptOnSeg(pin.x, pin.y, w.pts[i][0], w.pts[i][1], w.pts[i + 1][0], w.pts[i + 1][1])) {
             uf.union(ptKey(pin.x, pin.y), ptKey(w.pts[i][0], w.pts[i][1]));
@@ -339,7 +397,7 @@ function computeNets(page, mode = "closed") {
     return pins[idx] ? uf.find(ptKey(pins[idx].x, pins[idx].y)) : null;
   };
   const wireNet = new Map();
-  page.wires.forEach(w => wireNet.set(w.id, uf.find(ptKey(w.pts[0][0], w.pts[0][1]))));
+  wires.forEach(w => wireNet.set(w.id, uf.find(ptKey(w.pts[0][0], w.pts[0][1]))));
   return { uf, pinNet, wireNet };
 }
 
@@ -357,12 +415,13 @@ function pinAtPoint(page, x, y) {
 function junctionDots(page) {
   const dots = [];
   const endpointCount = new Map(); // 同一点に3本以上の端点が集まる場合
-  page.wires.forEach(w => {
+  const wires = condWires(page); // 作図線には接続ドットを打たない
+  wires.forEach(w => {
     [w.pts[0], w.pts[w.pts.length - 1]].forEach(ep => {
       const k = ptKey(ep[0], ep[1]);
       endpointCount.set(k, (endpointCount.get(k) || 0) + 1);
       // 他ワイヤの区間中点に載る端点
-      page.wires.forEach(w2 => {
+      wires.forEach(w2 => {
         if (w === w2) return;
         for (let i = 0; i < w2.pts.length - 1; i++) {
           if (ptOnSeg(ep[0], ep[1], w2.pts[i][0], w2.pts[i][1], w2.pts[i + 1][0], w2.pts[i + 1][1])) {
@@ -399,12 +458,13 @@ function autoNumberWires() {
       }
     });
     // 2) 固定番号 (主回路の相名 L1/U1 等、手動で付けた線番) を尊重
-    page.wires.forEach(w => {
+    const wires = condWires(page); // 作図線には線番を付けない
+    wires.forEach(w => {
       if (w.fixed && w.num) netNum.set(wireNet.get(w.id), w.num);
     });
     // 3) 残りに連番を振り、ネットごとに最長区間のワイヤ1本にだけラベルを表示
     const bestOfNet = new Map();
-    page.wires.forEach(w => {
+    wires.forEach(w => {
       const net = wireNet.get(w.id);
       if (!netNum.has(net)) netNum.set(net, String(n++));
       w.num = netNum.get(net);
@@ -595,12 +655,13 @@ function runDRC() {
 
     // ワイヤ端点集合 / 区間集合
     const wireEndpoints = new Map(); // key → count
-    page.wires.forEach(w => w.pts.forEach(p => {
+    const drcWires = condWires(page); // 作図線は検図対象外
+    drcWires.forEach(w => w.pts.forEach(p => {
       const k = ptKey(p[0], p[1]);
       wireEndpoints.set(k, (wireEndpoints.get(k) || 0) + 1);
     }));
     const wireSegs = [];
-    page.wires.forEach(w => { for (let i = 0; i < w.pts.length - 1; i++) wireSegs.push([w.pts[i], w.pts[i + 1], w.id]); });
+    drcWires.forEach(w => { for (let i = 0; i < w.pts.length - 1; i++) wireSegs.push([w.pts[i], w.pts[i + 1], w.id]); });
     const allPins = [];
     page.devices.forEach(d => devPins(d).forEach(p => allPins.push(p)));
 
@@ -618,7 +679,7 @@ function runDRC() {
     }
 
     // 宙吊り配線端点 (ピンにも他ワイヤにも接続しない末端)。stub=意図的な引込線/レール端は除外
-    page.wires.forEach(w => {
+    drcWires.forEach(w => {
       if (w.stub) return;
       [w.pts[0], w.pts[w.pts.length - 1]].forEach(ep => {
         const k = ptKey(ep[0], ep[1]);
@@ -725,7 +786,7 @@ function buildConnectionList() {
   App.project.pages.forEach(page => {
     const { pinNet, wireNet } = computeNets(page, "open");
     const netName = new Map();
-    page.wires.forEach(w => { if (w.num) netName.set(wireNet.get(w.id), w.num); });
+    condWires(page).forEach(w => { if (w.num) netName.set(wireNet.get(w.id), w.num); });
     const netPins = new Map();
     page.devices.forEach(dev => {
       devPins(dev).forEach(pin => {
@@ -758,7 +819,7 @@ function buildTerminalList() {
   App.project.pages.forEach(page => {
     const split = computeNets(page, "split");
     const netName = new Map();
-    page.wires.forEach(w => { if (w.num) netName.set(split.wireNet.get(w.id), w.num); });
+    condWires(page).forEach(w => { if (w.num) netName.set(split.wireNet.get(w.id), w.num); });
     const pinsOfNet = new Map();
     page.devices.forEach(dev => devPins(dev).forEach(pin => {
       const net = split.pinNet(dev, pin.idx);

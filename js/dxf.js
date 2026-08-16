@@ -8,7 +8,22 @@
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
-const DXF_LAYERS = ["FRAME", "WIRE", "SYMBOL", "TEXT", "WIRENUM", "PIN"];
+const DXF_LAYERS = ["FRAME", "WIRE", "AUXLINE", "SYMBOL", "TEXT", "WIRENUM", "PIN"];
+
+/* 線種テーブル (R12)。作図線を AutoCAD 側でも破線・一点鎖線として開くため */
+const DXF_LTYPES = [
+  { name: "CONTINUOUS", desc: "Solid line", pat: [] },
+  { name: "DASHED", desc: "Dashed __ __ __ __", pat: [6.35, -3.175] },
+  { name: "DASHDOT", desc: "Dash dot __ . __ . __", pat: [12.7, -6.35, 0, -6.35] },
+];
+function dxfLtypeTable() {
+  return DXF_LTYPES.map(lt => {
+    const total = lt.pat.reduce((s, v) => s + Math.abs(v), 0);
+    const pairs = [[0, "LTYPE"], [2, lt.name], [70, 0], [3, lt.desc], [72, 65], [73, lt.pat.length], [40, total.toFixed(3)]];
+    lt.pat.forEach(v => pairs.push([49, v.toFixed(3)]));
+    return dxfEntity(pairs);
+  }).join("");
+}
 
 /* ── SVGボディ → プリミティブ (シンボルごとにキャッシュ) ── */
 const __dxfPrimCache = new Map();
@@ -157,12 +172,15 @@ function dxfEntity(pairs) {
   return pairs.map(([c, v]) => `${c}\n${v}`).join("\n") + "\n";
 }
 function dxfY(y) { return (SHEET.h - y).toFixed(3); }
-function dxfLine(x1, y1, x2, y2, layer) {
-  return dxfEntity([[0, "LINE"], [8, layer], [10, x1.toFixed(3)], [20, dxfY(y1)], [11, x2.toFixed(3)], [21, dxfY(y2)]]);
+function dxfLine(x1, y1, x2, y2, layer, ltype) {
+  const pairs = [[0, "LINE"], [8, layer]];
+  if (ltype && ltype !== "CONTINUOUS") pairs.push([6, ltype]);
+  pairs.push([10, x1.toFixed(3)], [20, dxfY(y1)], [11, x2.toFixed(3)], [21, dxfY(y2)]);
+  return dxfEntity(pairs);
 }
-function dxfPoly(pts, layer) {
+function dxfPoly(pts, layer, ltype) {
   let out = "";
-  for (let i = 0; i < pts.length - 1; i++) out += dxfLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer);
+  for (let i = 0; i < pts.length - 1; i++) out += dxfLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer, ltype);
   return out;
 }
 function dxfCircle(cx, cy, r, layer) {
@@ -226,6 +244,11 @@ function pageToDXF(page) {
 
   // ── 配線 + ジャンクション + 線番 + 電線仕様 ──
   page.wires.forEach(wr => {
+    // 作図線 (破線・一点鎖線) は AUXLINE レイヤに線種つきで出力する
+    if (!isWireConductive(wr)) {
+      ents += dxfPoly(wr.pts, "AUXLINE", wr.style === "dashdot" ? "DASHDOT" : "DASHED");
+      return;
+    }
     ents += dxfPoly(wr.pts, "WIRE");
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr);
@@ -292,8 +315,9 @@ function pageToDXF(page) {
     "9", "$INSUNITS", "70", "4",
     "0", "ENDSEC",
     "0", "SECTION", "2", "TABLES",
-    "0", "TABLE", "2", "LAYER", "70", String(DXF_LAYERS.length),
-  ].join("\n") + "\n" + layers +
+    "0", "TABLE", "2", "LTYPE", "70", String(DXF_LTYPES.length),
+  ].join("\n") + "\n" + dxfLtypeTable() +
+    ["0", "ENDTAB", "0", "TABLE", "2", "LAYER", "70", String(DXF_LAYERS.length)].join("\n") + "\n" + layers +
     ["0", "ENDTAB", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"].join("\n") + "\n" +
     ents +
     ["0", "ENDSEC", "0", "EOF"].join("\n") + "\n";

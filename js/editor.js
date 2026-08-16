@@ -81,6 +81,7 @@ function renderAll() {
 /* ── シート (図枠 + グリッド + 表題欄) ── */
 function sheetSVG(page) {
   const { w, h, margin: m, cols, rows } = SHEET;
+  const fr = scaleFactor(projectMeta().scale); // 尺度 (図枠まわりの文字・目盛はこの倍率で描く)
   let out = "";
   // 影 + 用紙
   out += `<rect x="2.5" y="3.5" width="${w}" height="${h}" fill="rgba(0,0,0,.45)" rx="1"/>`;
@@ -95,50 +96,52 @@ function sheetSVG(page) {
   for (let y = m; y <= h - m; y += GRID * 4) grid2 += `M${m},${y} H${w - m}`;
   out += `<path d="${grid2}" stroke="rgba(30,50,90,.09)" stroke-width="0.3" fill="none"/>`;
   // 図枠 (二重線)
-  out += `<rect x="${m}" y="${m}" width="${w - 2 * m}" height="${h - 2 * m}" fill="none" stroke="${INK}" stroke-width="0.7"/>`;
-  out += `<rect x="${m - 5}" y="${m - 5}" width="${w - 2 * m + 10}" height="${h - 2 * m + 10}" fill="none" stroke="${INK}" stroke-width="0.35"/>`;
+  out += `<rect x="${m}" y="${m}" width="${w - 2 * m}" height="${h - 2 * m}" fill="none" stroke="${INK}" stroke-width="${0.7 * fr}"/>`;
+  out += `<rect x="${m - 5 * fr}" y="${m - 5 * fr}" width="${w - 2 * m + 10 * fr}" height="${h - 2 * m + 10 * fr}" fill="none" stroke="${INK}" stroke-width="${0.35 * fr}"/>`;
   // 列参照 (0-9) / 行参照 (A-F)
   const cw = (w - 2 * m) / cols, rh = (h - 2 * m) / rows;
+  const fs = 3.4 * fr, tick = 0.25 * fr;
   for (let i = 0; i < cols; i++) {
     const cx = m + cw * i + cw / 2;
-    out += `<text x="${cx}" y="${m - 1.2}" font-size="3.4" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i}</text>`;
-    out += `<text x="${cx}" y="${h - m + 4}" font-size="3.4" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i}</text>`;
-    if (i) out += `<path d="M${m + cw * i},${m - 5} V${m}" stroke="${INK_SOFT}" stroke-width="0.25"/><path d="M${m + cw * i},${h - m} V${h - m + 5}" stroke="${INK_SOFT}" stroke-width="0.25"/>`;
+    out += `<text x="${cx}" y="${m - 1.2 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i}</text>`;
+    out += `<text x="${cx}" y="${h - m + 4 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i}</text>`;
+    if (i) out += `<path d="M${m + cw * i},${m - 5 * fr} V${m}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${m + cw * i},${h - m} V${h - m + 5 * fr}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
   for (let i = 0; i < rows; i++) {
-    const cy = m + rh * i + rh / 2 + 1.2;
+    const cy = m + rh * i + rh / 2 + 1.2 * fr;
     const ch = String.fromCharCode(65 + i);
-    out += `<text x="${m - 2.6}" y="${cy}" font-size="3.4" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
-    out += `<text x="${w - m + 2.6}" y="${cy}" font-size="3.4" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
-    if (i) out += `<path d="M${m - 5},${m + rh * i} H${m}" stroke="${INK_SOFT}" stroke-width="0.25"/><path d="M${w - m},${m + rh * i} H${w - m + 5}" stroke="${INK_SOFT}" stroke-width="0.25"/>`;
+    out += `<text x="${m - 2.6 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
+    out += `<text x="${w - m + 2.6 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
+    if (i) out += `<path d="M${m - 5 * fr},${m + rh * i} H${m}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${w - m},${m + rh * i} H${w - m + 5 * fr}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
-  // 表題欄 (図番・改訂・設計/検図欄つき)
-  const tbW = 150, tbH = 30, tbX = w - m - tbW, tbY = h - m - tbH;
-  const today = new Date();
-  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  const meta = App.project.meta || {};
-  const c1 = tbX, c2 = tbX + 52, c3 = tbX + 104, c4 = tbX + 126;
-  const r1 = tbY, r2 = tbY + 10, r3 = tbY + 20, r4 = tbY + tbH;
+  // 表題欄 (図番・改訂・設計/検図欄つき)。尺度分だけ拡大し、用紙上では常に同じ大きさに見えるようにする
+  const meta = projectMeta();
+  const f = scaleFactor(meta.scale);
+  const S = v => v * f;                       // 用紙実寸 mm → 作図領域 mm
+  const tbW = S(150), tbH = S(30), tbX = w - m - tbW, tbY = h - m - tbH;
+  const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
+  const c1 = tbX, c2 = tbX + S(52), c3 = tbX + S(104), c4 = tbX + S(126);
+  const r1 = tbY, r2 = tbY + S(10), r3 = tbY + S(20), r4 = tbY + tbH;
   const cell = (x, y, label, value, valSize = 3.4, bold = false) =>
-    `<text x="${x + 2}" y="${y + 3.4}" font-size="2.4" fill="${INK_SOFT}">${label}</text>` +
-    `<text x="${x + 2}" y="${y + 8.2}" font-size="${valSize}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text>`;
-  out += `<g font-family="sans-serif">
-    <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="0.55"/>
+    `<text x="${x + S(2)}" y="${y + S(3.4)}" font-size="${S(2.4)}" fill="${INK_SOFT}">${label}</text>` +
+    `<text x="${x + S(2)}" y="${y + S(8.2)}" font-size="${S(valSize)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text>`;
+  out += `<g font-family="sans-serif" data-titleblock="1">
+    <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="${S(0.55)}"/>
     <path d="M${c1},${r2} H${tbX + tbW} M${c1},${r3} H${tbX + tbW} M${c2},${r1} V${r4} M${c3},${r1} V${r4} M${c4},${r1} V${r4}"
-      stroke="${INK}" stroke-width="0.28"/>
+      stroke="${INK}" stroke-width="${S(0.28)}"/>
     ${cell(c1, r1, "プロジェクト", App.project.name, 3.6, true)}
     ${cell(c2, r1, "ページ名", page.name, 3.6, true)}
     ${cell(c3, r1, "図番", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
     ${cell(c4, r1, "改訂", meta.rev || "0")}
     ${cell(c1, r2, "設計", meta.designer || "—")}
     ${cell(c2, r2, "検図", meta.checker || "—")}
-    ${cell(c3, r2, "日付", dateStr, 3)}
-    ${cell(c4, r2, "尺度", "1:1")}
-    ${cell(c1, r3, "作成", "ElectraCAD Studio", 3)}
-    ${cell(c2, r3, "用紙", "A3 (420×297)", 3)}
-    <text x="${c3 + 2}" y="${r3 + 3.4}" font-size="2.4" fill="${INK_SOFT}">ページ</text>
-    <text x="${c3 + 2}" y="${r3 + 8.6}" font-size="4.6" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
-    <path d="M${c4 + 8},${r3 + 6.5} l3.5,-4.5 h2.5 l-3.5,4.5 h4 l-8,3.5 2,-3.5 z" fill="#2f6fd6"/>
+    ${cell(c3, r2, "日付", meta.date || todayStr(), 3)}
+    ${cell(c4, r2, "尺度", meta.scale || "1:1")}
+    ${cell(c1, r3, "作成", meta.author || "ElectraCAD Studio", 3)}
+    ${cell(c2, r3, "用紙", `${meta.paper} (${pw}×${ph})`, 3)}
+    <text x="${c3 + S(2)}" y="${r3 + S(3.4)}" font-size="${S(2.4)}" fill="${INK_SOFT}">ページ</text>
+    <text x="${c3 + S(2)}" y="${r3 + S(8.6)}" font-size="${S(4.6)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
+    <path d="M${c4 + S(8)},${r3 + S(6.5)} l${S(3.5)},${S(-4.5)} h${S(2.5)} l${S(-3.5)},${S(4.5)} h${S(4)} l${S(-8)},${S(3.5)} ${S(2)},${S(-3.5)} z" fill="#2f6fd6"/>
   </g>`;
   return out;
 }
@@ -163,15 +166,17 @@ function wiresSVG(page) {
   const sim = App.sim.running ? App.sim.energized : null;
   page.wires.forEach(w => {
     const d = "M" + w.pts.map(p => p[0] + "," + p[1]).join(" L");
-    let color = INK, sw = 0.55;
-    if (sim && sim.wireNet) {
+    const cond = isWireConductive(w);
+    let color = cond ? INK : "#5a6b85", sw = cond ? 0.55 : 0.4;
+    if (cond && sim && sim.wireNet) {
       const net = sim.wireNet.get(w.id);
       if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = 0.9; }
       else if (sim.nNets.has(net)) { color = SIM_N; sw = 0.9; }
     }
+    const dash = cond ? "" : ` stroke-dasharray="${(WIRE_STYLES[w.style] || WIRE_STYLES.dash).dash}"`;
     const selected = App.selection.has(w.id);
     if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="2.2" fill="none" opacity="0.28" stroke-linecap="round"/>`;
-    out += `<path d="${d}" stroke="${color}" stroke-width="${sw}" fill="none" data-id="${w.id}" class="wire"/>`;
+    out += `<path d="${d}" stroke="${color}" stroke-width="${sw}" fill="none"${dash} data-id="${w.id}" class="wire"/>`;
     // 当たり判定用の太い透明パス
     out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="4" fill="none" data-id="${w.id}" class="wire-hit"/>`;
     // 配線番号 (numShow=false のワイヤはネット内の代表ワイヤに表示を譲る)
@@ -820,6 +825,13 @@ function onMouseUp(e) {
       page.texts.forEach(t => {
         if (t.x >= x0 && t.x <= x1 && t.y >= y0 && t.y <= y1) App.selection.add(t.id);
       });
+      // 破線枠 (交差選択=枠線が範囲に触れる / 窓選択=枠全体が入る)
+      pageZones(page).forEach(z => {
+        const hit = crossing
+          ? rectHit(z.x, z.y, z.w, z.h) && !(z.x < x0 && z.x + z.w > x1 && z.y < y0 && z.y + z.h > y1)
+          : rectHit(z.x, z.y, z.w, z.h);
+        if (hit) App.selection.add(z.id);
+      });
       UI.showProps();
     }
     requestRender();
@@ -847,17 +859,28 @@ function onDblClick(e) {
   if (hit && hit.type === "text") {
     UI.openTextInput(e.clientX, e.clientY, hit.obj.x, hit.obj.y, hit.obj);
   } else if (hit && hit.type === "wire") {
-    // 配線ダブルクリック = 線番のインライン編集
+    // 配線ダブルクリック = 線番のインライン編集 (作図線は線番を持たないのでプロパティを開く)
     App.selection.clear();
     App.selection.add(hit.obj.id);
-    UI.openWireNumInput(e.clientX, e.clientY, hit.obj);
+    if (isWireConductive(hit.obj)) UI.openWireNumInput(e.clientX, e.clientY, hit.obj);
+    else UI.showProps();
     requestRender();
   } else if (hit && hit.type === "device" || hit && hit.type === "zone") {
     App.selection.clear();
     App.selection.add(hit.obj.id);
     UI.showProps(true);
     requestRender();
+  } else if (!hit && inTitleBlock(w.x, w.y)) {
+    UI.sheetSetup(); // 表題欄のダブルクリックで図枠設定を開く
   }
+}
+
+/** 表題欄 (右下) の内側か */
+function inTitleBlock(x, y) {
+  const f = scaleFactor(projectMeta().scale);
+  const tbW = 150 * f, tbH = 30 * f;
+  const tbX = SHEET.w - SHEET.margin - tbW, tbY = SHEET.h - SHEET.margin - tbH;
+  return x >= tbX && x <= tbX + tbW && y >= tbY && y <= tbY + tbH;
 }
 
 function finishWireDraft() {
