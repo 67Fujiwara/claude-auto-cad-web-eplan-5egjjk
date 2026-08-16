@@ -13,8 +13,9 @@ const DXF_LAYERS = ["FRAME", "WIRE", "AUXLINE", "SYMBOL", "TEXT", "WIRENUM", "PI
 /* 線種テーブル (R12)。作図線を AutoCAD 側でも破線・一点鎖線として開くため */
 const DXF_LTYPES = [
   { name: "CONTINUOUS", desc: "Solid line", pat: [] },
-  { name: "DASHED", desc: "Dashed __ __ __ __", pat: [6.35, -3.175] },
-  { name: "DASHDOT", desc: "Dash dot __ . __ . __", pat: [12.7, -6.35, 0, -6.35] },
+  { name: "DASHED", desc: "Dashed (JIS Z 8312 type 02)", pat: WIRE_STYLES.dash.dxf },
+  { name: "DASHDOT", desc: "Long-dash dot (JIS Z 8312 type 04)", pat: WIRE_STYLES.dashdot.dxf },
+  { name: "DIVIDE", desc: "Long-dash double-dot (JIS Z 8312 type 05)", pat: WIRE_STYLES.dashdotdot.dxf },
 ];
 function dxfLtypeTable() {
   return DXF_LTYPES.map(lt => {
@@ -205,51 +206,74 @@ function dxfDevXform(dev) {
 /** 1ページ → DXF 文字列 */
 function pageToDXF(page) {
   let ents = "";
-  const { w, h, margin: mg, cols, rows } = SHEET;
+  const { w, h, margin: mg, marginLeft: ml, cols, rows } = SHEET;
+  const meta = projectMeta();
+  const f = sheetScale();
+  const S = v => v * f;                      // 用紙実寸 mm → 作図領域 mm
+  const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
 
-  // ── 図枠 ──
-  ents += dxfPoly([[mg, mg], [w - mg, mg], [w - mg, h - mg], [mg, h - mg], [mg, mg]], "FRAME");
-  ents += dxfPoly([[mg - 5, mg - 5], [w - mg + 5, mg - 5], [w - mg + 5, h - mg + 5], [mg - 5, h - mg + 5], [mg - 5, mg - 5]], "FRAME");
-  const cw = (w - 2 * mg) / cols, rh = (h - 2 * mg) / rows;
+  // ── 輪郭線 (とじ代 20mm) + 中心マーク ──
+  ents += dxfPoly([[ml, mg], [w - mg, mg], [w - mg, h - mg], [ml, h - mg], [ml, mg]], "FRAME");
+  const cxm = (ml + (w - mg)) / 2, cym = h / 2, cm5 = S(5);
+  ents += dxfLine(cxm, 0, cxm, mg + cm5, "FRAME");
+  ents += dxfLine(cxm, h, cxm, h - mg - cm5, "FRAME");
+  ents += dxfLine(0, cym, ml + cm5, cym, "FRAME");
+  ents += dxfLine(w, cym, w - mg - cm5, cym, "FRAME");
+  // ── 格子参照 (列 1 から / 行 A から・I と O を除く) ──
+  const cw = (w - ml - mg) / cols, rh = (h - 2 * mg) / rows;
+  const fs = S(TEXT_H.normal), zw = S(5);
   for (let i = 0; i < cols; i++) {
-    const cx = mg + cw * i + cw / 2;
-    ents += dxfText(cx, mg - 1.2, 3.4, String(i), "FRAME", "middle");
-    ents += dxfText(cx, h - mg + 4, 3.4, String(i), "FRAME", "middle");
-    if (i) { ents += dxfLine(mg + cw * i, mg - 5, mg + cw * i, mg, "FRAME"); ents += dxfLine(mg + cw * i, h - mg, mg + cw * i, h - mg + 5, "FRAME"); }
+    const cx = ml + cw * i + cw / 2;
+    ents += dxfText(cx, mg - S(1.4), fs, String(i + 1), "FRAME", "middle");
+    ents += dxfText(cx, h - mg + S(4.2), fs, String(i + 1), "FRAME", "middle");
+    if (i) { ents += dxfLine(ml + cw * i, mg - zw, ml + cw * i, mg, "FRAME"); ents += dxfLine(ml + cw * i, h - mg, ml + cw * i, h - mg + zw, "FRAME"); }
   }
   for (let i = 0; i < rows; i++) {
-    const cy = mg + rh * i + rh / 2 + 1.2;
-    const ch = String.fromCharCode(65 + i);
-    ents += dxfText(mg - 2.6, cy, 3.4, ch, "FRAME", "middle");
-    ents += dxfText(w - mg + 2.6, cy, 3.4, ch, "FRAME", "middle");
-    if (i) { ents += dxfLine(mg - 5, mg + rh * i, mg, mg + rh * i, "FRAME"); ents += dxfLine(w - mg, mg + rh * i, w - mg + 5, mg + rh * i, "FRAME"); }
+    const cy = mg + rh * i + rh / 2 + S(1.3);
+    const ch = SHEET_ROW_LETTERS[i] || "Z";
+    ents += dxfText(ml - S(2.8), cy, fs, ch, "FRAME", "middle");
+    ents += dxfText(w - mg + S(2.8), cy, fs, ch, "FRAME", "middle");
+    if (i) { ents += dxfLine(ml - zw, mg + rh * i, ml, mg + rh * i, "FRAME"); ents += dxfLine(w - mg, mg + rh * i, w - mg + zw, mg + rh * i, "FRAME"); }
   }
-  // ── 表題欄 ──
-  const tbW = 150, tbH = 30, tbX = w - mg - tbW, tbY = h - mg - tbH;
+  // ── 表題欄 (画面と同じ項目・同じ割付) ──
+  const tb = titleBlockRect();
+  const tbX = tb.x, tbY = tb.y, tbW = tb.w, tbH = tb.h;
   ents += dxfPoly([[tbX, tbY], [tbX + tbW, tbY], [tbX + tbW, tbY + tbH], [tbX, tbY + tbH], [tbX, tbY]], "FRAME");
-  ents += dxfLine(tbX, tbY + 10, tbX + tbW, tbY + 10, "FRAME");
-  ents += dxfLine(tbX, tbY + 20, tbX + tbW, tbY + 20, "FRAME");
-  [52, 104, 126].forEach(o => ents += dxfLine(tbX + o, tbY, tbX + o, tbY + tbH, "FRAME"));
-  ents += dxfText(tbX + 2, tbY + 8.2, 3.6, App.project.name, "TEXT");
-  ents += dxfText(tbX + 54, tbY + 8.2, 3.6, page.name, "TEXT");
-  ents += dxfText(tbX + 106, tbY + 8.2, 3.2, "E-" + String(page.no).padStart(3, "0"), "TEXT");
-  ents += dxfText(tbX + 106, tbY + 28.6, 4.2, `${page.no} / ${App.project.pages.length}`, "TEXT");
-  ents += dxfText(tbX + 2, tbY + 28, 3, "ElectraCAD Studio", "TEXT");
+  ents += dxfLine(tbX, tbY + S(10), tbX + tbW, tbY + S(10), "FRAME");
+  ents += dxfLine(tbX, tbY + S(20), tbX + tbW, tbY + S(20), "FRAME");
+  [56, 112, 136].forEach(o => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), tbY + tbH, "FRAME"));
+  const tbCell = (cx, ry, label, value, big = false) => {
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(3.6), S(TEXT_H.small), label, "FRAME");
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(big ? TEXT_H.normal : TEXT_H.small), value, "TEXT");
+  };
+  tbCell(0, 0, "図名", App.project.name, true);
+  tbCell(56, 0, "ページ名", page.name, true);
+  tbCell(112, 0, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"), true);
+  tbCell(136, 0, "改訂", meta.rev || "0", true);
+  tbCell(0, 10, "設計", meta.designer || "—", true);
+  tbCell(56, 10, "検図", meta.checker || "—", true);
+  tbCell(112, 10, "日付", meta.date || todayStr());
+  tbCell(136, 10, "尺度", meta.scale || "1:1", true);
+  tbCell(0, 20, "企業 (団体) 名", meta.author || "—", true);
+  tbCell(56, 20, "用紙 / 投影法", `${meta.paper} ${pw}x${ph} / ${meta.proj || "第三角法"}`);
+  ents += dxfText(tbX + S(112) + S(2), tbY + S(20) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
+  ents += dxfText(tbX + S(112) + S(2), tbY + S(20) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
 
-  // ── 破線枠 (盤外エリア / グループ) ──
+  // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {
-    ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "FRAME");
-    if (z.label) ents += dxfText(z.x + 2.5, z.y - 1.8, 3.6, z.label, "TEXT");
+    ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED");
+    if (z.label) ents += dxfText(z.x + S(2.5), z.y - S(1.8), S(TEXT_H.normal), z.label, "TEXT");
   });
 
   // ── 配線 + ジャンクション + 線番 + 電線仕様 ──
   page.wires.forEach(wr => {
     // 作図線 (破線・一点鎖線) は AUXLINE レイヤに線種つきで出力する
+    const lt = { dash: "DASHED", dashdot: "DASHDOT", dashdotdot: "DIVIDE" }[wr.style] || null;
     if (!isWireConductive(wr)) {
-      ents += dxfPoly(wr.pts, "AUXLINE", wr.style === "dashdot" ? "DASHDOT" : "DASHED");
+      ents += dxfPoly(wr.pts, "AUXLINE", lt || "DASHED");
       return;
     }
-    ents += dxfPoly(wr.pts, "WIRE");
+    ents += dxfPoly(wr.pts, "WIRE", lt);
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr);
       ents += dxfText(horiz ? mx : mx - 0.6, my, 3, wr.num, "WIRENUM", "middle", horiz ? 0 : 90);

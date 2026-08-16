@@ -80,81 +80,99 @@ function renderAll() {
 
 /* ── シート (図枠 + グリッド + 表題欄) ── */
 function sheetSVG(page) {
-  const { w, h, margin: m, cols, rows } = SHEET;
-  const fr = scaleFactor(projectMeta().scale); // 尺度 (図枠まわりの文字・目盛はこの倍率で描く)
+  const { w, h, margin: m, marginLeft: ml, cols, rows } = SHEET;
+  const fr = sheetScale(); // 尺度 (線幅・文字高はこの倍率で描き、用紙上では常に同じ大きさ)
   let out = "";
   // 影 + 用紙
   out += `<rect x="2.5" y="3.5" width="${w}" height="${h}" fill="rgba(0,0,0,.45)" rx="1"/>`;
   out += `<rect x="0" y="0" width="${w}" height="${h}" fill="#f7f8f5" rx="0.5"/>`;
   // グリッド
   let grid = "";
-  for (let x = m; x <= w - m; x += GRID) grid += `M${x},${m} V${h - m}`;
-  for (let y = m; y <= h - m; y += GRID) grid += `M${m},${y} H${w - m}`;
-  out += `<path d="${grid}" stroke="rgba(30,50,90,.055)" stroke-width="0.3" fill="none"/>`;
+  for (let x = ml; x <= w - m; x += GRID) grid += `M${x},${m} V${h - m}`;
+  for (let y = m; y <= h - m; y += GRID) grid += `M${ml},${y} H${w - m}`;
+  out += `<path d="${grid}" stroke="rgba(30,50,90,.055)" stroke-width="${0.3 * fr}" fill="none"/>`;
   let grid2 = "";
-  for (let x = m; x <= w - m; x += GRID * 4) grid2 += `M${x},${m} V${h - m}`;
-  for (let y = m; y <= h - m; y += GRID * 4) grid2 += `M${m},${y} H${w - m}`;
-  out += `<path d="${grid2}" stroke="rgba(30,50,90,.09)" stroke-width="0.3" fill="none"/>`;
-  // 図枠 (二重線)
-  out += `<rect x="${m}" y="${m}" width="${w - 2 * m}" height="${h - 2 * m}" fill="none" stroke="${INK}" stroke-width="${0.7 * fr}"/>`;
-  out += `<rect x="${m - 5 * fr}" y="${m - 5 * fr}" width="${w - 2 * m + 10 * fr}" height="${h - 2 * m + 10 * fr}" fill="none" stroke="${INK}" stroke-width="${0.35 * fr}"/>`;
-  // 列参照 (0-9) / 行参照 (A-F)
-  const cw = (w - 2 * m) / cols, rh = (h - 2 * m) / rows;
-  const fs = 3.4 * fr, tick = 0.25 * fr;
+  for (let x = ml; x <= w - m; x += GRID * 4) grid2 += `M${x},${m} V${h - m}`;
+  for (let y = m; y <= h - m; y += GRID * 4) grid2 += `M${ml},${y} H${w - m}`;
+  out += `<path d="${grid2}" stroke="rgba(30,50,90,.09)" stroke-width="${0.3 * fr}" fill="none"/>`;
+  // 輪郭線 (JIS Z 8311: とじ代側 20mm・他辺 c)
+  out += `<rect x="${ml}" y="${m}" width="${w - ml - m}" height="${h - 2 * m}" fill="none" stroke="${INK}" stroke-width="${LINE_W.extra * fr}"/>`;
+  // 中心マーク (4辺の中点。輪郭線の内側 5mm まで) — JIS Z 8311 必須
+  const cmw = LINE_W.thick * fr, cm5 = 5 * fr;
+  const cxm = (ml + (w - m)) / 2, cym = h / 2;
+  out += `<path d="M${cxm},0 V${m + cm5} M${cxm},${h} V${h - m - cm5} M0,${cym} H${ml + cm5} M${w},${cym} H${w - m - cm5}"
+    stroke="${INK}" stroke-width="${cmw}" fill="none"/>`;
+  // 格子参照: 列 1,2,3… / 行 A,B,C… (I・O は使わない)
+  const cw = (w - ml - m) / cols, rh = (h - 2 * m) / rows;
+  const fs = TEXT_H.normal * fr, tick = LINE_W.thin * fr, zw = 5 * fr;
   for (let i = 0; i < cols; i++) {
-    const cx = m + cw * i + cw / 2;
-    out += `<text x="${cx}" y="${m - 1.2 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i}</text>`;
-    out += `<text x="${cx}" y="${h - m + 4 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i}</text>`;
-    if (i) out += `<path d="M${m + cw * i},${m - 5 * fr} V${m}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${m + cw * i},${h - m} V${h - m + 5 * fr}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
+    const cx = ml + cw * i + cw / 2;
+    out += `<text x="${cx}" y="${m - 1.4 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
+    out += `<text x="${cx}" y="${h - m + 4.2 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
+    if (i) out += `<path d="M${ml + cw * i},${m - zw} V${m}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${ml + cw * i},${h - m} V${h - m + zw}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
   for (let i = 0; i < rows; i++) {
-    const cy = m + rh * i + rh / 2 + 1.2 * fr;
-    const ch = String.fromCharCode(65 + i);
-    out += `<text x="${m - 2.6 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
-    out += `<text x="${w - m + 2.6 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
-    if (i) out += `<path d="M${m - 5 * fr},${m + rh * i} H${m}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${w - m},${m + rh * i} H${w - m + 5 * fr}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
+    const cy = m + rh * i + rh / 2 + 1.3 * fr;
+    const ch = SHEET_ROW_LETTERS[i] || "Z";
+    out += `<text x="${ml - 2.8 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
+    out += `<text x="${w - m + 2.8 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
+    if (i) out += `<path d="M${ml - zw},${m + rh * i} H${ml}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${w - m},${m + rh * i} H${w - m + zw}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
-  // 表題欄 (図番・改訂・設計/検図欄つき)。尺度分だけ拡大し、用紙上では常に同じ大きさに見えるようにする
+  // 表題欄 (JIS Z 8311: 右下・輪郭線に接する。図番/図名/企業名/署名/日付/尺度/投影法を記入)
   const meta = projectMeta();
-  const f = scaleFactor(meta.scale);
-  const S = v => v * f;                       // 用紙実寸 mm → 作図領域 mm
-  const tbW = S(150), tbH = S(30), tbX = w - m - tbW, tbY = h - m - tbH;
+  const S = v => v * fr;                       // 用紙実寸 mm → 作図領域 mm
+  const tbW = S(160), tbH = S(30), tbX = w - m - tbW, tbY = h - m - tbH;
   const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
-  const c1 = tbX, c2 = tbX + S(52), c3 = tbX + S(104), c4 = tbX + S(126);
+  const c1 = tbX, c2 = tbX + S(56), c3 = tbX + S(112), c4 = tbX + S(136);
   const r1 = tbY, r2 = tbY + S(10), r3 = tbY + S(20), r4 = tbY + tbH;
-  const cell = (x, y, label, value, valSize = 3.4, bold = false) =>
-    `<text x="${x + S(2)}" y="${y + S(3.4)}" font-size="${S(2.4)}" fill="${INK_SOFT}">${label}</text>` +
-    `<text x="${x + S(2)}" y="${y + S(8.2)}" font-size="${S(valSize)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text>`;
+  const cell = (x, y, label, value, valSize = TEXT_H.normal, bold = false) =>
+    `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${label}</text>` +
+    `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${S(valSize)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text>`;
   out += `<g font-family="sans-serif" data-titleblock="1">
-    <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="${S(0.55)}"/>
+    <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="${S(LINE_W.thick)}"/>
     <path d="M${c1},${r2} H${tbX + tbW} M${c1},${r3} H${tbX + tbW} M${c2},${r1} V${r4} M${c3},${r1} V${r4} M${c4},${r1} V${r4}"
-      stroke="${INK}" stroke-width="${S(0.28)}"/>
-    ${cell(c1, r1, "プロジェクト", App.project.name, 3.6, true)}
-    ${cell(c2, r1, "ページ名", page.name, 3.6, true)}
-    ${cell(c3, r1, "図番", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
+      stroke="${INK}" stroke-width="${S(LINE_W.thin)}"/>
+    ${cell(c1, r1, "図名 (プロジェクト)", App.project.name, TEXT_H.normal, true)}
+    ${cell(c2, r1, "ページ名", page.name, TEXT_H.normal, true)}
+    ${cell(c3, r1, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
     ${cell(c4, r1, "改訂", meta.rev || "0")}
-    ${cell(c1, r2, "設計", meta.designer || "—")}
-    ${cell(c2, r2, "検図", meta.checker || "—")}
-    ${cell(c3, r2, "日付", meta.date || todayStr(), 3)}
+    ${cell(c1, r2, "設計 (署名)", meta.designer || "—")}
+    ${cell(c2, r2, "検図 (署名)", meta.checker || "—")}
+    ${cell(c3, r2, "日付", meta.date || todayStr(), TEXT_H.small)}
     ${cell(c4, r2, "尺度", meta.scale || "1:1")}
-    ${cell(c1, r3, "作成", meta.author || "ElectraCAD Studio", 3)}
-    ${cell(c2, r3, "用紙", `${meta.paper} (${pw}×${ph})`, 3)}
-    <text x="${c3 + S(2)}" y="${r3 + S(3.4)}" font-size="${S(2.4)}" fill="${INK_SOFT}">ページ</text>
-    <text x="${c3 + S(2)}" y="${r3 + S(8.6)}" font-size="${S(4.6)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
-    <path d="M${c4 + S(8)},${r3 + S(6.5)} l${S(3.5)},${S(-4.5)} h${S(2.5)} l${S(-3.5)},${S(4.5)} h${S(4)} l${S(-8)},${S(3.5)} ${S(2)},${S(-3.5)} z" fill="#2f6fd6"/>
+    ${cell(c1, r3, "企業 (団体) 名", meta.author || "—", TEXT_H.normal)}
+    ${cell(c2, r3, "用紙 / 投影法", `${meta.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`, TEXT_H.small)}
+    <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">ページ</text>
+    <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${S(TEXT_H.large)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
+    ${projSymbolSVG(c4 + S(4), r3 + S(2.4), S(1), meta.proj)}
   </g>`;
   return out;
+}
+
+/** 投影法の記号 (JIS Z 8316)。第三角法=小円が左、第一角法=小円が右 */
+function projSymbolSVG(x, y, u, proj) {
+  const first = proj === "第一角法";
+  const big = 3 * u, small = 1.9 * u, cy = y + 3.6 * u;
+  const bx = x + (first ? 11 * u : 3.4 * u), sx = x + (first ? 3.4 * u : 11 * u);
+  const sw = 0.25 * u;
+  return `<g stroke="${INK}" stroke-width="${sw}" fill="none">
+    <path d="M${bx - big * 1.7},${cy - big} L${bx + big * 1.7},${cy - big * 0.62} M${bx - big * 1.7},${cy + big} L${bx + big * 1.7},${cy + big * 0.62}
+             M${bx - big * 1.7},${cy - big} V${cy + big} M${bx + big * 1.7},${cy - big * 0.62} V${cy + big * 0.62}"/>
+    <circle cx="${sx}" cy="${cy}" r="${small}"/><circle cx="${sx}" cy="${cy}" r="${small * 0.5}"/>
+  </g>`;
 }
 
 /* ── 破線枠 (盤外エリア / 機器グループ) ── */
 function zonesSVG(page) {
   let out = "";
+  const fr = sheetScale();
+  const dash = WIRE_STYLES.dash.dash.split(" ").map(v => v * fr).join(" ");
   pageZones(page).forEach(z => {
     const selected = App.selection.has(z.id);
-    out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="2" fill="none"
-      stroke="${selected ? SEL : "#5a6b85"}" stroke-width="${selected ? 0.7 : 0.45}" stroke-dasharray="4 2.4"/>`;
+    out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr}" fill="none"
+      stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr}" stroke-dasharray="${dash}"/>`;
     if (z.label) {
-      out += `<text x="${z.x + 2.5}" y="${z.y - 1.8}" font-size="3.6" fill="#5a6b85" font-family="sans-serif">${escXML(z.label)}</text>`;
+      out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${TEXT_H.normal * fr}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
     }
   });
   return out;
@@ -164,40 +182,41 @@ function zonesSVG(page) {
 function wiresSVG(page) {
   let out = "";
   const sim = App.sim.running ? App.sim.energized : null;
+  const fr = sheetScale();
   page.wires.forEach(w => {
     const d = "M" + w.pts.map(p => p[0] + "," + p[1]).join(" L");
     const cond = isWireConductive(w);
-    let color = cond ? INK : "#5a6b85", sw = cond ? 0.55 : 0.4;
+    // 線の太さは JIS Z 8312 の系列 (配線=太線 0.5 / 作図線=細線 0.25、比 2:1)
+    let color = INK, sw = (cond ? LINE_W.thick : LINE_W.thin) * fr;
     if (cond && sim && sim.wireNet) {
       const net = sim.wireNet.get(w.id);
-      if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = 0.9; }
-      else if (sim.nNets.has(net)) { color = SIM_N; sw = 0.9; }
+      if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = LINE_W.extra * fr; }
+      else if (sim.nNets.has(net)) { color = SIM_N; sw = LINE_W.extra * fr; }
     }
-    const dash = cond ? "" : ` stroke-dasharray="${(WIRE_STYLES[w.style] || WIRE_STYLES.dash).dash}"`;
+    const st = WIRE_STYLES[w.style] || WIRE_STYLES.solid;
+    const dash = st.dash ? ` stroke-dasharray="${st.dash.split(" ").map(v => v * fr).join(" ")}"` : "";
     const selected = App.selection.has(w.id);
-    if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="2.2" fill="none" opacity="0.28" stroke-linecap="round"/>`;
+    if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="${2.2 * fr}" fill="none" opacity="0.28" stroke-linecap="round"/>`;
     out += `<path d="${d}" stroke="${color}" stroke-width="${sw}" fill="none"${dash} data-id="${w.id}" class="wire"/>`;
     // 当たり判定用の太い透明パス
-    out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="4" fill="none" data-id="${w.id}" class="wire-hit"/>`;
+    out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="${4 * fr}" fill="none" data-id="${w.id}" class="wire-hit"/>`;
     // 配線番号 (numShow=false のワイヤはネット内の代表ワイヤに表示を譲る)
-    if (w.num && w.numShow !== false) {
+    if (w.num && w.numShow !== false && cond) {
       const [mx, my, horiz] = wireLabelPos(w);
       // 縦区間は配線から法線方向 (左) にオフセットして重なりを防ぐ
-      const lx = horiz ? mx : mx - 0.6, ly = horiz ? my : my;
-      out += `<text x="${lx}" y="${ly}" font-size="3" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+      const lx = horiz ? mx : mx - 0.6 * fr, ly = my;
+      out += `<text x="${lx}" y="${ly}" font-size="${TEXT_H.small * fr}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec) {
       const [mx, my, horiz] = wireLabelPos(w);
-      const sx = horiz ? mx : mx + 3.4, sy = horiz ? my + 4.6 : my;
-      out += `<text x="${sx}" y="${sy}" font-size="2.7" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+      const sx = horiz ? mx : mx + 3.4 * fr, sy = horiz ? my + 4.6 * fr : my;
+      out += `<text x="${sx}" y="${sy}" font-size="${TEXT_H.small * fr}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
   });
-  // ジャンクションドット
+  // ジャンクションドット (直径は線幅の約3倍)
   junctionDots(page).forEach(([x, y]) => {
-    let color = INK;
-    if (sim && sim.wireNet) { /* 色はワイヤに追従させる程度で省略 */ }
-    out += `<circle cx="${x}" cy="${y}" r="1.05" fill="${color}"/>`;
+    out += `<circle cx="${x}" cy="${y}" r="${LINE_W.thick * 1.5 * fr}" fill="${INK}"/>`;
   });
   return out;
 }
@@ -217,6 +236,7 @@ function wireLabelPos(w) {
 function devicesSVG(page) {
   let out = "";
   const simOn = App.sim.running;
+  const fr = sheetScale();
   page.devices.forEach(dev => {
     const sym = SYMBOLS_BY_ID[dev.sym];
     if (!sym) return;
@@ -232,10 +252,11 @@ function devicesSVG(page) {
     out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})" data-id="${dev.id}" class="device" style="color:${color}">`;
     if (selected || hovered) {
       const [bx, by, bw, bh] = sym.bounds;
-      out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${selected ? 0.5 : 0.3}" stroke-dasharray="${selected ? "none" : "1.5 1.2"}" rx="1"/>`;
+      out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${(selected ? 0.5 : 0.3) * fr}" stroke-dasharray="${selected ? "none" : `${1.5 * fr} ${1.2 * fr}`}" rx="${fr}"/>`;
     }
     out += extra;
-    out += symBodySVG(sym, { strokeWidth: 1.15 * 0.42 }); // 画面上で約0.5mm相当
+    // シンボルの線は太線 0.5mm (SYM_STROKE を用紙上 0.5mm に正規化)
+    out += symBodySVG(sym, { strokeWidth: LINE_W.thick * fr });
     out += `</g>`;
     // 端子番号 (13/14, A1/A2, X1/X2 …) — EPLAN同様ピン脇に表示。
     // 連動接点は同一コイル内の順位で 13/14 → 23/24 と自動採番。
@@ -1018,12 +1039,16 @@ function rotateSelection() {
 
 /** 回転後にDRC指摘が増えていたら回転自体を取り消す。true=続行可 */
 function rotateGuard(snapshot, issuesBefore) {
-  const issuesAfter = runDRC().length;
-  if (issuesAfter <= issuesBefore) return true;
+  const after = runDRC();
+  if (after.length <= issuesBefore) return true;
+  // 何が起きるのかを具体的に伝える (図枠外へ出る / 接続が切れる など)
+  const frameIssue = after.find(i => /図枠|表題欄/.test(i.msg));
   App.project = JSON.parse(snapshot);
   App.undoStack.pop(); // commit() で積んだ分を捨てる (取り消したので履歴に残さない)
   retainSelection();
-  UI.setMsg("⚠ 回転すると回路の接続が壊れるため中止しました — 配線を外してから回転してください");
+  UI.setMsg(frameIssue
+    ? "⚠ 回転すると図枠からはみ出すため中止しました — 用紙を大きくするか選択範囲を狭めてください"
+    : "⚠ 回転すると回路の接続が壊れるため中止しました — 配線を外してから回転してください");
   requestRender();
   return false;
 }
@@ -1175,5 +1200,6 @@ function exportSheetSVG(page = null) {
   page = page || curPage();
   const body =
     `<g>${sheetSVG(page)}</g><g>${zonesSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 ${SHEET.w + 10} ${SHEET.h + 10}" font-family="sans-serif">${body}</svg>`;
+  // viewBox は用紙そのもの (余白を足すと印刷時に尺度がずれるため)
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SHEET.w} ${SHEET.h}" width="${SHEET.w / sheetScale()}mm" height="${SHEET.h / sheetScale()}mm" font-family="sans-serif">${body}</svg>`;
 }

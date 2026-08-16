@@ -364,5 +364,5 @@ function symThumbSVG(sym, size = 46) {
   const [bx, by, bw, bh] = sym.bounds;
   const pad = 3;
   const vb = `${bx - pad} ${by - pad} ${bw + pad * 2} ${bh + pad * 2}`;
-  return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + 6) / (bw + 6)}" style="max-height:100%">${symBodySVG(sym, { strokeWidth: 1.1 })}</svg>`;
+  return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + pad * 2) / (bw + pad * 2)}" style="max-height:100%">${symBodySVG(sym, { strokeWidth: 1.1 })}</svg>`;
 }

@@ -142,12 +142,12 @@ function aiGenerate(sel) {
       // 電源ユニット + AC引込 (L相に一次側保護ヒューズ)
       addDevice(page, "psu24", L.psuX, L.psuY, { desc: "制御電源" });
       addDevice(page, "fuse", L.psuX - 10, 22, { rot: 90, desc: "" }); // pins (45,22),(25,22)
-      const s1 = addWire(page, [[15, 22], [L.psuX - 30, 22]]);
+      const s1 = addWire(page, [[20, 22], [L.psuX - 30, 22]]); // 輪郭線 (とじ代 20mm) から引き込む
       addWire(page, [[L.psuX - 10, 22], [L.psuX - 10, L.psuY]]);
       const s2 = addWire(page, [[L.psuX + 10, L.psuY - 10], [L.psuX + 10, L.psuY]]);
       if (s1) s1.stub = true;
       if (s2) s2.stub = true;
-      page.texts.push({ id: uid("t"), x: 12, y: 24, text: "L", size: 3.4 });
+      page.texts.push({ id: uid("t"), x: 21, y: 19, text: "L", size: 3.4 });
       page.texts.push({ id: uid("t"), x: L.psuX + 10, y: L.psuY - 13, text: "N", size: 3.4 });
       page.texts.push({ id: uid("t"), x: L.psuX + 13, y: 15, text: "AC100V", size: 3.6, anchor: "start" });
       // 24V 分岐保護を +24V レール横引きに挿入 (0V縦引き x=psuX+10 を跨がない位置)

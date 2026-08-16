@@ -131,7 +131,8 @@ UI.showProps = (focusTag = false) => {
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
   const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
-  if (selDevs.length === 1) {
+  const only1 = App.selection.size === 1; // 単体パネルは1点選択時のみ (混在選択は一覧パネル)
+  if (selDevs.length === 1 && only1) {
     const dev = selDevs[0];
     const sym = SYMBOLS_BY_ID[dev.sym];
     const cat = SYM_CATS[sym.cat];
@@ -187,7 +188,7 @@ UI.showProps = (focusTag = false) => {
     pane.querySelectorAll(".xref-item").forEach(el => {
       el.addEventListener("click", () => UI.jumpToDevice(el.dataset.target));
     });
-  } else if (selWires.length === 1 && selDevs.length === 0 && selTexts.length === 0) {
+  } else if (selWires.length === 1 && only1) {
     // 配線単体: 線番 + 電線仕様 (複数選択パネルより先に判定すること)
     const w = selWires[0];
     pane.innerHTML = `
@@ -196,16 +197,35 @@ UI.showProps = (focusTag = false) => {
         Object.entries(WIRE_STYLES).map(([k, v]) =>
           `<option value="${k}"${(w.style || "solid") === k ? " selected" : ""}>${v.name}</option>`).join("")
       }</select></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="pAux" ${isWireConductive(w) ? "" : "checked"}/>
+        作図線にする (電気的に接続しない)</label></div>
       ${isWireConductive(w) ? `
       <div class="prop-row"><label>配線番号 ${w.fixed ? "(手動・自動採番から保護)" : ""}</label><input id="pNum" class="mono" value="${w.num || ""}"/></div>
       <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`
-      : `<div class="prop-note">実線以外は作図線として扱います。接続ドット・線番は付かず、
-         ネット解析・シミュレーション・検図 (DRC) の対象外です。</div>`}`;
-    pane.querySelector("#pStyle").addEventListener("change", e => {
+      : `<div class="prop-note">作図線です。接続ドット・線番は付かず、ネット解析・
+         シミュレーション・検図 (DRC)・端子表・接続リストの対象外です。<br>
+         破線のまま回路として扱いたい場合は上のチェックを外してください。</div>`}`;
+    const applyAux = (aux, silent) => {
+      if (aux && w.num && !silent &&
+          !confirm(`線番 ${w.num} を削除し、この配線を回路から切り離します。よろしいですか？`)) return false;
       commit();
+      w.aux = aux;
+      if (aux) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
+      return true;
+    };
+    pane.querySelector("#pStyle").addEventListener("change", e => {
       const v = e.target.value;
+      const wantAux = v !== "solid";
+      // 線種を変えると既定の扱い (実線=配線 / それ以外=作図線) に追従する
+      if (wantAux !== !isWireConductive(w)) {
+        if (!applyAux(wantAux)) { e.target.value = w.style || "solid"; return; }
+      } else commit();
       if (v === "solid") delete w.style; else w.style = v;
-      if (!isWireConductive(w)) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
+      UI.refresh(false);
+      UI.showProps();
+    });
+    pane.querySelector("#pAux").addEventListener("change", e => {
+      if (!applyAux(e.target.checked)) { e.target.checked = !e.target.checked; return; }
       UI.refresh(false);
       UI.showProps();
     });
@@ -223,7 +243,7 @@ UI.showProps = (focusTag = false) => {
       w.spec = e.target.value.trim() || undefined;
       UI.refresh(false);
     });
-  } else if (App.selection.size === 1 && pageZones(page).some(z => App.selection.has(z.id))) {
+  } else if (selZones.length === 1 && only1) {
     // 破線枠 (盤外エリア / 機器グループ)
     const z = pageZones(page).find(z => App.selection.has(z.id));
     pane.innerHTML = `
@@ -244,7 +264,7 @@ UI.showProps = (focusTag = false) => {
     zbind("#zY", v => z.y = num(v, z.y));
     zbind("#zW", v => z.w = Math.max(20, num(v, z.w)));
     zbind("#zH", v => z.h = Math.max(20, num(v, z.h)));
-  } else if (selTexts.length === 1 && selDevs.length === 0 && selWires.length === 0) {
+  } else if (selTexts.length === 1 && only1) {
     // テキスト単体: 内容とサイズ
     const t = selTexts[0];
     pane.innerHTML = `
@@ -269,9 +289,15 @@ UI.showProps = (focusTag = false) => {
     if (bulk) bulk.addEventListener("change", e => {
       const v = e.target.value;
       if (!v) return;
+      const numbered = selWires.filter(w => w.num).length;
+      if (v !== "solid" && numbered &&
+          !confirm(`${numbered} 本の配線から線番を削除し、回路から切り離します。よろしいですか？`)) {
+        e.target.value = ""; return;
+      }
       commit();
       selWires.forEach(w => {
         if (v === "solid") delete w.style; else w.style = v;
+        w.aux = v !== "solid";
         if (!isWireConductive(w)) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
       });
       UI.refresh(false);
@@ -592,6 +618,8 @@ UI.openFile = async () => {
       commit();
       App.project = p;
       App.fileHandle = handle;
+      App.pendingHandle = null;
+      rememberFileHandle(handle);
       App.pageIdx = 0;
       App.selection.clear();
       applySheet();
@@ -652,8 +680,12 @@ UI.zoomCenter = (f) => {
 };
 UI.print = () => {
   const svg = exportSheetSVG();
+  const paper = projectMeta().paper || "A3";
   const win = window.open("", "_blank");
-  win.document.write(`<html><head><title>${App.project.name}</title><style>body{margin:0}svg{width:100vw;height:100vh}</style></head><body>${svg}</body></html>`);
+  win.document.write(`<html><head><title>${App.project.name}</title><style>
+    @page { size: ${paper} landscape; margin: 0; }
+    body { margin: 0 } svg { width: 100vw; height: 100vh }
+  </style></head><body>${svg}</body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 300);
 };
@@ -780,7 +812,14 @@ UI.openWireNumInput = (clientX, clientY, wire) => {
 UI.insertZone = () => {
   if (App.sim.running) return;
   commit();
-  const z = { id: uid("z"), x: 150, y: 100, w: 90, h: 70, label: "盤外" };
+  // 画面の中央に置く (固定位置だと既存回路の真上に落ちるため)
+  const r = Editor.svg.getBoundingClientRect();
+  const c = screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
+  const fr = frameRect();
+  const w = 90, h = 70;
+  const x = Math.min(Math.max(snap(c.x - w / 2), fr.x + 5), fr.x + fr.w - w - 5);
+  const y = Math.min(Math.max(snap(c.y - h / 2), fr.y + 5), fr.y + fr.h - h - 5);
+  const z = { id: uid("z"), x, y, w, h, label: "盤外" };
   pageZones(curPage()).push(z);
   App.selection.clear();
   App.selection.add(z.id);
@@ -885,7 +924,10 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>設計</label><input id="tbDes" value="${escAttr(meta.designer || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>日付</label><input id="tbDate" class="mono" value="${escAttr(meta.date || todayStr())}" placeholder="2026-01-31"/></div>
-      <div class="prop-row"><label>作成</label><input id="tbAuth" value="${escAttr(meta.author || "ElectraCAD Studio")}"/></div>
+      <div class="prop-row"><label>企業 (団体) 名</label><input id="tbAuth" value="${escAttr(meta.author || "")}" placeholder="社名を入力"/></div>
+      <div class="prop-row"><label>投影法</label><select id="tbProj">
+        ${["第三角法", "第一角法", "該当なし (回路図)"].map(v => opt(v, meta.proj || "第三角法")).join("")}
+      </select></div>
     </div>
     <div class="prop-sect">用紙と尺度</div>
     <div class="prop-grid2">
@@ -901,11 +943,34 @@ UI.sheetSetup = () => {
   const q = id => body.querySelector(id);
   const info = () => {
     const [pw, ph] = PAPERS[q("#tbPaper").value] || PAPERS.A3;
-    const f = scaleFactor(q("#tbScale").value);
+    const sc = q("#tbScale").value;
+    const f = scaleFactor(sc);
+    const over = countOverflow(q("#tbPaper").value, sc);
     q("#tbInfo").innerHTML = `作図領域は <b>${Math.round(pw * f)} × ${Math.round(ph * f)} mm</b> になります` +
-      (f === 1 ? " (実寸)。" : `。用紙 ${pw}×${ph} mm に ${q("#tbScale").value} で印刷される想定で、実物の${f > 1 ? f + " 倍の範囲を1枚に収められます" : (1 / f) + " 倍に拡大して描けます"}。`) +
-      `<br>既存の図形は移動しません。図枠外にはみ出した機器は検図 (DRC) で警告されます。`;
+      (sc === "NS" ? " (非尺度)。" : f === 1 ? " (現尺)。"
+        : `。用紙 ${pw}×${ph} mm に ${sc} で印刷される想定で、実物の${f > 1 ? `${f} 倍の範囲を1枚に収められます` : `${1 / f} 倍に拡大して描けます`}。`) +
+      `<br>線の太さと文字の高さは尺度に追従するため、用紙上では常に同じ大きさで印刷されます。` +
+      (over.total
+        ? `<br><b style="color:var(--warn,#e5a03d)">⚠ この用紙では機器 ${over.devs} 点・配線 ${over.wires} 本が図枠外または表題欄に重なります。</b>`
+        : `<br>現在の図形はすべて新しい図枠に収まります。`);
   };
+  /** 指定の用紙・尺度に切り替えた場合のはみ出し数を試算する (SHEET は元に戻す) */
+  function countOverflow(paper, scale) {
+    const save = { paper: meta.paper, scale: meta.scale };
+    meta.paper = paper; meta.scale = scale; applySheet();
+    const fr2 = frameRect(), tb = titleBlockRect();
+    const hit = (b) => b.x < fr2.x || b.y < fr2.y || b.x + b.w > fr2.x + fr2.w || b.y + b.h > fr2.y + fr2.h ||
+      (b.x < tb.x + tb.w && b.x + b.w > tb.x && b.y < tb.y + tb.h && b.y + b.h > tb.y);
+    let devs = 0, wires = 0;
+    App.project.pages.forEach(pg => {
+      pg.devices.forEach(d => { if (hit(devBounds(d))) devs++; });
+      pg.wires.forEach(w => {
+        if (w.pts.some(p => p[0] < fr2.x || p[1] < fr2.y || p[0] > fr2.x + fr2.w || p[1] > fr2.y + fr2.h)) wires++;
+      });
+    });
+    meta.paper = save.paper; meta.scale = save.scale; applySheet();
+    return { devs, wires, total: devs + wires };
+  }
   q("#tbPaper").addEventListener("change", info);
   q("#tbScale").addEventListener("change", info);
   info();
@@ -917,6 +982,13 @@ UI.sheetSetup = () => {
   const m = UI.openModal({ title: "図枠・表題欄の設定", sub: "表題欄の記入項目と用紙サイズ・尺度", body, foot });
   foot.querySelector("#tbCancel").addEventListener("click", m.close);
   foot.querySelector("#tbOk").addEventListener("click", () => {
+    const paperChanging = meta.paper !== q("#tbPaper").value || meta.scale !== q("#tbScale").value;
+    if (paperChanging) {
+      const over = countOverflow(q("#tbPaper").value, q("#tbScale").value);
+      if (over.total && !confirm(
+        `新しい図枠 ${q("#tbPaper").value} / ${q("#tbScale").value} では、機器 ${over.devs} 点・配線 ${over.wires} 本が` +
+        `図枠外にはみ出すか表題欄に重なります。\n(検図 (DRC) にエラーとして表示されます)\n\n続けますか？`)) return;
+    }
     commit();
     App.project.name = q("#tbProj").value.trim() || App.project.name;
     page.name = q("#tbPage").value.trim() || page.name;
@@ -926,7 +998,8 @@ UI.sheetSetup = () => {
     meta.checker = q("#tbChk").value.trim();
     meta.date = q("#tbDate").value.trim();
     meta.author = q("#tbAuth").value.trim();
-    const paperChanged = meta.paper !== q("#tbPaper").value || meta.scale !== q("#tbScale").value;
+    meta.proj = q("#tbProj").value;
+    const paperChanged = paperChanging;
     meta.paper = q("#tbPaper").value;
     meta.scale = q("#tbScale").value;
     applySheet();
@@ -945,14 +1018,55 @@ const FS_API = typeof window !== "undefined" && !!window.showSaveFilePicker;
 function projectJSON() { return JSON.stringify(App.project, null, 1); }
 function defaultFileName() { return (App.project.name || "無題プロジェクト") + ".ecad.json"; }
 
+/* 保存先ファイルハンドルの記憶 (IndexedDB)。次回起動時も同じファイルへ
+   上書きできるようにする (再許可が必要な場合はボタンで再接続)。 */
+function idbHandleStore(mode = "readonly") {
+  return new Promise((res, rej) => {
+    if (!window.indexedDB) return rej(new Error("no idb"));
+    const rq = indexedDB.open("electracad", 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore("handles");
+    rq.onerror = () => rej(rq.error);
+    rq.onsuccess = () => res(rq.result.transaction("handles", mode).objectStore("handles"));
+  });
+}
+async function rememberFileHandle(handle) {
+  try {
+    const st = await idbHandleStore("readwrite");
+    st.put(handle, "project");
+  } catch (e) { /* 非対応ブラウザでは記憶しないだけ */ }
+}
+async function restoreFileHandle() {
+  try {
+    const st = await idbHandleStore();
+    const handle = await new Promise((res, rej) => {
+      const rq = st.get("project");
+      rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+    });
+    if (!handle) return;
+    const perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") { App.fileHandle = handle; UI.updateSaveButton(); return; }
+    App.pendingHandle = handle;   // 権限の再取得はユーザー操作が要るので保存時に要求する
+    UI.updateSaveButton();
+  } catch (e) { /* 記憶が無い/壊れている場合は何もしない */ }
+}
+
 /** 右上の保存ボタン / Ctrl+S: 開いた (または名前を付けて保存した) ファイルへ上書き保存 */
 UI.saveOver = async () => {
   saveLocal(); // ブラウザ保存は常に更新 (次回起動時の復元用)
+  // 前回の保存先が残っていれば、ユーザー操作の流れで書き込み権限を再取得する
+  if (!App.fileHandle && App.pendingHandle) {
+    try {
+      const perm = await App.pendingHandle.requestPermission({ mode: "readwrite" });
+      if (perm === "granted") { App.fileHandle = App.pendingHandle; App.pendingHandle = null; UI.updateSaveButton(); }
+    } catch (e) { /* 拒否されたら通常の保存フローへ */ }
+  }
   if (App.fileHandle) {
     try {
       const ws = await App.fileHandle.createWritable();
       await ws.write(projectJSON());
       await ws.close();
+      App.dirty = false;
+      UI.updateSaveButton();
       UI.setMsg(`上書き保存しました — ${App.fileHandle.name}`);
       return;
     } catch (e) {
@@ -983,18 +1097,30 @@ UI.saveAs = async () => {
     await ws.write(projectJSON());
     await ws.close();
     App.fileHandle = handle;
+    App.pendingHandle = null;
+    App.dirty = false;
+    rememberFileHandle(handle);
     UI.updateSaveButton();
     UI.setMsg(`保存しました — ${handle.name} (以後は保存ボタンで上書き)`);
-  } catch (e) { /* ユーザーがキャンセル */ }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;   // ユーザーがキャンセル
+    UI.setMsg("保存できませんでした: " + (e && e.message ? e.message : e));
+  }
 };
 
-/** 保存ボタンのツールチップに上書き先を出す */
+/** 保存ボタンに上書き先ファイル名と未保存マークを出す */
 UI.updateSaveButton = () => {
   const btn = document.getElementById("btnSave");
   if (!btn) return;
-  btn.title = App.fileHandle
-    ? `上書き保存 (Ctrl+S) — ${App.fileHandle.name}`
-    : "上書き保存 (Ctrl+S) — 保存先ファイルを選びます";
+  const name = App.fileHandle ? App.fileHandle.name : (App.pendingHandle ? App.pendingHandle.name : null);
+  btn.title = !name ? "上書き保存 (Ctrl+S) — 保存先ファイルを選びます"
+    : App.fileHandle ? `上書き保存 (Ctrl+S) — ${name}${App.dirty ? " (未保存の変更あり)" : ""}`
+    : `上書き保存 (Ctrl+S) — 前回の ${name} に再接続します`;
+  const label = btn.querySelector(".save-label") || btn;
+  const txt = (App.dirty ? "● " : "") + "保存" + (name ? ` — ${name.replace(/\.ecad\.json$|\.json$/, "")}` : "");
+  if (label !== btn) label.textContent = txt;
+  else if (btn.lastChild && btn.lastChild.nodeType === 3) btn.lastChild.textContent = " " + txt;
+  btn.classList.toggle("dirty", !!App.dirty);
 };
 
 UI.showShortcuts = () => {
@@ -1291,6 +1417,13 @@ function boot() {
     requestRender();
   });
   pn.addEventListener("keydown", e => { if (e.key === "Enter") pn.blur(); });
+
+  restoreFileHandle();
+  window.addEventListener("beforeunload", e => {
+    if (!App.dirty) return;
+    e.preventDefault();
+    e.returnValue = "";   // 未保存の変更がある場合は離脱を確認する
+  });
 
   setupEditor();
   UI.buildPalette();

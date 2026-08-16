@@ -5,7 +5,15 @@
 "use strict";
 
 const GRID = 5;              // スナップグリッド 5mm
-const SHEET = { w: 420, h: 297, margin: 10, cols: 10, rows: 6 }; // 既定 A3横 (図枠設定で変わる)
+/* 作図領域。margin = 輪郭線の幅 c (JIS Z 8311)、marginLeft = とじ代側 (20mm) */
+const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6 };
+
+/* 線の太さ (JIS Z 8312 の太さ系列。細線:太線 = 1:2) — 用紙上の mm */
+const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
+/* 文字高さ (JIS Z 8313-1 の標準列) — 用紙上の mm */
+const TEXT_H = { small: 2.5, normal: 3.5, large: 5 };
+/* 格子参照の行記号。JIS Z 8311 により I と O は使用しない */
+const SHEET_ROW_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 /* 用紙 (横置き実寸 mm) と尺度。図面の作図領域は 用紙 × 尺度分母/分子 になる。
    例: A3 (420×297) を 1:2 で描くと作図領域は 840×594 となり、実物の
@@ -13,8 +21,10 @@ const SHEET = { w: 420, h: 297, margin: 10, cols: 10, rows: 6 }; // 既定 A3横
 const PAPERS = {
   A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841],
 };
-const SCALES = ["2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"];
+/* NS = 非尺度 (制御回路図の標準)。尺度は JIS Z 8314 の推奨尺度列 */
+const SCALES = ["NS", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"];
 function scaleFactor(scale) {
+  if (scale === "NS") return 1;
   const m = /^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/.exec(String(scale || "1:1"));
   if (!m) return 1;
   const num = parseFloat(m[1]), den = parseFloat(m[2]);
@@ -28,17 +38,40 @@ function projectMeta() {
   if (!m.scale) m.scale = "1:1";
   return m;
 }
-/** meta (用紙・尺度) から作図領域 SHEET を再計算する */
+/** meta (用紙・尺度) から作図領域 SHEET を再計算する (JIS Z 8311)。
+    輪郭線の幅 c は A0・A1 = 20mm / A2〜A4 = 10mm、とじ代側 (左) は 20mm。
+    格子参照の区分数は偶数とし、1区分が 25〜75mm に収まるようにする。 */
 function applySheet() {
   const m = projectMeta();
   const [pw, ph] = PAPERS[m.paper] || PAPERS.A3;
   const f = scaleFactor(m.scale);
-  SHEET.w = Math.round(pw * f);
-  SHEET.h = Math.round(ph * f);
-  SHEET.margin = Math.round(10 * f * 10) / 10;
-  SHEET.cols = Math.max(4, Math.min(24, Math.round(10 * pw / 420)));
-  SHEET.rows = Math.max(3, Math.min(16, Math.round(6 * ph / 297)));
+  const c = (m.paper === "A0" || m.paper === "A1") ? 20 : 10;
+  SHEET.w = pw * f;
+  SHEET.h = ph * f;
+  SHEET.margin = c * f;
+  SHEET.marginLeft = Math.max(20, c) * f;      // とじ代 20mm
+  const evenDiv = (len, target) => {           // len(mm) を 25〜75mm の偶数個に分ける
+    let n = 2 * Math.max(1, Math.round(len / target / 2));
+    while (n > 2 && len / n < 25) n -= 2;
+    while (len / n > 75) n += 2;
+    return n;
+  };
+  SHEET.cols = evenDiv(pw - c - Math.max(20, c), 40);
+  SHEET.rows = evenDiv(ph - c * 2, 46);
   return SHEET;
+}
+/** 尺度倍率。線幅・文字高はこれを掛けて用紙上で一定の大きさに見せる */
+function sheetScale() { return scaleFactor(projectMeta().scale); }
+
+/** 表題欄の矩形 (作図領域座標)。図枠描画・DXF・DRC で共有する */
+function titleBlockRect() {
+  const f = sheetScale();
+  const w = 160 * f, h = 30 * f;
+  return { x: SHEET.w - SHEET.margin - w, y: SHEET.h - SHEET.margin - h, w, h };
+}
+/** 輪郭線の内側 (作図してよい範囲) */
+function frameRect() {
+  return { x: SHEET.marginLeft, y: SHEET.margin, w: SHEET.w - SHEET.marginLeft - SHEET.margin, h: SHEET.h - SHEET.margin * 2 };
 }
 
 const App = {
@@ -143,10 +176,16 @@ function displayTag(dev) {
   return dev.tag;
 }
 
-/** シート上の列番号 (クロスリファレンス用 "ページ.列") */
+/** 格子参照の列番号 (クロスリファレンス "ページ.列"。JIS Z 8311: 左上を起点に 1 から) */
 function sheetCol(x) {
-  const inner = SHEET.w - SHEET.margin * 2;
-  return Math.max(0, Math.min(SHEET.cols - 1, Math.floor((x - SHEET.margin) / (inner / SHEET.cols))));
+  const inner = SHEET.w - SHEET.marginLeft - SHEET.margin;
+  return Math.max(1, Math.min(SHEET.cols, Math.floor((x - SHEET.marginLeft) / (inner / SHEET.cols)) + 1));
+}
+/** 格子参照の行記号 (I・O を除く) */
+function sheetRow(y) {
+  const inner = SHEET.h - SHEET.margin * 2;
+  const i = Math.max(0, Math.min(SHEET.rows - 1, Math.floor((y - SHEET.margin) / (inner / SHEET.rows))));
+  return SHEET_ROW_LETTERS[i] || "Z";
 }
 function devLocation(dev) {
   const f = findDevice(dev.id);
@@ -166,13 +205,21 @@ function linkedContacts(coilDev) {
 /* ══════════════ ワイヤ ══════════════ */
 /* 線種。solid のみが電気的な配線で、破線・一点鎖線は作図線 (作図補助・
    区画表現) として扱い、ネット解析・シミュレーション・DRC・線番・
-   端子表・接続リストのいずれからも除外する。 */
+   端子表・接続リストのいずれからも除外する。
+   線の要素長さは JIS Z 8312 に従う (細線 d=0.25mm、破線=12d/3d、
+   一点鎖線=24d/3d/点(0.5d)/3d)。dxf は同じ寸法の DXF LTYPE パターン。 */
 const WIRE_STYLES = {
-  solid:   { name: "実線 (配線)",     dash: "" },
-  dash:    { name: "破線 (作図線)",   dash: "4 2.2" },
-  dashdot: { name: "一点鎖線 (作図線)", dash: "8 2 1.4 2" },
+  solid:   { name: "実線 (配線)",                 dash: "",                     dxf: null },
+  dash:    { name: "破線 (かくれ線・区画)",       dash: "3 0.75",               dxf: [3, -0.75] },
+  dashdot: { name: "一点鎖線 (中心線・基準線)",   dash: "6 0.75 0.125 0.75",    dxf: [6, -0.75, 0, -0.75] },
+  dashdotdot: { name: "二点鎖線 (想像線・隣接機器)", dash: "6 0.75 0.125 0.75 0.125 0.75", dxf: [6, -0.75, 0, -0.75, 0, -0.75] },
 };
-function isWireConductive(w) { return !w.style || w.style === "solid"; }
+/* 導通するか。既定は「実線=配線 / それ以外=作図線」だが、w.aux を明示すれば
+   線種と独立に指定できる (破線で描く盤外配線を回路として残す等)。 */
+function isWireConductive(w) {
+  if (w.aux !== undefined) return !w.aux;
+  return !w.style || w.style === "solid";
+}
 /** 電気的に有効な (実線の) 配線だけを返す */
 function condWires(page) { return page.wires.filter(isWireConductive); }
 
@@ -614,7 +661,7 @@ function simStop() {
 const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
-  "自動生成時の警告",
+  "自動生成時の警告", "図枠外・表題欄との重なり",
 ];
 
 function drcSources(page, pinNet) {
@@ -670,6 +717,23 @@ function runDRC() {
       issues.push({ sev: "err", msg: `自動生成: ${msg}`, page: page.no, target: null, loc: `${page.no}.-` });
     });
 
+    // 図枠外へのはみ出し / 表題欄との重なり (用紙・尺度変更後の破綻を必ず可視化する)
+    const fr = frameRect(), tb = titleBlockRect();
+    const overlaps = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
+    page.devices.forEach(dev => {
+      const b = devBounds(dev);
+      const tag = displayTag(dev) || SYMBOLS_BY_ID[dev.sym].name;
+      if (b.x < fr.x || b.y < fr.y || b.x + b.w > fr.x + fr.w || b.y + b.h > fr.y + fr.h) {
+        issues.push({ sev: "err", msg: `${tag} が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
+      } else if (overlaps(b, tb)) {
+        issues.push({ sev: "err", msg: `${tag} が表題欄に重なっています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
+      }
+    });
+    page.wires.forEach(w => {
+      const out = w.pts.some(p => p[0] < fr.x || p[1] < fr.y || p[0] > fr.x + fr.w || p[1] > fr.y + fr.h);
+      if (out) issues.push({ sev: "err", msg: `配線が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[0][0])}` });
+    });
+
     // 電源短絡 (+24V と 0V が閉状態で同一ネット)
     for (const p of srcClosed.pNets) {
       if (p && srcClosed.nNets.has(p)) {
@@ -695,8 +759,8 @@ function runDRC() {
 
     page.devices.forEach(dev => {
       const sym = SYMBOLS_BY_ID[dev.sym];
-      // 未接続ピン
-      devPins(dev).forEach(pin => {
+      // 未接続ピン (絶縁処理端末など「未接続であること」を示す記号は除外)
+      if (!sym.noDrc) devPins(dev).forEach(pin => {
         const onWire = wireEndpoints.has(ptKey(pin.x, pin.y)) ||
           wireSegs.some(([a, b]) => ptOnSeg(pin.x, pin.y, a[0], a[1], b[0], b[1])) ||
           page.devices.some(d2 => d2 !== dev && devPins(d2).some(p2 => Math.abs(p2.x - pin.x) < .01 && Math.abs(p2.y - pin.y) < .01));
@@ -863,6 +927,8 @@ function commit() {
   App.undoStack.push(JSON.stringify(App.project));
   if (App.undoStack.length > 100) App.undoStack.shift();
   App.redoStack.length = 0;
+  App.dirty = true;                   // ファイルへ未保存の変更あり
+  if (typeof UI !== "undefined" && UI.updateSaveButton) UI.updateSaveButton();
   saveLocal();
 }
 /** Undo/Redo 後も、まだ存在するオブジェクトの選択は維持する */
@@ -882,6 +948,7 @@ function undo() {
   App.redoStack.push(JSON.stringify(App.project));
   App.project = JSON.parse(App.undoStack.pop());
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
+  applySheet(); // 用紙・尺度も一緒に巻き戻す
   retainSelection();
   saveLocal();
   return true;
@@ -892,6 +959,7 @@ function redo() {
   App.undoStack.push(JSON.stringify(App.project));
   App.project = JSON.parse(App.redoStack.pop());
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
+  applySheet();
   retainSelection();
   saveLocal();
   return true;
