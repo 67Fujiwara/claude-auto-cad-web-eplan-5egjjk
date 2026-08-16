@@ -10,7 +10,46 @@ const DB_DEFAULT_PINNED = [
   "cable_core", "plug_socket", "insul_end", "prot_earth", "func_earth",
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
   "cp1", "cp2", "cont_no_main", "cont_nc_main",
+  "conn_rj45", "conn_usb_a", "conn_hdmi",
 ];
+
+/** 多極コネクタ (レセプタクル) を作る。
+    ピンは左端 (列ごとに +colGap) に 5mm ピッチ。山形の開口は配線側を向く。
+    sigs: 端子名の配列 / perCol: 1列あたりの極数 (超えたら右の列へ折り返す) */
+function mkConn(o) {
+  const pitch = 5, colGap = o.colGap || 26;
+  const per = o.perCol || o.sigs.length;
+  const rows = Math.min(per, o.sigs.length);
+  const pins = [], parts = [];
+  o.sigs.forEach((sig, i) => {
+    const col = Math.floor(i / per), r = i % per;
+    const x = col * colGap, y = r * pitch;
+    pins.push({ x, y, n: sig });
+    parts.push(`<path d="M${x},${y} H${x + 2.6}"/>`);                                   // 引出線
+    parts.push(o.plug
+      ? `<path d="M${x + 2.6},${y - 2.2} L${x + 5.2},${y} L${x + 2.6},${y + 2.2}"/>`     // プラグ (凸)
+      : `<path d="M${x + 5.2},${y - 2.2} L${x + 2.6},${y} L${x + 5.2},${y + 2.2}"/>`);   // レセプタクル (凹)
+    parts.push(`<text x="${x + 9.4}" y="${y + 0.9}" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${i + 1}</text>`);
+  });
+  const nCols = Math.ceil(o.sigs.length / per);
+  const h = (rows - 1) * pitch + 8;
+  for (let c = 0; c < nCols; c++) parts.push(`<rect x="${c * colGap + 2}" y="-4" width="12.8" height="${h}"/>`);
+  const w = (nCols - 1) * colGap + 14.8;
+  parts.push(`<text x="${w / 2}" y="-6" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${o.label}</text>`);
+  // 外接矩形は他の記号と同じ作法で一様余白 2mm。ラベル幅は等幅 2.5mm の概算
+  const tw = String(o.label).length * 2.05;
+  const x0 = Math.min(0, w / 2 - tw / 2), x1 = Math.max(w, w / 2 + tw / 2);
+  const y0 = -8.6, y1 = -4 + h;
+  const r = v => Math.round(v * 10) / 10;
+  return {
+    id: o.id, db: true, group: "通信・コネクタ", cat: "db", letter: o.letter || "X",
+    name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.typ || "",
+    stdNote: o.stdNote || "接続器 (JIS C 0617-3)。極数と端子名は実機の仕様に合わせる",
+    pins, sim: "none",
+    bounds: [r(x0 - 2), r(y0 - 2), r(x1 - x0 + 4), r(y1 - y0 + 4)],
+    body: parts.join(""),
+  };
+}
 
 const DB_SYMBOLS = [
 
@@ -337,6 +376,54 @@ const DB_SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "contact_nc", linked: true, bounds: [-10,-2, 12, 24],
     body: G_NC_CONT,
   },
+  /* ── 通信・コネクタ (実機の端子配列に合わせた多極コネクタ) ── */
+  mkConn({ id: "conn_rj45", label: "RJ45", letter: "X",
+    name: "EtherNet/IP コネクタ (RJ45)", nameEn: "EtherNet/IP connector (RJ45)",
+    desc: "8極モジュラジャック。EtherNet/IP・PROFINET・産業用イーサネット共通", typ: "8P8C シールド付",
+    sigs: ["TD+", "TD-", "RD+", "NC1", "NC2", "RD-", "NC3", "NC4"] }),
+  mkConn({ id: "conn_usb_a", label: "USB-A", letter: "X",
+    name: "USB コネクタ (Type-A)", nameEn: "USB connector Type-A",
+    desc: "ティーチング・パラメータ設定用。VBUS +5V / D± / GND", typ: "USB2.0 Type-A",
+    sigs: ["VBUS", "D-", "D+", "GND"] }),
+  mkConn({ id: "conn_usb_b", label: "USB-B", letter: "X",
+    name: "USB コネクタ (Type-B)", nameEn: "USB connector Type-B",
+    desc: "機器側の受け口。コントローラのティーチングポートに多い", typ: "USB2.0 Type-B",
+    sigs: ["VBUS", "D-", "D+", "GND"] }),
+  mkConn({ id: "conn_usb_c", label: "USB-C", letter: "X",
+    name: "USB コネクタ (Type-C)", nameEn: "USB connector Type-C",
+    desc: "電源・信号兼用。CC で向きと給電を判定 (主要端子のみ)", typ: "USB Type-C",
+    sigs: ["VBUS", "GND", "CC1", "CC2", "D+", "D-", "SHELL"] }),
+  mkConn({ id: "conn_hdmi", label: "HDMI", letter: "X",
+    name: "HDMI コネクタ (Type-A)", nameEn: "HDMI connector Type-A",
+    desc: "19極。表示器・タッチパネルの映像用", typ: "HDMI Type-A",
+    perCol: 10, colGap: 30,
+    sigs: ["D2+", "D2S", "D2-", "D1+", "D1S", "D1-", "D0+", "D0S", "D0-", "CK+",
+           "CKS", "CK-", "CEC", "RSV", "SCL", "SDA", "GND", "+5V", "HPD"] }),
+  mkConn({ id: "conn_dsub9", label: "D-sub9", letter: "X",
+    name: "D-sub コネクタ 9極", nameEn: "D-sub 9-pin",
+    desc: "RS-232C / RS-422 などのシリアル通信", typ: "D-sub 9P",
+    sigs: ["1", "2", "3", "4", "5", "6", "7", "8", "9"] }),
+  mkConn({ id: "conn_dsub25", label: "D-sub25", letter: "X",
+    name: "D-sub コネクタ 25極", nameEn: "D-sub 25-pin",
+    desc: "コントローラの I/O・パラレル接続", typ: "D-sub 25P",
+    perCol: 13, colGap: 30,
+    sigs: Array.from({ length: 25 }, (_, i) => String(i + 1)) }),
+  mkConn({ id: "conn_power6", label: "PWR", letter: "X",
+    name: "電源コネクタ 6極", nameEn: "Power connector 6-pin",
+    desc: "主電源・制御電源・保護接地をまとめた機器側コネクタ",
+    sigs: ["L1", "L2", "L1C", "L2C", "NC", "PE"] }),
+  mkConn({ id: "conn_io8", label: "I/O", letter: "X",
+    name: "システム I/O コネクタ 8極", nameEn: "System I/O connector 8-pin",
+    desc: "非常停止・イネーブル・ブレーキなどの制御入出力",
+    sigs: ["S1", "S2", "EMG+", "EMG-", "ENB+", "ENB-", "BK+", "BK-"] }),
+  mkConn({ id: "conn_motor4", label: "MOT", letter: "X",
+    name: "モータ動力コネクタ 4極", nameEn: "Motor power connector 4-pin",
+    desc: "アクチュエータの動力線 (U/V/W/PE)",
+    sigs: ["U", "V", "W", "PE"] }),
+  mkConn({ id: "conn_enc6", label: "ENC", letter: "X",
+    name: "エンコーダコネクタ 6極", nameEn: "Encoder connector 6-pin",
+    desc: "アクチュエータの検出器線",
+    sigs: ["A+", "A-", "B+", "B-", "+5V", "GND"] }),
 ];
 
 /* パレットに引き出されているDBシンボル (localStorage) */

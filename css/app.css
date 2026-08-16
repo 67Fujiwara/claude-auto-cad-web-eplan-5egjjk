@@ -591,3 +591,31 @@ input, textarea { user-select: text; }
 .rel-act { display: flex; gap: 5px; flex-wrap: wrap; }
 .rel-act .btn-solid { padding: 4px 9px; font-size: 11px; }
 .rel-act .btn-solid[disabled] { opacity: .4; cursor: not-allowed; }
+
+/* ══════════════ ページの並べ替え ══════════════ */
+.ptab[draggable="true"] { cursor: grab; }
+.ptab.dragging { opacity: .45; }
+.ptab.over-l { box-shadow: inset 3px 0 0 var(--accent); }
+.ptab.over-r { box-shadow: inset -3px 0 0 var(--accent); }
+.rp-head, .rp-row { display: grid; grid-template-columns: 40px 1fr 140px 170px 96px; gap: 10px; align-items: center; }
+.rp-head { font-size: 10.5px; color: var(--text-faint); letter-spacing: .06em; margin-bottom: 6px; padding: 0 8px; }
+.rp-rows { max-height: 56vh; overflow: auto; }
+.rp-row { padding: 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; cursor: grab; border-radius: 6px; }
+.rp-row:hover { background: var(--panel-2); }
+.rp-row.dragging { opacity: .45; }
+.rp-row.over { box-shadow: inset 0 2px 0 var(--accent); }
+.rp-no { color: var(--text-faint); text-align: center; }
+.rp-name { font-weight: 600; }
+.rp-dim { font-size: 11px; color: var(--text-faint); font-weight: 400; }
+.rp-act { display: flex; gap: 5px; }
+.rp-act .btn-solid { padding: 3px 9px; font-size: 12px; }
+.rp-act .btn-solid[disabled] { opacity: .35; cursor: not-allowed; }
+
+/* シンボル作成: 機能一覧 */
+.se-funcs { max-height: 190px; overflow: auto; }
+.se-func { display: grid; grid-template-columns: 1fr 58px 58px 1fr 20px; gap: 4px; align-items: center; margin-bottom: 5px; }
+.se-func select, .se-func input {
+  width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  color: var(--text); font-size: 11.5px; padding: 3px 5px; outline: none;
+}
+.se-func select:disabled { opacity: .5; }

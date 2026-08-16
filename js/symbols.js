@@ -110,7 +110,7 @@ const SYMBOLS = [
   {
     id: "thermo", jis: "07-08-04", cat: "input", letter: "B", name: "サーモスタット", nameEn: "Thermostat",
     desc: "温度スイッチ・b接点", typ: "US-622", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
-    sim: "contact_nc", momentary: false, bounds: [-18.2,-5.2, 20.2, 27.2],
+    sim: "contact_nc", momentary: false, bounds: [-16.3,-2, 18.3, 24],
     body: G_NC + `<text x="-13" y="8.8" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text>` + gLink(-13, bladeXNC(10), 10),
   },
 
@@ -130,13 +130,13 @@ const SYMBOLS = [
   {
     id: "timer_on", jis: "07-15-08", cat: "logic", letter: "K", name: "タイマ (オンディレイ)", nameEn: "On-delay timer",
     desc: "励磁後 t 秒で動作", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
-    sim: "coil", bounds: [-7,-2, 39.5, 24], mirror: true, timer: "on", maxContacts: 2,
+    sim: "coil", bounds: [-7,-2, 22.1, 24], mirror: true, timer: "on", maxContacts: 2,
     body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,4.2 A3,3 0 0 1 3,4.2"/><text x="7" y="12.6" data-h="2.5" fill="currentColor" stroke="none" font-family="monospace">TON</text>`,
   },
   {
     id: "timer_off", jis: "07-15-09", cat: "logic", letter: "K", name: "タイマ (オフディレイ)", nameEn: "Off-delay timer",
     desc: "消磁後 t 秒で復帰", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
-    sim: "coil", bounds: [-7,-2, 39.7, 24], mirror: true, timer: "off", maxContacts: 2,
+    sim: "coil", bounds: [-7,-2, 22.1, 24], mirror: true, timer: "off", maxContacts: 2,
     body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,1.6 A3,3 0 0 0 3,1.6"/><text x="7" y="12.6" data-h="2.5" fill="currentColor" stroke="none" font-family="monospace">TOF</text>`,
   },
   {

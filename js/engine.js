@@ -942,8 +942,60 @@ function UnionFind() {
  *  - "closed": 全接点を閉として扱う (DRC の到達性チェック用)
  *  - "open":   スイッチ要素はすべて開 (配線番号は接点を跨いで伝播しない)
  */
+/* 多機能シンボル: 1台の機器の中にコイル・接点・素通しなどを複数持つ。
+   funcs: [{ kind, pins: [a, b], name }] — kind は sim と同じ種別。
+   接点は同じ機器の中のコイル (最初の coil) に連動する。dev.linkTo があれば
+   外部のコイルに従う (自社製ドライバの外部インタロック等)。 */
+function devFuncs(sym) { return Array.isArray(sym.funcs) && sym.funcs.length ? sym.funcs : null; }
+function funcKey(dev, fi) { return `${dev.id}#${fi}`; }
+function simFuncActive(dev, fi) {
+  const fs = devFuncs(symOf(dev.sym));
+  if (!fs) return simActiveState(dev);
+  const f = fs[fi] || {};
+  if (f.ext && dev.linkTo) {                       // 外部コイル連動
+    const t = App.sim.timers[dev.linkTo];
+    return t ? t.output : !!App.sim.states[dev.linkTo];
+  }
+  const ci = fs.findIndex(x => x.kind === "coil");
+  if (ci >= 0) return !!App.sim.states[funcKey(dev, ci)];
+  if (dev.linkTo) {
+    const t = App.sim.timers[dev.linkTo];
+    return t ? t.output : !!App.sim.states[dev.linkTo];
+  }
+  return !!App.sim.states[dev.id];                 // 手動操作
+}
+/** 多機能シンボルの導通ペア */
+function funcPairs(dev, mode) {
+  const fs = devFuncs(symOf(dev.sym));
+  const out = [];
+  fs.forEach((f, fi) => {
+    const a = (f.pins || [])[0], b = (f.pins || [])[1];
+    if (a == null || b == null) return;
+    switch (f.kind) {
+      case "contact_no":
+        if (mode === "open" || mode === "split") return;
+        if (mode !== "sim" || simFuncActive(dev, fi)) out.push([a, b]);
+        return;
+      case "contact_nc":
+        if (mode === "open" || mode === "split") return;
+        if (mode !== "sim" || !simFuncActive(dev, fi)) out.push([a, b]);
+        return;
+      case "passthru":
+        if (mode !== "split") out.push([a, b]);
+        return;
+      case "breaker":
+        if (mode === "open" || mode === "split") return;
+        if (!(mode === "sim" && dev.props && dev.props.open)) out.push([a, b]);
+        return;
+      default: return;                             // coil / load は導通しない
+    }
+  });
+  return out;
+}
+
 function conductivePairs(dev, mode = "closed") {
   const sym = symOf(dev.sym);
+  if (devFuncs(sym)) return funcPairs(dev, mode);
   switch (sym.sim) {
     case "contact_no":
       if (mode === "open" || mode === "split") return [];
@@ -1363,6 +1415,25 @@ function simSolve() {
     pagesData.forEach(pd => {
       pd.page.devices.forEach(dev => {
         const sym = symOf(dev.sym);
+        const fs = devFuncs(sym);
+        if (fs) {
+          // 多機能シンボル: コイル・負荷ごとに励磁を判定する
+          let any = false;
+          fs.forEach((f, fi) => {
+            if (f.kind !== "coil" && f.kind !== "load") return;
+            const a = (f.pins || [])[0], b = (f.pins || [])[1];
+            if (a == null || b == null) return;
+            const na = pd.pinNet(dev, a), nb = pd.pinNet(dev, b);
+            const on = (pd.pNets.has(na) && pd.nNets.has(nb)) || (pd.pNets.has(nb) && pd.nNets.has(na));
+            const k = funcKey(dev, fi);
+            if (!!App.sim.states[k] !== on) changed = true;
+            App.sim.states[k] = on;
+            if (on) any = true;
+          });
+          if (!!App.sim.states[dev.id] !== any) changed = true;
+          App.sim.states[dev.id] = any;             // 機器全体の表示用
+          return;
+        }
         let en = false;
         if (sym.sim === "coil" || sym.sim === "load") {
           const a = pd.pinNet(dev, 0), b = pd.pinNet(dev, 1);

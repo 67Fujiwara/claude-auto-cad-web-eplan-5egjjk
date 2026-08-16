@@ -10,6 +10,7 @@
 const SymEdit = {
   shapes: [],          // {k:"line"|"rect"|"circle"|"arc"|"text", ...}
   pins: [],            // {x,y,n}
+  funcs: [],           // {kind, pins:[a,b], name} — 1台に複数の機能を持たせる
   tool: "line",
   draft: null,         // 作画中の図形
   sel: -1,             // 選択中の図形 index (-1 = なし / -2以下 = 端子)
@@ -28,6 +29,7 @@ const SYMEDIT_TOOLS = [
   ["arc", "円弧", "中心 → 開始 → 終了 の3クリック"],
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
+  ["conn", "コネクタ", "多極コネクタ (CN3 など) をまとめて置く。クリックした位置が1番ピン"],
   ["select", "選択", "クリックで選択、Del で削除"],
 ];
 
@@ -107,7 +109,7 @@ function symShapesBounds(shapes, pins) {
 UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
   const S = SymEdit;
-  S.shapes = []; S.pins = []; S.undo = []; S.sel = -1; S.draft = null;
+  S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null;
   S.tool = "line"; S.style = "solid"; S.editingId = null;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
@@ -119,6 +121,7 @@ UI.openSymbolEditor = (symId = null) => {
       typ: src.typ || "", desc: src.desc || "", group: src.group || "自作", sim: src.sim || "none",
     };
     S.pins = (src.pins || []).map(p => ({ x: p.x, y: p.y, n: p.n || "" }));
+    S.funcs = Array.isArray(src.funcs) ? deepCopy(src.funcs) : [];
     S.shapes = Array.isArray(src.shapes) ? deepCopy(src.shapes) : [];
     if (!S.shapes.length && src.body) {
       // 図形一覧を持たない (DXF取り込み等) シンボルは、そのまま1つの図形として扱う
@@ -158,13 +161,20 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-row"><label>型式</label><input id="seTyp" class="mono" value="${escAttr(meta.typ)}" placeholder="部品表に出る型式"/></div>
       <div class="prop-row"><label>分類</label><input id="seGroup" value="${escAttr(meta.group)}" placeholder="自作"/></div>
       <div class="prop-row"><label>説明</label><input id="seDesc" value="${escAttr(meta.desc)}" placeholder="用途・注意点"/></div>
-      <div class="prop-row"><label>回路の働き</label><select id="seSim">
+      <div class="prop-row"><label>回路の働き<br><span class="rp-dim">(機能を追加すると無効)</span></label><select id="seSim">
         ${[["none", "なし (作図のみ)"], ["passthru", "素通し (端子台・接続)"],
            ["contact_no", "a接点 (メーク)"], ["contact_nc", "b接点 (ブレーク)"],
            ["coil", "コイル (励磁で接点が動く)"], ["load", "負荷 (ランプ・ソレノイド)"],
            ["breaker", "遮断器 (手動開閉)"]].map(([v, t]) =>
           `<option value="${v}"${meta.sim === v ? " selected" : ""}>${t}</option>`).join("")}
       </select></div>
+      <div class="prop-sect" id="seFnHead">機能 (複数可)</div>
+      <div class="prop-note" style="margin-top:0">
+        コイル・a接点などを1台の機器の中に複数持たせられます。<br>
+        接点は同じ機器のコイルに連動します (自社製ドライバのような複合機器向け)。
+      </div>
+      <div id="seFuncs" class="se-funcs"></div>
+      <button class="btn-solid" id="seFnAdd" style="margin-top:6px;padding:4px 10px;font-size:11.5px">機能を追加</button>
       <div class="prop-sect">プレビュー (パレット表示)</div>
       <div class="se-preview" id="sePrev"></div>
       <div class="prop-note" id="seBounds">外接矩形: —</div>
@@ -214,7 +224,7 @@ UI.openSymbolEditor = (symId = null) => {
   });
 
   // ── 描画 ──
-  const push = () => { S.undo.push({ shapes: deepCopy(S.shapes), pins: deepCopy(S.pins) }); if (S.undo.length > 60) S.undo.shift(); };
+  const push = () => { S.undo.push({ shapes: deepCopy(S.shapes), pins: deepCopy(S.pins), funcs: deepCopy(S.funcs) }); if (S.undo.length > 60) S.undo.shift(); };
   const draw = () => {
     const g = 1, G = 5;
     let out = "";
@@ -262,7 +272,44 @@ UI.openSymbolEditor = (symId = null) => {
       if (inp) inp.addEventListener("change", e => { p.n = e.target.value.trim(); draw(); });
     });
     pl.querySelectorAll(".se-pin-del").forEach(b => b.addEventListener("click", () => {
-      push(); S.pins.splice(+b.dataset.i, 1); draw();
+      push();
+      const i = +b.dataset.i;
+      S.pins.splice(i, 1);
+      // 端子を消したら、その端子を使う機能の割り当てを詰める
+      S.funcs.forEach(f => { f.pins = (f.pins || []).map(v => (v === i ? null : v > i ? v - 1 : v)); });
+      S.funcs = S.funcs.filter(f => (f.pins || []).every(v => v != null));
+      draw();
+    }));
+    renderFuncs();
+  };
+  const FUNC_KINDS = [["coil", "コイル (励磁)"], ["contact_no", "a接点 (メーク)"], ["contact_nc", "b接点 (ブレーク)"],
+    ["load", "負荷 (ランプ・ソレノイド)"], ["passthru", "素通し (端子・コネクタ)"], ["breaker", "遮断器 (手動開閉)"]];
+  const renderFuncs = () => {
+    const el = body.querySelector("#seFuncs");
+    if (!el) return;
+    const head = body.querySelector("#seFnHead");
+    if (head) head.textContent = S.funcs.length ? `機能 (${S.funcs.length} 個)` : "機能 (複数可)";
+    const simSel = body.querySelector("#seSim");
+    if (simSel) simSel.disabled = S.funcs.length > 0;
+    const pinOpts = (selv) => S.pins.map((p, i) =>
+      `<option value="${i}"${i === selv ? " selected" : ""}>${i + 1}: ${escAttr(p.n || "")}</option>`).join("");
+    el.innerHTML = S.funcs.length ? S.funcs.map((f, i) => `
+      <div class="se-func">
+        <select id="seFk${i}">${FUNC_KINDS.map(([v, t]) => `<option value="${v}"${f.kind === v ? " selected" : ""}>${t}</option>`).join("")}</select>
+        <select id="seFa${i}">${pinOpts((f.pins || [])[0])}</select>
+        <select id="seFb${i}">${pinOpts((f.pins || [])[1])}</select>
+        <input id="seFn${i}" value="${escAttr(f.name || "")}" placeholder="名称 (例 CN3 EMG)"/>
+        <button class="se-pin-del se-fn-del" data-i="${i}" title="削除">✕</button>
+      </div>`).join("") : '<div class="se-empty">「機能を追加」で、コイルや接点をまとめられます</div>';
+    S.funcs.forEach((f, i) => {
+      const k = el.querySelector(`#seFk${i}`), a = el.querySelector(`#seFa${i}`), b2 = el.querySelector(`#seFb${i}`), nm = el.querySelector(`#seFn${i}`);
+      if (k) k.addEventListener("change", e => { f.kind = e.target.value; renderFuncs(); });
+      if (a) a.addEventListener("change", e => { f.pins[0] = +e.target.value; });
+      if (b2) b2.addEventListener("change", e => { f.pins[1] = +e.target.value; });
+      if (nm) nm.addEventListener("change", e => { f.name = e.target.value.trim(); });
+    });
+    el.querySelectorAll(".se-fn-del").forEach(b2 => b2.addEventListener("click", () => {
+      push(); S.funcs.splice(+b2.dataset.i, 1); renderFuncs();
     }));
   };
 
@@ -309,6 +356,7 @@ UI.openSymbolEditor = (symId = null) => {
       S.pins.push({ x, y, n: String(S.pins.length + 1) });
       draw(); return;
     }
+    if (S.tool === "conn") { openConnDialog(x, y); return; }
     if (S.tool === "text") {
       const t = prompt("記号の中に入れる文字 (例: M, 3~, PLC)", "");
       if (t && t.trim()) { push(); S.shapes.push({ k: "text", x, y, text: t.trim(), h: TEXT_H.normal, mono: false }); }
@@ -343,6 +391,89 @@ UI.openSymbolEditor = (symId = null) => {
     S.draft = null; draw();
   };
 
+  /** 多極コネクタ (CN3 など) を1番ピンの位置から生成する */
+  const openConnDialog = (x0, y0) => {
+    const cb = h(`<div>
+      <div class="prop-note" style="margin-top:0">
+        クリックした位置が1番ピンです。端子は 5mm ピッチでグリッドに乗り、
+        コネクタの山形と番号も一緒に描かれます。
+      </div>
+      <div class="prop-grid2">
+        <div class="prop-row"><label>コネクタ名</label><input id="cnName" value="CN1" placeholder="CN3 / 電源コネクタ"/></div>
+        <div class="prop-row"><label>極数</label><input id="cnN" class="mono" type="number" min="1" max="40" value="8"/></div>
+        <div class="prop-row"><label>ピッチ (mm)</label><input id="cnP" class="mono" type="number" min="5" max="20" step="5" value="5"/></div>
+        <div class="prop-row"><label>並び</label><select id="cnDir">
+          <option value="down">下へ (配線は左・機器は右)</option>
+          <option value="down_r">下へ (配線は右・機器は左)</option>
+          <option value="right">右へ (配線は下・機器は上)</option>
+        </select></div>
+        <div class="prop-row"><label>開始番号</label><input id="cnStart" class="mono" value="1"/></div>
+        <div class="prop-row"><label>種類</label><select id="cnKind">
+          <option value="recept">レセプタクル (機器側)</option>
+          <option value="plug">プラグ (ケーブル側)</option>
+          <option value="term">端子台</option>
+        </select></div>
+      </div>
+      <div class="prop-row"><label>信号名 (改行区切り・任意)</label></div>
+      <textarea id="cnSig" rows="5" placeholder="L1&#10;L2&#10;L1C&#10;L2C&#10;NC&#10;PE" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;outline:none"></textarea>
+      <div class="prop-note">信号名を入れると端子番号のかわりに使われます (部品表・接続リストに出ます)。</div>
+    </div>`);
+    const cf = h(`<div style="display:flex;gap:10px;width:100%">
+      <span style="flex:1"></span>
+      <button class="btn-solid" id="cnCancel">キャンセル</button>
+      <button class="btn-solid primary" id="cnOk">配置</button>
+    </div>`);
+    const cm = UI.openModal({ title: "コネクタの配置", sub: "多極コネクタ・端子台をまとめて作ります", body: cb, foot: cf });
+    cf.querySelector("#cnCancel").addEventListener("click", cm.close);
+    cf.querySelector("#cnOk").addEventListener("click", () => {
+      const q = sel => cb.querySelector(sel);
+      const n = Math.max(1, Math.min(40, parseInt(q("#cnN").value, 10) || 1));
+      const pitch = Math.max(5, parseInt(q("#cnP").value, 10) || 5);
+      const dir = q("#cnDir").value, kind = q("#cnKind").value;
+      const name = q("#cnName").value.trim();
+      const startNo = parseInt(q("#cnStart").value, 10);
+      const sigs = q("#cnSig").value.split(/\r?\n/).map(v => v.trim());
+      cm.close();
+      push();
+      const vert = dir !== "right";
+      // 機器の中身がある向き (配線と反対側)。ライブラリのコネクタ記号と同じ作法で、
+      // 山形と端子番号を外形の内側に描く。
+      const s2 = dir === "down" ? 1 : -1;          // +1 = 機器は右 / -1 = 機器は左
+      const len = (n - 1) * pitch;
+      for (let i = 0; i < n; i++) {
+        const px = vert ? x0 : x0 + i * pitch;
+        const py = vert ? y0 + i * pitch : y0;
+        const label = sigs[i] || String((isNaN(startNo) ? 1 : startNo) + i);
+        S.pins.push({ x: px, y: py, n: label });
+        const num = String((isNaN(startNo) ? 1 : startNo) + i);
+        if (vert) {
+          S.shapes.push({ k: "line", pts: [[px, py], [px + s2 * 2.6, py]], style: "solid" });   // 引出線
+          const a = px + s2 * (kind === "plug" ? 2.6 : 5.2), b2 = px + s2 * (kind === "plug" ? 5.2 : 2.6);
+          if (kind === "term") S.shapes.push({ k: "circle", x: px + s2 * 4, y: py, r: 1.1, style: "solid" });
+          else S.shapes.push({ k: "line", pts: [[a, py - 2.2], [b2, py], [a, py + 2.2]], style: "solid" });
+          S.shapes.push({ k: "text", x: px + s2 * 9.4, y: py + 0.9, text: num, h: TEXT_H.small, mono: true });
+        } else {
+          S.shapes.push({ k: "line", pts: [[px, py], [px, py - 2.6]], style: "solid" });
+          const a = py - (kind === "plug" ? 2.6 : 5.2), b2 = py - (kind === "plug" ? 5.2 : 2.6);
+          if (kind === "term") S.shapes.push({ k: "circle", x: px, y: py - 4, r: 1.1, style: "solid" });
+          else S.shapes.push({ k: "line", pts: [[px - 2.2, a], [px, b2], [px + 2.2, a]], style: "solid" });
+          S.shapes.push({ k: "text", x: px, y: py - 8.6, text: num, h: TEXT_H.small, mono: true });
+        }
+      }
+      // 外形と名称 (山形と番号を囲う)
+      if (vert) {
+        const bx = s2 > 0 ? x0 + 2 : x0 - 14.8;
+        S.shapes.push({ k: "rect", x: bx, y: y0 - 4, w: 12.8, h: len + 8, style: "solid" });
+        if (name) S.shapes.push({ k: "text", x: bx + 6.4, y: y0 - 6, text: name, h: TEXT_H.small, mono: true });
+      } else {
+        S.shapes.push({ k: "rect", x: x0 - 4, y: y0 - 14.8, w: len + 8, h: 12.8, style: "solid" });
+        if (name) S.shapes.push({ k: "text", x: x0 + len / 2, y: y0 - 16.8, text: name, h: TEXT_H.small, mono: true });
+      }
+      draw();
+      UI.setMsg(`コネクタ「${name || ""}」を ${n} 極で配置しました`);
+    });
+  };
+
   const onKey = (e) => {
     if (!document.body.contains(body)) return;
     if (e.key === "Enter") { finishLine(); e.stopPropagation(); e.preventDefault(); return; }
@@ -358,14 +489,21 @@ UI.openSymbolEditor = (symId = null) => {
   };
   document.addEventListener("keydown", onKey, true);
 
+  body.querySelector("#seFnAdd").addEventListener("click", () => {
+    if (S.pins.length < 2) { alert("先に端子を2点以上置いてください (端子ツール / コネクタツール)"); return; }
+    push();
+    S.funcs.push({ kind: S.funcs.length ? "contact_no" : "coil", pins: [0, 1], name: "" });
+    renderFuncs();
+  });
+
   foot.querySelector("#seUndo").addEventListener("click", () => {
     const st = S.undo.pop();
     if (!st) return;
-    S.shapes = st.shapes; S.pins = st.pins; S.draft = null; S.sel = -1; draw();
+    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.draft = null; S.sel = -1; draw();
   });
   foot.querySelector("#seClear").addEventListener("click", () => {
     if (!confirm("作画した図形と端子をすべて消しますか？")) return;
-    push(); S.shapes = []; S.pins = []; S.draft = null; S.sel = -1; draw();
+    push(); S.shapes = []; S.pins = []; S.funcs = []; S.draft = null; S.sel = -1; draw();
   });
   foot.querySelector("#seCancel").addEventListener("click", m.close);
 
@@ -377,7 +515,7 @@ UI.openSymbolEditor = (symId = null) => {
     const bodySVG = symShapesToBody(S.shapes.filter(s => s.k !== "raw")) +
       S.shapes.filter(s => s.k === "raw").map(s => s.body).join("");
     const sim = q("#seSim").value;
-    if (S.pins.length < 2 && sim !== "none") {
+    if (S.pins.length < 2 && sim !== "none" && !S.funcs.length) {
       if (!confirm("端子が2点未満です。回路の働きを設定しても通電計算はされません。\nこのまま登録しますか？")) return;
     }
     const dupName = [...SYMBOLS, ...DB_SYMBOLS].find(s => s.name === name && s.id !== S.editingId);
@@ -391,7 +529,9 @@ UI.openSymbolEditor = (symId = null) => {
       desc: q("#seDesc").value.trim() || "自作シンボル",
       typ: q("#seTyp").value.trim(),
       pins: S.pins.map((p, i) => ({ x: p.x, y: p.y, n: p.n || String(i + 1) })),
-      sim, bounds: symShapesBounds(S.shapes, S.pins),
+      sim: S.funcs.length ? "multi" : sim,
+      funcs: S.funcs.length ? deepCopy(S.funcs) : undefined,
+      bounds: symShapesBounds(S.shapes, S.pins),
       body: bodySVG,
       shapes: deepCopy(S.shapes),      // 再編集できるように図形一覧も保存する
       imported: true,                  // localStorage へ保存する対象

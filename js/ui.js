@@ -86,6 +86,110 @@ UI.renumberPages = () => {
 };
 UI.dwgNoOf = pageDwgNo;
 
+/** ページを別の位置へ移す (図番も並び順に振り直す) */
+UI.movePage = (from, to) => {
+  const pages = App.project.pages;
+  if (App.sim.running) { UI.setMsg("シミュレーション中はページを移動できません"); return false; }
+  if (from < 0 || from >= pages.length) return false;
+  to = Math.max(0, Math.min(pages.length - 1, to));
+  if (from === to) return false;
+  commit();
+  const cur = pages[App.pageIdx];
+  const [pg] = pages.splice(from, 1);
+  pages.splice(to, 0, pg);
+  UI.renumberPages();
+  App.pageIdx = Math.max(0, pages.indexOf(cur));   // 表示中のページは変えない
+  UI.refresh();
+  UI.setMsg(`ページ「${pg.name}」を ${to + 1} ページ目へ移動しました (図番を再採番しました)`);
+  return true;
+};
+
+/** ページの並べ替え画面 (ドラッグ / ↑↓ で順番を変える) */
+UI.reorderPages = () => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中はページを並べ替えできません"); return; }
+  let order = App.project.pages.map((p, i) => i);      // 元のインデックスの並び
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">
+      行をドラッグするか ↑ ↓ で順番を変えます。適用すると図面番号も並び順に振り直されます。<br>
+      あとから追加した主回路を前へ持ってくる、といった並べ替えに使います。
+    </div>
+    <div class="rp-head"><span>順</span><span>ページ名</span><span>図番</span><span>規模</span><span>並べ替え</span></div>
+    <div id="rpRows" class="rp-rows"></div>
+  </div>`);
+  const foot = h(`<div style="display:flex;gap:10px;width:100%">
+    <button class="btn-solid" id="rpReset">元に戻す</button>
+    <span style="flex:1"></span>
+    <button class="btn-solid" id="rpCancel">キャンセル</button>
+    <button class="btn-solid primary" id="rpOk">適用</button>
+  </div>`);
+  const m = UI.openModal({ title: "ページの並べ替え", sub: "順番を変えると図面番号も同期します", body, foot, wide: true });
+  const rows = body.querySelector("#rpRows");
+  const render = () => {
+    const pages = App.project.pages;
+    const base = (projectMeta().dwgNo || "").trim();
+    rows.innerHTML = order.map((oi, k) => {
+      const pg = pages[oi];
+      // 適用後に印字される図番の見込み (手動固定はそのまま)
+      let dwg = pg.dwgNo;
+      if (!pg.dwgNoManual && projectMeta().dwgNoAuto !== false) {
+        const mm = /^(.*?)(\d+)\s*$/.exec(base);
+        dwg = mm ? mm[1] + String(parseInt(mm[2], 10) + k).padStart(mm[2].length, "0")
+                 : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : "E-" + String(k + 1).padStart(3, "0"));
+      }
+      return `<div class="rp-row" draggable="true" data-k="${k}">
+        <span class="mono rp-no">${k + 1}</span>
+        <span class="rp-name">${escXML(pg.name)}${pg.dwgNoManual ? ' <span class="rp-dim">(図番固定)</span>' : ""}</span>
+        <span class="mono rp-dim">${escXML(dwg || "")}</span>
+        <span class="rp-dim">機器 ${pg.devices.length} / 配線 ${condWires(pg).length}</span>
+        <span class="rp-act">
+          <button class="btn-solid rp-up" data-k="${k}"${k === 0 ? " disabled" : ""}>↑</button>
+          <button class="btn-solid rp-dn" data-k="${k}"${k === order.length - 1 ? " disabled" : ""}>↓</button>
+        </span>
+      </div>`;
+    }).join("");
+    rows.querySelectorAll(".rp-up").forEach(b => b.addEventListener("click", () => {
+      const k = +b.dataset.k; if (k <= 0) return;
+      [order[k - 1], order[k]] = [order[k], order[k - 1]]; render();
+    }));
+    rows.querySelectorAll(".rp-dn").forEach(b => b.addEventListener("click", () => {
+      const k = +b.dataset.k; if (k >= order.length - 1) return;
+      [order[k + 1], order[k]] = [order[k], order[k + 1]]; render();
+    }));
+    // 行のドラッグ&ドロップ
+    let dragK = -1;
+    rows.querySelectorAll(".rp-row").forEach(r => {
+      r.addEventListener("dragstart", e => { dragK = +r.dataset.k; r.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+      r.addEventListener("dragend", () => { r.classList.remove("dragging"); dragK = -1; });
+      r.addEventListener("dragover", e => { e.preventDefault(); r.classList.add("over"); });
+      r.addEventListener("dragleave", () => r.classList.remove("over"));
+      r.addEventListener("drop", e => {
+        e.preventDefault(); r.classList.remove("over");
+        const to = +r.dataset.k;
+        if (dragK < 0 || dragK === to) return;
+        const [v] = order.splice(dragK, 1);
+        order.splice(to, 0, v);
+        render();
+      });
+    });
+  };
+  render();
+  foot.querySelector("#rpReset").addEventListener("click", () => { order = App.project.pages.map((p, i) => i); render(); });
+  foot.querySelector("#rpCancel").addEventListener("click", m.close);
+  foot.querySelector("#rpOk").addEventListener("click", () => {
+    const same = order.every((v, i) => v === i);
+    if (same) { m.close(); return; }
+    commit();
+    const cur = App.project.pages[App.pageIdx];
+    App.project.pages = order.map(i => App.project.pages[i]);
+    UI.renumberPages();
+    App.pageIdx = Math.max(0, App.project.pages.indexOf(cur));
+    App.selection.clear();
+    m.close();
+    UI.refresh();
+    UI.setMsg("ページを並べ替えました (図面番号を再採番しました)");
+  });
+};
+
 /** 指定位置にページを挿入する (idx 番目の直前) */
 UI.insertPageAt = (idx, name) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はページを追加できません"); return; }
@@ -103,7 +207,7 @@ UI.buildPageTabs = () => {
   const wrap = document.getElementById("pageTabs");
   wrap.innerHTML = "";
   App.project.pages.forEach((pg, i) => {
-    const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}" title="図番 ${escAttr(pageDwgNo(pg))}">
+    const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}" draggable="true" title="図番 ${escAttr(pageDwgNo(pg))}&#10;ドラッグして順番を入れ替えられます">
       <span class="ptab-ins" role="button" tabindex="0" aria-label="${escAttr(pg.name)} の前にページを挿入" title="このページの前に挿入">⊕</span>
       <span class="ptab-no">${pg.no}</span><span>${pg.name}</span>
       ${App.project.pages.length > 1 ? `<span class="ptab-close" role="button" tabindex="0" aria-label="${escAttr(pg.name)} を削除" title="ページを削除">×</span>` : ""}
@@ -132,6 +236,34 @@ UI.buildPageTabs = () => {
       App.pageIdx = i;
       App.selection.clear();
       UI.refresh();
+    });
+    // タブをドラッグして順番を入れ替える (図番も再採番される)
+    el.addEventListener("dragstart", e => {
+      if (App.sim.running) { e.preventDefault(); return; }
+      UI._dragPage = i; el.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", String(i)); } catch (err) { /* 一部環境で不要 */ }
+    });
+    el.addEventListener("dragend", () => { el.classList.remove("dragging"); UI._dragPage = -1; wrap.querySelectorAll(".ptab").forEach(t => t.classList.remove("over-l", "over-r")); });
+    el.addEventListener("dragover", e => {
+      if (UI._dragPage == null || UI._dragPage < 0) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = "move";
+      const r = el.getBoundingClientRect();
+      const right = e.clientX > r.left + r.width / 2;
+      el.classList.toggle("over-l", !right);
+      el.classList.toggle("over-r", right);
+    });
+    el.addEventListener("dragleave", () => el.classList.remove("over-l", "over-r"));
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      el.classList.remove("over-l", "over-r");
+      const from = UI._dragPage;
+      UI._dragPage = -1;
+      if (from == null || from < 0 || from === i) return;
+      const r = el.getBoundingClientRect();
+      let to = e.clientX > r.left + r.width / 2 ? i + 1 : i;
+      if (from < to) to--;                       // 前から後ろへ動かすぶんを詰める
+      UI.movePage(from, to);
     });
     el.addEventListener("dblclick", e => {
       if (e.target.classList.contains("ptab-close")) return;
@@ -538,6 +670,8 @@ const MENUS = {
     { label: "破線枠 (盤外/グループ)", key: "", fn: () => UI.insertZone() },
   ],
   project: [
+    { label: "ページの並べ替え…", key: "", fn: () => UI.reorderPages() },
+    { sep: true },
     { label: "設計ルールチェック (DRC)", key: "", fn: () => UI.runDRC() },
     { label: "部品表 (BOM)", key: "", fn: () => UI.showBOM() },
     { label: "配線番号の自動付与", key: "", fn: () => { commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (手動線番は保護)"); } },
