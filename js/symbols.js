@@ -53,9 +53,9 @@ const SYMBOLS = [
   },
   {
     id: "sel_sw", cat: "input", letter: "S", name: "セレクタスイッチ", nameEn: "Selector switch",
-    desc: "回転式・オルタネイト", typ: "XB4-BD21", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
-    sim: "contact_no", momentary: false, bounds: [-17,-2, 20, 24],
-    body: G_NO + `<path d="M-14,6 L-10,10 M-14,14 L-10,10"/><path d="M-10,10 H-3" stroke-dasharray="1.6 1.6"/>`,
+    desc: "回転式・オルタネイト (JIS C 0617 手動操作・回転)", typ: "XB4-BD21", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
+    sim: "contact_no", momentary: false, bounds: [-18,-2, 21, 24],
+    body: G_NO + `<path d="M-15,7 L-11,10 L-15,13"/><path d="M-11,10 H-3" stroke-dasharray="1.6 1.6"/>`,
   },
   {
     id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ", nameEn: "Limit switch",
@@ -190,9 +190,10 @@ const SYMBOLS = [
   },
   {
     id: "motor1", cat: "output", letter: "M", name: "単相モータ", nameEn: "1-phase motor",
-    desc: "誘導電動機 1φ", typ: "0.2kW 100V", pins: [{x:0,y:0,n:"U1"},{x:0,y:40,n:"U2"}],
-    sim: "load", bounds: [-11,0, 22, 40],
-    body: `<path d="M0,0 V10.5 M0,40 V29.5"/><circle cx="0" cy="20" r="9.5"/><text x="0" y="19.5" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="26" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">1~</text>`,
+    desc: "誘導電動機 1φ (主回路を自動生成)", typ: "0.2kW 100V", horizontalPins: true,
+    pins: [{x:-5,y:0,n:"U1"},{x:5,y:0,n:"U2"},{x:0,y:35,n:"PE"}],
+    sim: "load", bounds: [-11,0, 22, 35],
+    body: `<path d="M-5,0 V11.9 M5,0 V11.9"/><circle cx="0" cy="20" r="9.5"/><path d="M0,29.5 V35"/><text x="0" y="19.5" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="26" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">1~</text>`,
   },
   {
     id: "main_cont", cat: "output", letter: "Q", name: "主接点 (3極)", nameEn: "Main contacts 3P",
@@ -256,6 +257,34 @@ const SYMBOLS = [
     body: `<path d="M-10,2 V6 M0,2 V6 M10,2 V6"/><path d="M-11.8,6 L-10,10 L-8.2,6 Z M-1.8,6 L0,10 L1.8,6 Z M8.2,6 L10,10 L11.8,6 Z" fill="currentColor"/>`,
   },
   {
+    id: "supply1", cat: "power", letter: "W", name: "単相電源 L/N", nameEn: "1-phase supply",
+    desc: "AC100/200V 単相電源引込", horizontalPins: true,
+    pins: [{x:-5,y:10,n:"L"},{x:5,y:10,n:"N"}],
+    sim: "source1", bounds: [-10,-2, 20, 13],
+    body: `<path d="M-5,2 V6 M5,2 V6"/><path d="M-6.8,6 L-5,10 L-3.2,6 Z M3.2,6 L5,10 L6.8,6 Z" fill="currentColor"/>`,
+  },
+  {
+    id: "mcb2", cat: "power", letter: "F", name: "サーキットブレーカ 2P", nameEn: "MCB 2-pole",
+    desc: "配線用遮断器 2極 (単相用)", typ: "NF32-SV 2P",
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
+    sim: "breaker2", bounds: [-8,-2, 21, 24],
+    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><path d="M-3,9 L7,9" stroke-dasharray="1.6 1.6"/>`,
+  },
+  {
+    id: "main_cont2", cat: "output", letter: "Q", name: "主接点 (2極)", nameEn: "Main contacts 2P",
+    desc: "電磁接触器の主接点 (単相用)", linked: true,
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
+    sim: "contact2_no", bounds: [-8,-2, 21, 24],
+    body: `<g>${G_NO}</g><g transform="translate(10,0)">${G_NO}</g><path d="M-3,9 L7,9" stroke-dasharray="1.6 1.6"/>`,
+  },
+  {
+    id: "ol2", cat: "power", letter: "F", name: "サーマルリレー 2極", nameEn: "Thermal overload 2P",
+    desc: "モータ過負荷保護 (単相用)", typ: "TH-T18 3.6A", mirror: true, maxContacts: 2,
+    pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
+    sim: "passthru2", bounds: [-6,0, 19, 20],
+    body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><rect x="-5" y="5" width="20" height="10" stroke-dasharray="2 1.6"/>`,
+  },
+  {
     id: "trafo", cat: "power", letter: "T", name: "変圧器", nameEn: "Transformer",
     desc: "制御トランス (絶縁・2巻線)", typ: "PT-100E", horizontalPins: true,
     pins: [{x:-5,y:0,n:"1"},{x:5,y:0,n:"2"},{x:-5,y:40,n:"3"},{x:5,y:40,n:"4"}],
@@ -281,6 +310,18 @@ const SYMBOLS = [
     desc: "ページ間の電位接続点 (タグ一致で接続)", pins: [{x:0,y:0,n:""}],
     sim: "link", bounds: [-10,0, 20, 8],
     body: `<path d="M0,0 V3 M-7,3 L0,8 L7,3 Z"/>`,
+  },
+  {
+    id: "generic2", cat: "misc", letter: "U", name: "汎用機器 (2端子)", nameEn: "Generic device 2-pin",
+    desc: "未登録機器用の箱。名称/型式はプロパティで設定", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
+    sim: "none", bounds: [-8,0, 16, 20],
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-7" y="5" width="14" height="10"/><path d="M-4,10 H4" stroke-dasharray="1.4 1.4"/>`,
+  },
+  {
+    id: "generic4", cat: "misc", letter: "U", name: "汎用機器 (4端子)", nameEn: "Generic device 4-pin",
+    desc: "未登録機器用の箱。名称/型式はプロパティで設定", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
+    sim: "none", bounds: [-8,0, 26, 20],
+    body: `<path d="M0,0 V5 M0,20 V15 M10,0 V5 M10,20 V15"/><rect x="-7" y="5" width="24" height="10"/><path d="M-3,10 H13" stroke-dasharray="1.4 1.4"/>`,
   },
 ];
 

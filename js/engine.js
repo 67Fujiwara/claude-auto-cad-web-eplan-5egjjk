@@ -172,12 +172,18 @@ function conductivePairs(dev, mode = "closed") {
       if (mode === "open" || mode === "split") return [];
       if (mode === "sim") return simActiveState(dev) ? [] : [[0, 1]];
       return [[0, 1]];
+    case "contact2_no":
+      if (mode === "open" || mode === "split") return [];
+      return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1], [2, 3]] : [];
     case "contact3_no":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1], [2, 3], [4, 5]] : [];
     case "breaker":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" && dev.props.open) ? [] : [[0, 1]];
+    case "breaker2":
+      if (mode === "open" || mode === "split") return [];
+      return (mode === "sim" && dev.props.open) ? [] : [[0, 1], [2, 3]];
     case "breaker3":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" && dev.props.open) ? [] : [[0, 1], [2, 3], [4, 5]];
@@ -187,6 +193,8 @@ function conductivePairs(dev, mode = "closed") {
     case "fuse":
       // ヒューズ: 導通するが線番は跨がない (実務では番号が変わる)
       return (mode === "open" || mode === "split") ? [] : [[0, 1]];
+    case "passthru2":
+      return (mode === "open" || mode === "split") ? [] : [[0, 1], [2, 3]];
     case "passthru3":
       // サーマルリレー主回路: 導通するが線番は跨がない (2L1 → U1)
       return (mode === "open" || mode === "split") ? [] : [[0, 1], [2, 3], [4, 5]];
@@ -379,7 +387,7 @@ function autoNumberWires() {
 /* ══════════════ 通電シミュレーション ══════════════ */
 function simActiveState(dev) {
   const sym = SYMBOLS_BY_ID[dev.sym];
-  if (sym.sim === "contact_no" || sym.sim === "contact_nc" || sym.sim === "contact3_no") {
+  if (sym.sim === "contact_no" || sym.sim === "contact_nc" || sym.sim === "contact2_no" || sym.sim === "contact3_no") {
     if (dev.linkTo) {
       // コイル連動接点: タイマは遅延を考慮
       const t = App.sim.timers[dev.linkTo];
@@ -416,6 +424,12 @@ function simCollectPage(page) {
     }
     if (sym.sim === "source3") {
       sym.pins.forEach((_, i) => { const net = pinNet(dev, i); if (net) acNets.add(net); });
+    }
+    if (sym.sim === "source1") {
+      // 単相電源: L を P 極・N を N 極として扱う (負荷判定は DC と同じ「両極にまたがる」)
+      const l = pinNet(dev, 0), n = pinNet(dev, 1);
+      if (l) pNets.add(l);
+      if (n) nNets.add(n);
     }
   });
   return { page, pinNet, wireNet, pNets, nNets, acNets };
@@ -512,6 +526,7 @@ function drcSources(page, pinNet) {
   page.devices.forEach(d => {
     const s = SYMBOLS_BY_ID[d.sym];
     if (s.sim === "psu") { pNets.add(pinNet(d, 2)); nNets.add(pinNet(d, 3)); }
+    if (s.sim === "source1") { pNets.add(pinNet(d, 0)); nNets.add(pinNet(d, 1)); }
     if (s.sim === "link") {
       const pol = linkPolarity(d);
       const net = pinNet(d, 0);
@@ -634,7 +649,7 @@ function runDRC() {
 }
 
 /* ══════════════ 部品表 (BOM) ══════════════ */
-const BOM_EXCLUDE = new Set(["link", "supply3", "earth"]); // 購買部品でないもの
+const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth"]); // 購買部品でないもの
 function buildBOM() {
   const rows = new Map();
   App.project.pages.forEach(page => page.devices.forEach(dev => {

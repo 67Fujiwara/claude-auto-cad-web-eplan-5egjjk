@@ -63,16 +63,19 @@ function aiGenerate(sel) {
   const conditions = inputs.filter(id => !AI_SAFETY_IDS.has(id) && !AI_STOP_IDS.has(id) && !AI_START_IDS.has(id));
 
   const motors3 = outputs.filter(id => id === "motor3");
-  const ctrlOutputs = outputs.filter(id => id !== "motor3");
+  const motors1 = outputs.filter(id => id === "motor1");
+  // モータは主回路ページで扱う (単相/三相とも遮断器+接触器+サーマル+接地を自動生成)
+  const motorsAll = [...motors3.map(() => 3), ...motors1.map(() => 1)];
+  const ctrlOutputs = outputs.filter(id => id !== "motor3" && id !== "motor1");
 
   const plcMode = logics.some(id => id === "plc_di" || id === "plc_do");
   const coilSyms = logics.filter(id => ["coil", "cont_coil", "timer_on", "timer_off", "safety_relay"].includes(id));
 
   // ── AI 設計判断 ──
-  if (motors3.length && !plcMode && coilSyms.filter(s => s === "cont_coil").length < motors3.length) {
-    const add = motors3.length - coilSyms.filter(s => s === "cont_coil").length;
+  if (motorsAll.length && !plcMode && coilSyms.filter(s => s === "cont_coil").length < motorsAll.length) {
+    const add = motorsAll.length - coilSyms.filter(s => s === "cont_coil").length;
     for (let i = 0; i < add; i++) coilSyms.push("cont_coil");
-    report.push(`三相モータ検出 → 電磁接触器コイルを ${add} 台自動追加`);
+    report.push(`モータ検出 (三相${motors3.length}/単相${motors1.length}) → 電磁接触器コイルを ${add} 台自動追加`);
   }
   if (safeties.length) report.push(`安全機器 ${safeties.length} 点を電源直下の安全チェーンに直列配置`);
   if (conditions.length) report.push(`センサ入力 ${conditions.length} 点を運転条件として直列配置 (自動再起動を防止)`);
@@ -336,7 +339,7 @@ function aiGenerate(sel) {
         body: { id, h: id === "motor1" ? 40 : 20 }, funcText: addr,
       });
     });
-    motors3.forEach(() => {
+    motorsAll.forEach(() => {
       const addr = "Q0." + (qo++);
       const q = buildRung({
         series: [{ id: "plc_do", desc: addr }, { id: "ol_nc", tag: "", linkTo: `__ol${contIdx}__`, desc: "過負荷" }],
@@ -392,13 +395,13 @@ function aiGenerate(sel) {
         const drv = allocDriveCoil(coils.length - 1);
         if (drv) series.push({ id: driveContactFor(drv), tag: "", linkTo: drv.id, desc: "" });
       }
-      if (symId === "cont_coil" && motors3.length) {
+      if (symId === "cont_coil" && motorsAll.length) {
         series.push({ id: "ol_nc", tag: "", linkTo: `__ol${contIdx}__`, desc: "過負荷" });
         contIdx++;
       }
       const body = makeCoilRung(symId, series, startGroup);
       // 接触器は主回路の主接点で1点消費する分を予約
-      if (symId === "cont_coil" && motors3.length) takeContact(body.id);
+      if (symId === "cont_coil" && motorsAll.length) takeContact(body.id);
     });
     let extra = 0;
     while (startQueue.length || condQueue.length) {
@@ -450,7 +453,7 @@ function aiGenerate(sel) {
     let starved = 0;
     ctrlOutputs.forEach((id, i) => {
       const bodyH = id === "motor1" ? 40 : 20;
-      if (id === "buzzer" && motors3.length && alarmOl < motors3.length) {
+      if (id === "buzzer" && motorsAll.length && alarmOl < motorsAll.length) {
         // 警報ブザーは運転系ではなく過負荷警報 (サーマル 97-98) で鳴らす
         buildRung({
           series: [{ id: "ol_no", tag: "", linkTo: `__ol${alarmOl}__` }],
@@ -459,7 +462,7 @@ function aiGenerate(sel) {
         alarmOl++;
         return;
       }
-      if (id === "buzzer" && !motors3.length) {
+      if (id === "buzzer" && !motorsAll.length) {
         // 警報源 (サーマル等) が構成にない: 運転状態で鳴る配線になることを検図で可視化
         cur.page.genWarnings = cur.page.genWarnings || [];
         cur.page.genWarnings.push("ブザーの警報源 (サーマルリレー等) が構成にありません — このままでは運転状態で鳴る配線です。警報接点に手動で繋ぎ替えてください");
@@ -538,37 +541,57 @@ function aiGenerate(sel) {
   }
   if (sheets.length > 1) report.push(`図枠に収まらないため制御回路を ${sheets.length} ページに自動分割 (電位リンク ${ctrlTag}/0V で接続)`);
 
-  // ── 主回路ページ (三相モータ) ──
-  if (motors3.length) {
+  // ── 主回路ページ (三相 / 単相モータ) ──
+  if (motorsAll.length) {
     const pw = newPage(pageName("主回路"), project.pages.length + 1);
     project.pages.push(pw);
     pageIdxs.push(project.pages.length - 1);
     const contCoils = coils.filter(c => c.sym === "cont_coil");
     const olIds = [];
     const fixWire = (pg, pts, num) => { const w = addWire(pg, pts); if (w) { w.num = num; w.fixed = true; } };
-    motors3.forEach((_, mi) => {
-      const bx = 70 + mi * 85;
+    let bx = 70;
+    motorsAll.forEach((phase, mi) => {
       const mp = mi === 0 ? "" : `${mi + 1}`;
-      addDevice(pw, "supply3", bx + 10, 25, { tag: "", desc: "" });
-      pw.texts.push({ id: uid("t"), x: bx + 10, y: 16, text: "AC200V 3φ", size: 4 });
-      [["L1", 0], ["L2", 10], ["L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 35], [bx + o, 55]], mp + ph));
-      addDevice(pw, "mcb3", bx, 55, { desc: "主回路保護" });
-      [["1L1", 0], ["1L2", 10], ["1L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 75], [bx + o, 100]], mp + ph));
       const coil = contCoils[mi % Math.max(1, contCoils.length)] || null;
-      addDevice(pw, "main_cont", bx, 100, { tag: "", linkTo: coil ? coil.id : null, desc: "" });
-      [["2L1", 0], ["2L2", 10], ["2L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 120], [bx + o, 140]], mp + ph));
-      const ol = addDevice(pw, "ol3", bx, 140, { desc: "過負荷保護" });
-      olIds.push(ol.id);
-      [["U1", 0], ["V1", 10], ["W1", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 160], [bx + o, 180]], mp + ph));
-      addDevice(pw, "motor3", bx + 10, 180, { desc: "電動機" });
-      addDevice(pw, "earth", bx + 10, 215, { tag: "", desc: "" });
-      pw.texts.push({ id: uid("t"), x: bx + 10, y: 240, text: `モータ回路 ${mi + 1}`, size: 3.8 });
+      if (phase === 3) {
+        // ── 三相ブロック (3極) ──
+        addDevice(pw, "supply3", bx + 10, 25, { tag: "", desc: "" });
+        pw.texts.push({ id: uid("t"), x: bx + 10, y: 16, text: "AC200V 3φ", size: 4 });
+        [["L1", 0], ["L2", 10], ["L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 35], [bx + o, 55]], mp + ph));
+        addDevice(pw, "mcb3", bx, 55, { desc: "主回路保護" });
+        [["1L1", 0], ["1L2", 10], ["1L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 75], [bx + o, 100]], mp + ph));
+        addDevice(pw, "main_cont", bx, 100, { tag: "", linkTo: coil ? coil.id : null, desc: "" });
+        [["2L1", 0], ["2L2", 10], ["2L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 120], [bx + o, 140]], mp + ph));
+        const ol = addDevice(pw, "ol3", bx, 140, { desc: "過負荷保護" });
+        olIds.push(ol.id);
+        [["U1", 0], ["V1", 10], ["W1", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 160], [bx + o, 180]], mp + ph));
+        addDevice(pw, "motor3", bx + 10, 180, { desc: "電動機" });
+        addDevice(pw, "earth", bx + 10, 215, { tag: "", desc: "" });
+        pw.texts.push({ id: uid("t"), x: bx + 10, y: 240, text: `モータ回路 ${mi + 1} (3φ)`, size: 3.8 });
+        bx += 85;
+      } else {
+        // ── 単相ブロック (2極: L/N) ──
+        addDevice(pw, "supply1", bx + 5, 25, { tag: "", desc: "" });
+        pw.texts.push({ id: uid("t"), x: bx + 5, y: 16, text: "AC100V 1φ", size: 4 });
+        [["L", 0], ["N", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 35], [bx + o, 55]], mp + ph));
+        addDevice(pw, "mcb2", bx, 55, { desc: "主回路保護" });
+        [["1L", 0], ["1N", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 75], [bx + o, 100]], mp + ph));
+        addDevice(pw, "main_cont2", bx, 100, { tag: "", linkTo: coil ? coil.id : null, desc: "" });
+        [["2L", 0], ["2N", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 120], [bx + o, 140]], mp + ph));
+        const ol = addDevice(pw, "ol2", bx, 140, { desc: "過負荷保護" });
+        olIds.push(ol.id);
+        [["U1", 0], ["U2", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 160], [bx + o, 180]], mp + ph));
+        addDevice(pw, "motor1", bx + 5, 180, { desc: "電動機" });
+        addDevice(pw, "earth", bx + 5, 215, { tag: "", desc: "" });
+        pw.texts.push({ id: uid("t"), x: bx + 5, y: 240, text: `モータ回路 ${mi + 1} (1φ)`, size: 3.8 });
+        bx += 70;
+      }
     });
     project.pages.forEach(pg => pg.devices.forEach(d => {
       const m = /^__ol(\d+)__$/.exec(d.linkTo || "");
       if (m) d.linkTo = olIds[+m[1] % olIds.length] || null;
     }));
-    report.push(`主回路ページを自動生成 (遮断器 + 接触器 + サーマルリレー + 接地、相番号 L1/1L1/2L1/U1 を付与)`);
+    report.push(`主回路ページを自動生成 (三相${motors3.length}/単相${motors1.length}: 遮断器 + 接触器 + サーマルリレー + 接地、相番号を付与)`);
   } else {
     project.pages.forEach(pg => pg.devices.forEach(d => {
       if (/^__ol\d+__$/.test(d.linkTo || "")) d.linkTo = null;

@@ -251,7 +251,7 @@ function simDevVisual(dev, sym) {
     }
     case "load3":
       return en ? { color: "#c77b00", extra: `<circle cx="0" cy="21" r="11.5" fill="rgba(255,190,60,.28)"/>` } : {};
-    case "passthru3":
+    case "passthru3": case "passthru2":
       // サーマルリレー: トリップ中は赤系で表示
       return App.sim.states[dev.id] ? { color: "#c23b3b" } : {};
     default: return {};
@@ -469,7 +469,19 @@ function setupEditor() {
 
   svg.addEventListener("wheel", e => {
     e.preventDefault();
-    zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+    // Shift+ホイール = 横スクロール / Ctrl+ホイール = 細かいズーム / ホイール = ズーム
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;      // 行単位デバイスをピクセル相当へ
+    else if (e.deltaMode === 2) dy *= 120;
+    if (e.shiftKey) {
+      Editor.view.tx -= (dy !== 0 ? dy : e.deltaX) * 0.6;
+      requestRender();
+      return;
+    }
+    // 移動量に比例した滑らかなズーム (ホイール1ノッチ≈9%、タッチパッドは微小刻み)
+    const speed = e.ctrlKey ? 0.0006 : 0.0011;
+    const factor = Math.max(0.75, Math.min(1.35, Math.exp(-dy * speed)));
+    zoomAt(e.clientX, e.clientY, factor);
   }, { passive: false });
 
   svg.addEventListener("mousedown", onMouseDown);
@@ -527,7 +539,7 @@ function onMouseDown(e) {
         }
         simSolve();
         requestRender();
-      } else if (sym.sim === "passthru3") {
+      } else if (sym.sim === "passthru3" || sym.sim === "passthru2") {
         // サーマルリレー: クリックでトリップ模擬 (95-96が開き、97-98が閉じる)
         App.sim.states[hit.obj.id] = !App.sim.states[hit.obj.id];
         UI.setMsg(App.sim.states[hit.obj.id]
@@ -648,7 +660,7 @@ function onMouseMove(e) {
       if (newHover !== Editor.hover.devId) { Editor.hover.devId = newHover; requestRender(); }
       if (App.sim.running && hit && hit.type === "device") {
         const sym = SYMBOLS_BY_ID[hit.obj.sym];
-        const clickable = ((sym.sim === "contact_no" || sym.sim === "contact_nc") && !hit.obj.linkTo) || sym.sim === "passthru3";
+        const clickable = ((sym.sim === "contact_no" || sym.sim === "contact_nc") && !hit.obj.linkTo) || sym.sim === "passthru3" || sym.sim === "passthru2";
         Editor.svg.style.cursor = clickable ? "pointer" : "default";
       }
     } else if (App.tool === "wire") {
@@ -1078,8 +1090,8 @@ function updateStatusCount() {
 }
 
 /* ══════════════ SVG エクスポート ══════════════ */
-function exportSheetSVG() {
-  const page = curPage();
+function exportSheetSVG(page = null) {
+  page = page || curPage();
   const body =
     `<g>${sheetSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 ${SHEET.w + 10} ${SHEET.h + 10}" font-family="sans-serif">${body}</svg>`;

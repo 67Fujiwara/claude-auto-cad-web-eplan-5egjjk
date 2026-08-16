@@ -353,9 +353,11 @@ const MENUS = {
     { sep: true },
     { label: "保存 (ブラウザ)", key: "Ctrl+S", fn: () => { saveLocal(); UI.setMsg("ブラウザに保存しました"); } },
     { label: "エクスポート (JSON)", key: "", fn: () => downloadFile(App.project.name + ".ecad.json", JSON.stringify(App.project, null, 1)) },
-    { label: "エクスポート (SVG)", key: "", fn: () => downloadFile(App.project.name + "_p" + curPage().no + ".svg", exportSheetSVG(), "image/svg+xml") },
+    { label: "エクスポート (SVG・現在ページ)", key: "", fn: () => downloadFile(App.project.name + "_p" + curPage().no + ".svg", exportSheetSVG(), "image/svg+xml") },
     { sep: true },
-    { label: "印刷…", key: "Ctrl+P", fn: () => UI.print() },
+    { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
+    { label: "PDF出力 (全ページ印刷)…", key: "", fn: () => UI.printAll() },
+    { label: "印刷 (現在ページ)…", key: "Ctrl+P", fn: () => UI.print() },
   ],
   edit: [
     { label: "元に戻す", key: "Ctrl+Z", fn: () => { if (undo()) UI.refresh(); } },
@@ -549,6 +551,36 @@ UI.print = () => {
   win.document.write(`<html><head><title>${App.project.name}</title><style>body{margin:0}svg{width:100vw;height:100vh}</style></head><body>${svg}</body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 300);
+};
+
+/** 全ページを1つの印刷ジョブに (印刷ダイアログで「PDFに保存」を選ぶとPDF出力) */
+UI.printAll = () => {
+  const pages = App.project.pages.map(pg =>
+    `<div class="sheet">${exportSheetSVG(pg)}</div>`).join("");
+  const win = window.open("", "_blank");
+  win.document.write(`<html><head><title>${App.project.name} (全${App.project.pages.length}ページ)</title>
+    <style>
+      @page { size: A3 landscape; margin: 0; }
+      body { margin: 0; }
+      .sheet { width: 100vw; height: 100vh; page-break-after: always; display: flex; align-items: center; justify-content: center; }
+      .sheet:last-child { page-break-after: auto; }
+      .sheet svg { width: 100%; height: 100%; }
+    </style></head><body>${pages}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+  UI.setMsg("印刷ダイアログで「PDFに保存」を選ぶと全ページPDFになります (用紙: A3横)");
+};
+
+/** 全ページを DXF (AutoCAD互換) でダウンロード */
+UI.exportDXF = () => {
+  const base = App.project.name.replace(/[\\/:*?"<>|]/g, "_");
+  App.project.pages.forEach((pg, i) => {
+    // 連続ダウンロードのブロックを避けるため少しずつ間隔を空ける
+    setTimeout(() => {
+      downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`, pageToDXF(pg), "application/dxf");
+    }, i * 400);
+  });
+  UI.setMsg(`DXFを ${App.project.pages.length} ファイル出力します (AutoCADでそのまま開けます)`);
 };
 
 /* ══════════════ テキスト入力 (キャンバス上) ══════════════ */
