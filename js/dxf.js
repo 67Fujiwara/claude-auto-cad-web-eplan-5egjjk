@@ -375,11 +375,11 @@ function pageToDXF(page) {
     ents += dxfPoly(wr.pts, "WIRE", lt);
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
-      ents += dxfText(horiz ? mx : mx - C(0.6), my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
-      ents += dxfText(horiz ? mx : mx + C(3.4), horiz ? my + C(4.6) : my, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx + C(WIRE_SPEC_OFF), horiz ? my + C(4.6) : my, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
   junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, C(LINE_W.thick * 1.5), "WIRE"); });
@@ -649,7 +649,7 @@ function dxfEntsToSVG(ents, opt = {}) {
       if (isFinite(e.x1) && isFinite(e.x2)) out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}"/>`;
     } else if (e.type === "TEXT" || e.type === "MTEXT") {
       const sz = Math.max(2.5, (e.size || 3.5) * k);
-      out += `<text x="${X(e.x1)}" y="${Y(e.y1)}" font-size="${+sz.toFixed(2)}" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;
+      out += `<text x="${X(e.x1)}" y="${Y(e.y1)}" font-size="${svgFontSize(sz)}" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;
     }
   });
   return { body: out, w: b.w * k, h: b.h * k, bounds: b };

@@ -122,6 +122,25 @@ function titleBlocksRects() {
 }
 /** 線番ラベルの位置。最長区間の中点を基本とし、機器の図記号に重なる場合は
     同じ区間内で空いている位置へずらす (画面・DXF・検図で共有)。 */
+/** 線番ラベルの外接矩形 (mx,my は wireLabelPos の戻り値) */
+function wireNumBox(w, mx, my, horiz) {
+  const f = contentScale(), h = TEXT_H.small * f;
+  const wd = textWidthMM(String(w.num || ""), h);
+  return horiz ? { x: mx - wd / 2, y: my - h, w: wd, h }
+               : { x: mx - h, y: my - wd / 2, w: h, h: wd };
+}
+/** 電線仕様ラベルの外接矩形 (線番の反対側)。spec が無ければ null */
+function wireSpecBox(w, mx, my, horiz) {
+  if (!w.spec) return null;
+  const f = contentScale(), h = TEXT_H.small * f;
+  const wd = textWidthMM(String(w.spec), h);
+  const sx = horiz ? mx : mx + WIRE_SPEC_OFF * f, sy = horiz ? my + 4.6 * f : my;
+  return horiz ? { x: sx - wd / 2, y: sy - h, w: wd, h }
+               : { x: sx - h, y: sy - wd / 2, w: h, h: wd };
+}
+/** 縦区間で電線仕様を線番の反対側へ振るオフセット (mm) */
+const WIRE_SPEC_OFF = 4.0;
+
 function wireLabelPos(w, page) {
   const f = contentScale();
   const segs = [];
@@ -133,18 +152,20 @@ function wireLabelPos(w, page) {
   const devs = page ? page.devices : [];
   const notes = page ? page.texts : [];
   // 障害物: 機器の図記号・注記・デバイスタグ/機能テキスト (線番が図記号に被らないように)
-  const obst = [];
+  const obst = page ? pinLabelBoxes(page) : [];
   devs.forEach(d => {
     obst.push(insetRect(devBounds(d), 1.5 * f));
     if (page) deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
   });
   (notes || []).forEach(t => obst.push(textBounds(t)));
-  // 実際に印字される位置 → その文字の外接矩形 (検図・DXF と同じ式にそろえる)
-  const posOf = (pt, horiz) => [pt[0] + (horiz ? 0 : -1.8 * f), pt[1] - 1.4 * f, horiz];
+  // 実際に印字される位置 → その文字の外接矩形 (画面・DXF・検図で同じ式を使う)
+  const posOf = (pt, horiz) => [pt[0] + (horiz ? 0 : -2.4 * f), pt[1] - 1.4 * f, horiz];
   const boxOf = (mx, my, horiz) => {
-    const h = TEXT_H.small * f, wd = textWidthMM(String(w.num || ""), h);
-    return horiz ? { x: mx - wd / 2, y: my - h, w: wd, h }
-                 : { x: mx - h, y: my - wd / 2, w: h, h: wd };
+    const b = wireNumBox(w, mx, my, horiz);
+    const sp = wireSpecBox(w, mx, my, horiz);
+    if (!sp) return b;
+    const x0 = Math.min(b.x, sp.x), y0 = Math.min(b.y, sp.y);
+    return { x: x0, y: y0, w: Math.max(b.x + b.w, sp.x + sp.w) - x0, h: Math.max(b.y + b.h, sp.y + sp.h) - y0 };
   };
   let best = null;
   const consider = (pt, horiz) => {
@@ -202,12 +223,11 @@ function pinLabelVisible(page, dev, pinIdx) {
    ─ 配置はページ内で左→上の順に貪欲決定し、確定したラベルを順次障害物へ積む。 */
 const _labelCache = new WeakMap();   // page → { rev, map }
 
-/** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
-function labelObstacles(page) {
+/** 端子番号ラベルの外接矩形 (画面・検図・ラベル配置で共通) */
+function pinLabelBoxes(page) {
   const f = contentScale();
   const out = [];
   page.devices.forEach(d2 => {
-    out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
     const s2 = symOf(d2.sym);
     (s2.pins || []).forEach((p, pi) => {
       const vis = pinLabelVisible(page, d2, pi);
@@ -218,6 +238,16 @@ function labelObstacles(page) {
       const ty = rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f;
       out.push({ owner: d2.id, x: vis.abs.x + 1 * f, y: ty - h, w: w2, h });
     });
+  });
+  return out;
+}
+
+/** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
+function labelObstacles(page) {
+  const f = contentScale();
+  const out = pinLabelBoxes(page);
+  page.devices.forEach(d2 => {
+    out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
   });
   // 配線 (実線=導体のみ)。作図線はラベルを避ける対象にしない
   const wt = 0.6 * f;
@@ -268,12 +298,14 @@ function placeDeviceLabels(page, dev, obstacles) {
       const anchor = side === "left" ? "end" : "start";
       if (tag) out.push(mk(tag, x, b.y + b.h / 2 - 0.8 * f, anchor, true));
       if (desc) out.push(mk(desc, x, b.y + b.h / 2 + (tag ? 4 : 1) * f, anchor));
-    } else if (side === "top") {
-      const cx = b.x + b.w / 2, y = b.y - d * f;
+    } else if (side === "top" || side === "topL" || side === "topR") {
+      const cx = b.x + b.w / 2 + (side === "topL" ? -5 : side === "topR" ? 5 : 0) * f;
+      const y = b.y - d * f;
       if (desc) out.push(mk(desc, cx, y - (tag ? 4 * f : 0), "middle"));
       if (tag) out.push(mk(tag, cx, y, "middle", true));
-    } else {   // bottom
-      const cx = b.x + b.w / 2, y = b.y + b.h + d * f;
+    } else {   // bottom / bottomL / bottomR
+      const cx = b.x + b.w / 2 + (side === "bottomL" ? -5 : side === "bottomR" ? 5 : 0) * f;
+      const y = b.y + b.h + d * f;
       if (tag) out.push(mk(tag, cx, y, "middle", true));
       if (desc) out.push(mk(desc, cx, y + (tag ? 4 * f : 0), "middle"));
     }
@@ -281,11 +313,14 @@ function placeDeviceLabels(page, dev, obstacles) {
   };
   // 探索順: 横向き機器は上下優先、縦向き機器は左右優先。
   // ミラー表を持つコイルは右側を接点ミラーのために空けておき、最後に回す。
+  const TOP = [1.6, 5.0, 8.4], BOT = [4.4, 7.8, 11.2];
+  const vert = [["top", TOP], ["bottom", BOT], ["topL", TOP], ["topR", TOP], ["bottomL", BOT], ["bottomR", BOT]];
   const order = horizontal
-    ? [["top", [2.0, 3.4, 5.4]], ["bottom", [4.4, 6.4, 8.4]], ["left", [2.2, 1.4, 0.8]], ["right", [2.2, 1.4, 0.8]]]
+    ? [["top", [2.0, 3.4, 5.4]], ["bottom", [4.4, 6.4, 8.4]], ["left", [2.2, 1.4, 0.8]], ["right", [2.2, 1.4, 0.8]],
+       ["topL", [2.0, 3.4]], ["topR", [2.0, 3.4]], ["bottomL", [4.4, 6.4]], ["bottomR", [4.4, 6.4]]]
     : sym.mirror
-      ? [["left", [2.2, 1.4, 0.8, 0.3]], ["top", [1.6, 5.0, 8.4]], ["bottom", [4.4, 7.8, 11.2]], ["right", [2.2, 1.4]]]
-      : [["left", [2.2, 1.4, 0.8, 0.3]], ["right", [2.2, 1.4, 0.8, 0.3]], ["top", [1.6, 5.0, 8.4]], ["bottom", [4.4, 7.8, 11.2]]];
+      ? [["left", [2.2, 1.4, 0.8, 0.3]], ...vert, ["right", [2.2, 1.4]]]
+      : [["left", [2.2, 1.4, 0.8, 0.3]], ["right", [2.2, 1.4, 0.8, 0.3]], ...vert];
 
   const relevant = obstacles.filter(o => o.owner !== dev.id);
   let best = null;
@@ -358,7 +393,15 @@ function revisionRows() {
   return revs.slice(-REV_TABLE.maxRows);
 }
 
-/** 文字列の概算幅 (mm)。CJK は全角として数える */
+/* JIS Z 8313 の「文字高 h」は大文字の高さを指すが、SVG の font-size は
+   em 寸法なので、そのまま渡すと実際の文字高は h の約 0.7 倍にしかならない。
+   図面に印字される文字高を規格値どおりにするため、SVG へ出すときだけ換算する。
+   (DXF の TEXT 高さは大文字高そのものなので TEXT_H をそのまま渡してよい) */
+const TEXT_CAP = 0.70;                 // 大文字高 / font-size (サンセリフ体の実測値)
+const TEXT_CAP_MONO = 0.73;            // 同上 (等幅書体)
+function svgFontSize(h, mono) { return +(h / (mono ? TEXT_CAP_MONO : TEXT_CAP)).toFixed(3); }
+
+/** 文字列の概算幅 (mm)。size は JIS の文字高 h。CJK は全角として数える */
 function textWidthMM(s, size, bold = false) {
   let n = 0;
   for (const ch of String(s)) {
@@ -369,13 +412,16 @@ function textWidthMM(s, size, bold = false) {
       (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x3FFFD);
     n += wide ? 1 : 0.58;
   }
-  return n * size * (bold ? 1.05 : 1);
+  return n * svgFontSize(size) * (bold ? 1.05 : 1);
 }
 /** 欄幅に収まる文字高を求める (最小 2.5mm。それ以下は呼び出し側で切る) */
+/** JIS Z 8313 の文字高の標準列 (この値以外は使わない) */
+const TEXT_H_SERIES = [2.5, 3.5, 5, 7, 10, 14, 20];
 function fitTextSize(value, cellW, startSize, bold = false) {
-  let size = startSize;
-  while (size > TEXT_H.small && textWidthMM(value, size, bold) > cellW) size -= 0.25;
-  return size;
+  // 標準列を大きい方から順に試し、欄に収まる最大の標準文字高を返す
+  const cand = TEXT_H_SERIES.filter(v => v <= startSize + 1e-6).sort((a, b) => b - a);
+  for (const size of cand) if (textWidthMM(value, size, bold) <= cellW) return size;
+  return TEXT_H.small;   // 最小 2.5mm。収まらない分は truncateToWidth が切り詰める
 }
 /** 欄に収まらない文字列を末尾「…」で切り詰める (クリップできない DXF 用) */
 function truncateToWidth(value, cellW, size, bold = false) {
@@ -867,8 +913,9 @@ function autoNumberWires() {
     });
     condWires(page).forEach(w => { if (w.fixed && w.num) reserved.add(String(w.num)); });
   });
+  const used = new Set(reserved);
   let n = 10;
-  const nextNum = () => { while (reserved.has(String(n))) n++; reserved.add(String(n)); return String(n++); };
+  const nextNum = () => { while (used.has(String(n))) n++; used.add(String(n)); return String(n++); };
   App.project.pages.forEach(page => {
     // "open" モード: 接点・コイルを跨いで番号が伝播しない (実務どおり区間ごとに採番)
     const { pinNet, wireNet } = computeNets(page, "open");
@@ -891,6 +938,14 @@ function autoNumberWires() {
     wires.forEach(w => {
       if (w.fixed && w.num) netNum.set(wireNet.get(w.id), w.num);
     });
+    // 2.5) すでに振られている自動番号はそのまま据え置く。
+    //      (1本だけ手動で直したときに、他の線番まで繰り上がるのを防ぐ)
+    wires.forEach(w => {
+      const net = wireNet.get(w.id);
+      if (netNum.has(net)) return;
+      const prev = w.num == null ? "" : String(w.num).trim();
+      if (prev && !used.has(prev)) { netNum.set(net, prev); used.add(prev); }
+    });
     // 3) 残りに連番を振り、ネットごとに最長区間のワイヤ1本にだけラベルを表示
     const bestOfNet = new Map();
     wires.forEach(w => {
@@ -907,6 +962,32 @@ function autoNumberWires() {
     });
     bestOfNet.forEach(({ w }) => { w.numShow = true; }); // 全ネット必ず1箇所は表示
   });
+}
+
+/** ワイヤ1本の線番編集をネット全体へ反映する (1ネットに2つの線番が印字されるのを防ぐ)。
+    num が空なら自動採番に戻す。表示位置は autoNumberWires が最長区間で決める。 */
+function setWireNumber(page, wire, num) {
+  const v = (num == null ? "" : String(num)).trim();
+  const { wireNet } = computeNets(page, "open");
+  const net = wireNet.get(wire.id);
+  const targets = net ? condWires(page).filter(w => wireNet.get(w.id) === net) : [wire];
+  targets.forEach(w => {
+    w.num = v || null;
+    w.fixed = !!v;              // 手動線番は自動採番から保護
+    w.numShow = false;
+  });
+  autoNumberWires();
+  return targets.length;
+}
+
+/** ワイヤ1本の電線仕様をネット全体へ反映する */
+function setWireSpec(page, wire, spec) {
+  const v = (spec || "").trim();
+  const { wireNet } = computeNets(page, "open");
+  const net = wireNet.get(wire.id);
+  const targets = net ? condWires(page).filter(w => wireNet.get(w.id) === net) : [wire];
+  targets.forEach(w => { if (v) w.spec = v; else delete w.spec; });
+  return targets.length;
 }
 
 /* ══════════════ 通電シミュレーション ══════════════ */
@@ -1137,25 +1218,20 @@ function runDRC() {
     const labels = [];
     page.devices.forEach(dev => {
       deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev, what: `${displayTag(dev) || "機器"} の文字` }));
-      // ピン番号 (描画と同じ位置で判定する)
-      const symD = symOf(dev.sym);
-      symD.pins.forEach((p, pi) => {
-        const vis = pinLabelVisible(page, dev, pi);
-        if (!vis) return;
-        const h = TEXT_H.small * f4, w2 = textWidthMM(vis.name, h);
-        const rotated = (dev.rot || 0) % 360 !== 0;
-        const isTop = !rotated && (p.y <= 0 || (symD.horizontalPins && p.y <= symD.bounds[1] + 2));
-        const ty = rotated ? vis.abs.y - 1.6 * f4 : vis.abs.y + (isTop ? 3.4 : -1.6) * f4;
-        labels.push({ x: vis.abs.x + 1 * f4, y: ty - h, w: w2, h, dev, what: `${displayTag(dev) || "機器"} の端子番号` });
-      });
+    });
+    // 端子番号 (描画・ラベル配置と同じ矩形で判定する)
+    const devById = new Map(page.devices.map(d => [d.id, d]));
+    pinLabelBoxes(page).forEach(b => {
+      const dev = devById.get(b.owner);
+      labels.push({ x: b.x, y: b.y, w: b.w, h: b.h, dev, what: `${displayTag(dev) || "機器"} の端子番号` });
     });
     // 線番・電線仕様・注記
     condWires(page).forEach(w => {
       if (!w.num || w.numShow === false) return;
       const [mx, my, horiz] = wireLabelPos(w, page);
-      const h = TEXT_H.small * f4, w2 = textWidthMM(w.num, h);
-      labels.push(horiz ? { x: mx - w2 / 2, y: my - h, w: w2, h, wire: w, what: `線番 ${w.num}` }
-                        : { x: mx - h, y: my - w2 / 2, w: h, h: w2, wire: w, what: `線番 ${w.num}` });
+      labels.push({ ...wireNumBox(w, mx, my, horiz), wire: w, what: `線番 ${w.num}` });
+      const sp = wireSpecBox(w, mx, my, horiz);
+      if (sp) labels.push({ ...sp, wire: w, what: `電線仕様「${w.spec}」` });
     });
     page.texts.forEach(t => {
       const b0 = textBounds(t);
@@ -1321,18 +1397,22 @@ function runDRC() {
   });
   numUse.forEach((list, num) => {
     if (list.length < 2) return;
+    // 電位名 (+24V/0V) と電位リンク名は、同一ページでも複数ネットに現れて正しい。
+    // シミュレータも同電位として扱うので、検図でも同じ解釈にそろえる。
+    if (potentialNames.has(num)) return;
     const samePage = new Map();
-    list.forEach(e => { samePage.set(e.page.no, (samePage.get(e.page.no) || 0) + 1); });
-    const dupInPage = [...samePage.entries()].filter(([, c]) => c >= 2);
-    if (dupInPage.length) {
-      const e = list.find(v => v.page.no === dupInPage[0][0]);
+    list.forEach(e => { if (!samePage.has(e.page.no)) samePage.set(e.page.no, []); samePage.get(e.page.no).push(e); });
+    const dupPages = [...samePage.entries()].filter(([, v]) => v.length >= 2);
+    dupPages.forEach(([, v]) => {          // 重複しているページをすべて報告する
+      const e = v[0];
       issues.push({
         sev: "err",
-        msg: `線番 ${num} が同一ページ内の異なる ${dupInPage[0][1]} 本のネットに重複しています`,
+        msg: `線番 ${num} が同一ページ内の異なる ${v.length} 本のネットに重複しています`,
         page: e.page.no, target: e.w.id, loc: `${e.page.no}.${sheetCol(e.w.pts[0][0])}`,
       });
-    } else if (!potentialNames.has(num)) {
-      const pages = [...new Set(list.map(v => v.page.no))];
+    });
+    if (!dupPages.length && samePage.size > 1) {
+      const pages = [...samePage.keys()];
       issues.push({
         sev: "warn",
         msg: `線番 ${num} が複数ページ (${pages.join(", ")}) の別ネットに使われています`,

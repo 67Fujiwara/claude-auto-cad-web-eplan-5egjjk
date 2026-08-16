@@ -111,15 +111,15 @@ function sheetSVG(page, opts = {}) {
   const fs = TEXT_H.normal * fr, tick = 0.35 * fr, zw = 5 * fr;
   for (let i = 0; i < cols; i++) {
     const cx = ml + cw * i + cw / 2;
-    out += `<text x="${cx}" y="${m - 1.4 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
-    out += `<text x="${cx}" y="${h - m + 4.2 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
+    out += `<text x="${cx}" y="${m - 1.4 * fr}" font-size="${svgFontSize(fs, true)}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
+    out += `<text x="${cx}" y="${h - m + 4.2 * fr}" font-size="${svgFontSize(fs, true)}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
     if (i) out += `<path d="M${ml + cw * i},${m - zw} V${m}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${ml + cw * i},${h - m} V${h - m + zw}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
   for (let i = 0; i < rows; i++) {
     const cy = m + rh * i + rh / 2 + 1.3 * fr;
     const ch = SHEET_ROW_LETTERS[i] || "Z";
-    out += `<text x="${ml - 2.8 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
-    out += `<text x="${w - m + 2.8 * fr}" y="${cy}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
+    out += `<text x="${ml - 2.8 * fr}" y="${cy}" font-size="${svgFontSize(fs, true)}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
+    out += `<text x="${w - m + 2.8 * fr}" y="${cy}" font-size="${svgFontSize(fs, true)}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
     if (i) out += `<path d="M${ml - zw},${m + rh * i} H${ml}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${w - m},${m + rh * i} H${w - m + zw}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
   // 表題欄 (JIS Z 8311: 右下・輪郭線に接する。図番/図名/企業名/署名/日付/尺度/投影法を記入)
@@ -146,8 +146,8 @@ function sheetSVG(page, opts = {}) {
     const id = `${clipBase}c${clipN++}`;                 // ページ間で id が衝突しないように
     return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${cw2[ci]}" height="${S(10)}"/></clipPath>` +
       `<g clip-path="url(#${id})">` +
-      `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${escXML(label)}</text>` +
-      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${S(size)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text></g>`;
+      `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">${escXML(label)}</text>` +
+      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${svgFontSize(S(size))}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text></g>`;
   };
   out += revisionTableSVG(tbX, tbY, tbW, S, fr, meta, clipBase + "r");
   out += `<g font-family="sans-serif" data-titleblock="1">
@@ -164,8 +164,8 @@ function sheetSVG(page, opts = {}) {
     ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
     ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
     ${cell(c2, r3, 1, "用紙 / 投影法", `${pm.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`)}
-    <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">ページ</text>
-    <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${S(TEXT_H.large)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
+    <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
+    <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large))}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
     ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}
   </g>`;
   return out;
@@ -191,7 +191,7 @@ function revisionTableSVG(tbX, tbY, tbW, S, fr, meta, idBase = "rv") {
   xs.slice(1, -1).forEach(x => { grid += `M${x},${y0} V${y0 + h} `; });
   out += `<path d="${grid}" stroke="${INK}" stroke-width="${S(LINE_W.thin)}" fill="none"/>`;
   head.forEach((t, i) => {
-    out += `<text x="${xs[i] + S(1.6)}" y="${y0 + rh - S(1.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${t}</text>`;
+    out += `<text x="${xs[i] + S(1.6)}" y="${y0 + rh - S(1.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK_SOFT}">${t}</text>`;
   });
   // 新しい改訂が上に来るように下から積む (JIS の一般的な書式)
   let rc = 0;
@@ -201,7 +201,7 @@ function revisionTableSVG(tbX, tbY, tbW, S, fr, meta, idBase = "rv") {
       if (!v) return;
       const id = `${idBase}${rc++}`;
       out += `<clipPath id="${id}"><rect x="${xs[i]}" y="${y}" width="${cols[i]}" height="${rh}"/></clipPath>` +
-        `<g clip-path="url(#${id})"><text x="${xs[i] + S(1.6)}" y="${y + rh - S(1.6)}" font-size="${S(TEXT_H.small)}" fill="${INK}">${escXML(v)}</text></g>`;
+        `<g clip-path="url(#${id})"><text x="${xs[i] + S(1.6)}" y="${y + rh - S(1.6)}" font-size="${svgFontSize(S(TEXT_H.small))}" fill="${INK}">${escXML(v)}</text></g>`;
     });
   });
   return out + `</g>`;
@@ -239,7 +239,7 @@ function zonesSVG(page, opts = {}) {
     out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr}" fill="none"
       stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr}" stroke-dasharray="${dash}"/>`;
     if (z.label) {
-      out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${TEXT_H.normal * fr}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
+      out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${svgFontSize(TEXT_H.normal * fr)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
     }
   });
   return out;
@@ -271,15 +271,15 @@ function wiresSVG(page, opts = {}) {
     // 配線番号 (numShow=false のワイヤはネット内の代表ワイヤに表示を譲る)
     if (w.num && w.numShow !== false && cond) {
       const [mx, my, horiz] = wireLabelPos(w, page);
-      // 縦区間は配線から法線方向 (左) にオフセットして重なりを防ぐ
-      const lx = horiz ? mx : mx - 0.6 * fr, ly = my;
-      out += `<text x="${lx}" y="${ly}" font-size="${TEXT_H.small * fr}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+      // 位置は wireLabelPos が確定済み (当たり判定矩形と完全に一致させる)
+      const lx = mx, ly = my;
+      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec) {
       const [mx, my, horiz] = wireLabelPos(w, page);
-      const sx = horiz ? mx : mx + 3.4 * fr, sy = horiz ? my + 4.6 * fr : my;
-      out += `<text x="${sx}" y="${sy}" font-size="${TEXT_H.small * fr}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+      const sx = horiz ? mx : mx + WIRE_SPEC_OFF * fr, sy = horiz ? my + 4.6 * fr : my;
+      out += `<text x="${sx}" y="${sy}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
   });
   // ジャンクションドット (直径は線幅の約3倍)
@@ -327,7 +327,7 @@ function devicesSVG(page, opts = {}) {
       const rotated = (dev.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
       const tx = abs.x + 1 * fr, ty = rotated ? abs.y - 1.6 * fr : abs.y + (isTop ? 3.4 : -1.6) * fr;
-      out += `<text x="${tx}" y="${ty}" font-size="${TEXT_H.small * fr}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
+      out += `<text x="${tx}" y="${ty}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
     out += devLabelsSVG(dev, sym, page);
@@ -369,7 +369,7 @@ function devLabelsSVG(dev, sym, page) {
   const boxes = deviceLabelBoxes(page || curPage(), dev);
   boxes.forEach((o) => {
     const isTag = o.isTag;
-    out += `<text x="${o.x}" y="${o.y}" font-size="${o.size}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
+    out += `<text x="${o.x}" y="${o.y}" font-size="${svgFontSize(o.size, isTag)}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
       `${isTag ? ' font-weight="600" font-family="monospace"' : ""}>${escXML(o.text)}</text>`;
   });
   // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)。
@@ -380,7 +380,7 @@ function devLabelsSVG(dev, sym, page) {
       const right = boxes.side === "right";
       const lx = right ? b.x + b.w + 2.2 * fr : b.x + b.w + 1.6 * fr;
       const ly = right ? b.y + b.h / 2 + (boxes.length + 1) * 4 * fr : b.y + b.h / 2 + 1.2 * fr;
-      out += `<text x="${lx}" y="${ly}" font-size="${TEXT_H.small * fr}" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
+      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSize(TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
     }
   }
   return out;
@@ -413,11 +413,11 @@ function mirrorSVG(coilDev) {
     } else {
       out += `<path d="M${x},${cy + M(1.5)} h${M(2)} l${M(2.6)},${M(-2.8)} m${M(0.6)},${M(2.8)} h${M(0.8)}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" fill="none"/>`;
     }
-    out += `<text x="${x + M(7)}" y="${cy + M(2.3)}" font-size="${TEXT_H.small * mfr}" fill="${INK_SOFT}">${pinLabel}</text>`;
-    out += `<text x="${x + M(15)}" y="${cy + M(2.3)}" font-size="${TEXT_H.small * mfr}" fill="#7a4ec2">/${devLocation(c)}</text>`;
+    out += `<text x="${x + M(7)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr)}" fill="${INK_SOFT}">${pinLabel}</text>`;
+    out += `<text x="${x + M(15)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr)}" fill="#7a4ec2">/${devLocation(c)}</text>`;
   });
   if (contacts.length > MAXROWS) {
-    out += `<text x="${x}" y="${y0 + MAXROWS * rowH + 2 * mfr}" font-size="${TEXT_H.small * mfr}" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
+    out += `<text x="${x}" y="${y0 + MAXROWS * rowH + 2 * mfr}" font-size="${svgFontSize(TEXT_H.small * mfr)}" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
   }
   out += `</g>`;
   return out;
@@ -435,7 +435,7 @@ function textsSVG(page, opts = {}) {
       const wApprox = t.text.length * h * 0.62 + 2 * fr;
       out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"/>`;
     }
-    out += `<text x="${t.x}" y="${t.y}" font-size="${h}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSize(h)}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
   });
   return out;
 }
@@ -920,7 +920,9 @@ function onMouseUp(e) {
     return;
   }
   if (d.type === "move" && d.moved) {
-    // 移動確定 → Undo 履歴
+    // 移動確定 → Undo 履歴。commit() を通らないパスなので、ラベル配置
+    // キャッシュの世代をここで進めないと画面も DXF も古い位置のまま出る
+    App.labelRev++;
     App.undoStack.push(d.snapshot);
     if (App.undoStack.length > 100) App.undoStack.shift();
     App.redoStack.length = 0;

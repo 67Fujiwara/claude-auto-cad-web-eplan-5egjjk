@@ -277,14 +277,14 @@ UI.showProps = (focusTag = false) => {
     pane.querySelector("#pNum").addEventListener("change", e => {
       commit();
       const v = e.target.value.trim();
-      w.num = v || null;
-      w.fixed = !!v; // 手動線番は自動付与で上書きしない
-      w.numShow = !!v;
+      const n = setWireNumber(page, w, v);   // ネット全体に反映 (1ネット1線番)
       UI.refresh(false);
+      UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
+                  : "線番を自動採番に戻しました");
     });
     pane.querySelector("#pSpec").addEventListener("change", e => {
       commit();
-      w.spec = e.target.value.trim() || undefined;
+      setWireSpec(page, w, e.target.value.trim());
       UI.refresh(false);
     });
   } else if (selZones.length === 1 && only1) {
@@ -800,6 +800,13 @@ UI.editWireNumbers = () => {
     condWires(pg).forEach(w => { if (w.num) otherNums.add(String(w.num)); });
   });
   const otherPagesNote = otherNums.size ? ` / 他ページで使用中の線番 ${otherNums.size} 件` : "";
+  // 電位名・電位リンク名 (これらは複数ネットで同名になって正しいので重複警告から外す)
+  const potentials = new Set();
+  App.project.pages.forEach(pg => pg.devices.forEach(d => {
+    const sym = symOf(d.sym);
+    if (sym.sim === "psu") { potentials.add("+24V"); potentials.add("0V"); }
+    if (sym.sim === "link" && d.tag) potentials.add(d.tag.replace(/^-/, ""));
+  }));
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">
       ページ ${page.no}「${escAttr(page.name)}」の線番 ${rows.length} 本${otherPagesNote}。<br>
@@ -859,10 +866,15 @@ UI.editWireNumbers = () => {
   foot.querySelector("#wnOk").addEventListener("click", () => {
     const vals = rows.map((_, i) => body.querySelector(`#wn${i}`).value.trim());
     const fixes = rows.map(([, e], i) => body.querySelector(`#wf${i}`).checked && !!vals[i]);
-    // 手動で保護する線番どうしの重複を先に警告する (自動側は採番時に衝突回避される)
-    const fixedVals = vals.filter((v, i) => v && fixes[i]);
-    const dup = fixedVals.filter((v, i) => fixedVals.indexOf(v) !== i);
-    if (dup.length && !confirm(`線番 ${[...new Set(dup)].join(", ")} が重複しています。このまま適用しますか？`)) return;
+    // 手動で保護する線番の重複を先に警告する (自動側は採番時に衝突回避される)。
+    // 電位名・電位リンク名は複数ネットで同名になって正しいので対象外。
+    const fixedVals = vals.filter((v, i) => v && fixes[i] && !potentials.has(v));
+    const dupSelf = fixedVals.filter((v, i) => fixedVals.indexOf(v) !== i);
+    const dupOther = fixedVals.filter(v => otherNums.has(v));
+    const dup = [...new Set([...dupSelf, ...dupOther])];
+    if (dup.length && !confirm(
+      `線番 ${dup.join(", ")} が他のネット (${dupOther.length ? "他ページを含む" : "このページ内"}) と重複しています。\n` +
+      `検図 (DRC) にエラーとして表示されます。このまま適用しますか？`)) return;
     commit();
     rows.forEach(([, e], i) => {
       const v = vals[i], fixed = fixes[i];
@@ -1152,11 +1164,10 @@ UI.openWireNumInput = (clientX, clientY, wire) => {
     inp.remove();
     if (save && v !== (wire.num || "")) {
       commit();
-      wire.num = v || null;
-      wire.fixed = !!v;
-      wire.numShow = !!v;
+      const n = setWireNumber(curPage(), wire, v);   // ネット全体に反映 (1ネット1線番)
       UI.refresh(false);
-      UI.setMsg(v ? `線番を ${v} に変更しました (自動採番から保護)` : "線番を削除しました");
+      UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
+                  : "線番を自動採番に戻しました");
     }
   };
   inp.addEventListener("keydown", e => {
@@ -1280,7 +1291,7 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>プロジェクト</label><input id="tbProj" value="${escAttr(App.project.name)}"/></div>
       <div class="prop-row"><label>ページ名</label><input id="tbPage" value="${escAttr(page.name)}"/></div>
       <div class="prop-row"><label>図番 (先頭ページ)</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="E-001"/></div>
-      <div class="prop-row"><label>このページの図番</label><input id="tbDwgPage" class="mono" value="${escAttr(page.dwgNo || "")}" placeholder="${escAttr(UI.dwgNoOf(page))}"/></div>
+      <div class="prop-row"><label>このページの図番</label><input id="tbDwgPage" class="mono" value="${page.dwgNoManual ? escAttr(page.dwgNo || "") : ""}" placeholder="${escAttr(pageDwgNo(page))} (自動)"/></div>
       <div class="prop-row"><label>改訂</label><input id="tbRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
       <div class="prop-row"><label>設計</label><input id="tbDes" value="${escAttr(meta.designer || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
@@ -1403,9 +1414,9 @@ UI.sheetSetup = () => {
     page.name = q("#tbPage").value.trim() || page.name;
     meta.dwgNo = q("#tbDwg").value.trim();
     meta.dwgNoAuto = q("#tbDwgAuto").checked;
-    {   // ページ固有の図番: 入力があればそのページを手動扱いにする
+    {   // ページ固有の図番: 自動採番値と違う値を入れたときだけ手動固定にする
       const pv = q("#tbDwgPage").value.trim();
-      if (pv) { page.dwgNo = pv; page.dwgNoManual = true; }
+      if (pv && pv !== pageDwgNo(page)) { page.dwgNo = pv; page.dwgNoManual = true; }
       else { delete page.dwgNoManual; }
     }
     meta.rev = q("#tbRev").value.trim() || "0";
