@@ -555,14 +555,22 @@ function aiGenerate(sel) {
 
   // ── 主回路ページ (三相 / 単相モータ) ──
   if (motorsAll.length) {
-    const pw = newPage(pageName("主回路"), project.pages.length + 1);
-    project.pages.push(pw);
-    pageIdxs.push(project.pages.length - 1);
     const contCoils = coils.filter(c => c.sym === "cont_coil");
     const olIds = [];
     const fixWire = (pg, pts, num) => { const w = addWire(pg, pts); if (w) { w.num = num; w.fixed = true; } };
-    let bx = 70;
+    // 主回路も用紙幅で改ページする (黙って図枠外へ出さない)
+    let mainNo = 0, pw = null, bx = 70;
+    const openMain = () => {
+      mainNo++;
+      pw = newPage(pageName(mainNo === 1 ? "主回路" : `主回路 (${mainNo})`), project.pages.length + 1);
+      project.pages.push(pw);
+      pageIdxs.push(project.pages.length - 1);
+      bx = 70;
+    };
+    openMain();
     motorsAll.forEach((phase, mi) => {
+      const blockW = phase === 3 ? 85 : 75;
+      if (bx + blockW > L.xLimit) openMain();      // 用紙に収まらなくなったら次ページへ
       // 2台目以降は相名を機器で修飾する (1台目の "2L1" 等と衝突させない)
       const mp = mi === 0 ? "" : `M${mi + 1}-`;
       const coil = contCoils[mi % Math.max(1, contCoils.length)] || null;
@@ -604,7 +612,8 @@ function aiGenerate(sel) {
       const m = /^__ol(\d+)__$/.exec(d.linkTo || "");
       if (m) d.linkTo = olIds[+m[1] % olIds.length] || null;
     }));
-    report.push(`主回路ページを自動生成 (三相${motors3.length}/単相${motors1.length}: 遮断器 + 接触器 + サーマルリレー + 接地、相番号を付与)`);
+    report.push(`主回路ページを自動生成 (三相${motors3.length}/単相${motors1.length}: 遮断器 + 接触器 + サーマルリレー + 接地、相番号を付与)` +
+      (mainNo > 1 ? ` — 用紙幅に収まらないため ${mainNo} ページに分割` : ""));
   } else {
     project.pages.forEach(pg => pg.devices.forEach(d => {
       if (/^__ol\d+__$/.test(d.linkTo || "")) d.linkTo = null;

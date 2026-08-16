@@ -154,7 +154,7 @@ const DB_SYMBOLS = [
     id: "rectifier", stdNote: "整流器 (合成記号)", db: true, group: "電源・変換", cat: "db", letter: "U",
     name: "整流器", nameEn: "Rectifier", desc: "箱+ダイオード記号 (AC→DC)",
     pins: [{x:-5,y:0,n:"~"},{x:5,y:0,n:"~"},{x:-5,y:30,n:"+"},{x:5,y:30,n:"-"}], sim: "none", horizontalPins: true, bounds: [-14,-2, 28, 34],
-    body: `<path d="M-5,0 V5 M5,0 V5 M-5,30 V25 M5,25 V30"/><rect x="-12" y="5" width="24" height="20"/><path d="M12,5 L-12,25"/><text x="-7" y="12.5" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><path d="M4,20 H10"/><path d="M4,22.4 H10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: `<path d="M-5,0 V5 M5,0 V5 M-5,30 V25 M5,25 V30"/><rect x="-12" y="5" width="24" height="20"/><path d="M12,5 L-12,25"/><text x="-7" y="12.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><path d="M4,20 H10"/><path d="M4,22.4 H10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "inverter_box", nonstd: true, db: true, group: "電源・変換", cat: "db", letter: "U",
@@ -162,7 +162,7 @@ const DB_SYMBOLS = [
     typ: "FR-D720", horizontalPins: true,
     pins: [{x:-10,y:0,n:"R"},{x:0,y:0,n:"S"},{x:10,y:0,n:"T"},{x:-10,y:30,n:"U"},{x:0,y:30,n:"V"},{x:10,y:30,n:"W"}],
     sim: "none", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M0,25 V30 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-8" y="13" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="8" y="22.5" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="0" y="16.5" font-size="3.57" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">INV</text>`,
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M0,25 V30 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-8" y="13" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="8" y="22.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="0" y="16.5" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">INV</text>`,
   },
   {
     id: "ps_box", nonstd: true, db: true, group: "電源・変換", cat: "db", letter: "G",
@@ -170,7 +170,7 @@ const DB_SYMBOLS = [
     typ: "", horizontalPins: true,
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><text x="0" y="17.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
+    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
   },
 
   /* ── 開閉・保護 (JIS C 0617-7) ── */
@@ -212,25 +212,25 @@ const DB_SYMBOLS = [
     id: "voltmeter", db: true, group: "計器・信号", jis: "08-02-01", cat: "db", letter: "P",
     name: "電圧計", nameEn: "Voltmeter",  desc: "指示計器 V",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "none", bounds: [-8,-2, 16, 24],
-    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">V</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">V</text>`,
   },
   {
     id: "ammeter", db: true, group: "計器・信号", jis: "08-02-01", cat: "db", letter: "P",
     name: "電流計", nameEn: "Ammeter", desc: "指示計器 A",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "none", bounds: [-8,-2, 16, 24],
-    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">A</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">A</text>`,
   },
   {
     id: "hour_meter", db: true, group: "計器・信号", jis: "08-04-01", cat: "db", letter: "P",
     name: "時間計 (アワメータ)", nameEn: "Hour meter", desc: "運転時間の積算計",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "load", bounds: [-8,-2, 16, 24],
-    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-6" y="4" width="12" height="12"/><text x="0" y="12.6" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">h</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-6" y="4" width="12" height="12"/><text x="0" y="12.6" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">h</text>`,
   },
   {
     id: "bell", db: true, group: "計器・信号", stdNote: "電鈴 (JIS C 0617-8 音響信号装置。ランプ 08-10-01 とは別図)", cat: "db", letter: "P",
     name: "ベル", nameEn: "Bell", desc: "電鈴 (外側の打鈴子で ブザーと区別)",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "load", bounds: [-8.5,-2, 17, 24],
-    body: `<path d="M0,0 V4"/><path d="M-6.5,13 A6.5,6.5 0 0 1 6.5,13"/><path d="M-6.5,13 H6.5"/><path d="M0,20 V13"/><circle cx="0" cy="15" r="1.5"/>`,
+    body: `<path d="M0,0 V6.5"/><path d="M-6.5,13 A6.5,6.5 0 0 1 6.5,13"/><path d="M-6.5,13 H6.5"/><path d="M0,20 V13"/><circle cx="4" cy="10.5" r="1.6"/>`,
   },
   {
     id: "horn", jis: "08-10-04", db: true, group: "計器・信号", cat: "db", letter: "P",
@@ -247,7 +247,7 @@ const DB_SYMBOLS = [
     pins: [{x:-15,y:0,n:"I0"},{x:-5,y:0,n:"I1"},{x:5,y:0,n:"I2"},{x:15,y:0,n:"I3"},
            {x:-15,y:30,n:"Q0"},{x:-5,y:30,n:"Q1"},{x:5,y:30,n:"Q2"},{x:15,y:30,n:"Q3"}],
     sim: "none", bounds: [-22,-2, 44, 34],
-    body: `<path d="M-15,0 V5 M-5,0 V5 M5,0 V5 M15,0 V5 M-15,30 V25 M-5,25 V30 M5,25 V30 M15,25 V30"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
+    body: `<path d="M-15,0 V5 M-5,0 V5 M5,0 V5 M15,0 V5 M-15,30 V25 M-5,25 V30 M5,25 V30 M15,25 V30"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
   },
   {
     id: "fan", stdNote: "送風機 (電動機 06-04-01 に羽根を付した実務記号)", db: true, group: "実務機器", cat: "db", letter: "M",

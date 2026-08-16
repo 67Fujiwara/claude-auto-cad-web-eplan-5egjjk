@@ -500,9 +500,14 @@ const MENUS = {
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
     { label: "PDF出力 (全ページ印刷)…", key: "", fn: () => UI.printAll() },
     { label: "印刷 (現在ページ)…", key: "Ctrl+P", fn: () => UI.print() },
+    { sep: true },
+    { label: "設計完了 (DXF + PDF を出力)…", key: "", fn: () => UI.finishDesign() },
+    { label: "設計完了履歴…", key: "", fn: () => UI.openReleaseHistory() },
   ],
   edit: [
     { label: "シンボルデータベース…", key: "", fn: () => UI.openSymDB() },
+    { label: "シンボルを作成…", key: "", fn: () => UI.openSymbolEditor() },
+    { label: "自作シンボルの管理…", key: "", fn: () => UI.manageCustomSymbols() },
     { sep: true },
     { label: "元に戻す", key: "Ctrl+Z", fn: () => { if (undo()) UI.refresh(); } },
     { label: "やり直し", key: "Ctrl+Y", fn: () => { if (redo()) UI.refresh(); } },
@@ -1141,9 +1146,21 @@ UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false
   </div>`);
   bk.querySelector(".modal-body").append(body);
   if (foot) bk.querySelector(".modal-foot").append(foot);
-  const close = () => { bk.remove(); if (onclose) onclose(); };
+  const onEsc = (e) => {
+    if (e.key !== "Escape") return;
+    // 入力欄の変換中や、内側で Esc を使うダイアログを邪魔しない
+    if (e.defaultPrevented || e.isComposing) return;
+    e.stopPropagation();
+    close();
+  };
+  const close = () => {
+    bk.remove();
+    document.removeEventListener("keydown", onEsc, true);
+    if (onclose) onclose();
+  };
   bk.querySelector(".modal-close").addEventListener("click", close);
   bk.addEventListener("mousedown", e => { if (e.target === bk) close(); });
+  document.addEventListener("keydown", onEsc, true);
   root.appendChild(bk);
   return { close, el: bk };
 };
@@ -1913,6 +1930,8 @@ function boot() {
   document.getElementById("btnSave").addEventListener("click", () => UI.saveOver());
   UI.updateSaveButton();
   document.getElementById("btnAIWizard").addEventListener("click", UI.openWizard);
+  document.getElementById("btnRelease").addEventListener("click", () => UI.finishDesign());
+  UI.updateReleaseBadge();
   document.getElementById("btnZoomIn").addEventListener("click", () => UI.zoomCenter(1.25));
   document.getElementById("btnZoomOut").addEventListener("click", () => UI.zoomCenter(0.8));
   document.getElementById("btnZoomFit").addEventListener("click", zoomFit);

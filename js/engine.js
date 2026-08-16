@@ -153,7 +153,35 @@ function wireSpecBox(w, mx, my, horiz) {
 /** 縦区間で電線仕様を線番の反対側へ振るオフセット (mm) */
 const WIRE_SPEC_OFF = 4.0;
 
+const _wireLabelCache = new WeakMap();
+/** ページ内の線番ラベルを順に確定させる (先に決まったラベルを次の障害物にする) */
+function wireLabelMap(page) {
+  const c = _wireLabelCache.get(page);
+  if (c && c.rev === App.labelRev) return c.map;
+  const map = new Map();
+  const placed = [];
+  const wires = condWires(page)
+    .filter(w => w.num && w.numShow !== false)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  wires.forEach(w => {
+    const res = wireLabelPosCalc(w, page, placed);
+    map.set(w.id, res);
+    const bx = wireNumBox(w, res[0], res[1], res[2]);
+    placed.push(bx);
+    const sp = wireSpecBox(w, res[0], res[1], res[2]);
+    if (sp) placed.push(sp);
+  });
+  _wireLabelCache.set(page, { rev: App.labelRev, map });
+  return map;
+}
 function wireLabelPos(w, page) {
+  if (page && w.num && w.numShow !== false) {
+    const hit = wireLabelMap(page).get(w.id);
+    if (hit) return hit;
+  }
+  return wireLabelPosCalc(w, page, []);
+}
+function wireLabelPosCalc(w, page, placed) {
   const f = contentScale();
   const segs = [];
   for (let i = 0; i < w.pts.length - 1; i++) {
@@ -173,8 +201,12 @@ function wireLabelPos(w, page) {
     }
   });
   (notes || []).forEach(t => obst.push(textBounds(t)));
-  // 実際に印字される位置 → その文字の外接矩形 (画面・DXF・検図で同じ式を使う)
-  const posOf = (pt, horiz) => [pt[0] + (horiz ? 0 : -2.4 * f), pt[1] - 1.4 * f, horiz];
+  (placed || []).forEach(b => obst.push(b));      // すでに確定した他の線番ラベル
+  // 実際に印字される位置 → その文字の外接矩形 (画面・DXF・検図で同じ式を使う)。
+  // side=+1 は配線の左/上、-1 は右/下に置く
+  const posOf = (pt, horiz, side = 1, extra = 0) => horiz
+    ? [pt[0], pt[1] + ((side > 0 ? -1.4 - extra : 4.6 + extra)) * f, horiz]
+    : [pt[0] + ((side > 0 ? -2.4 - extra : 3.6 + extra)) * f, pt[1] - 1.4 * f, horiz];
   const boxOf = (mx, my, horiz) => {
     const b = wireNumBox(w, mx, my, horiz);
     const sp = wireSpecBox(w, mx, my, horiz);
@@ -184,12 +216,17 @@ function wireLabelPos(w, page) {
   };
   let best = null;
   const consider = (pt, horiz) => {
-    const res = posOf(pt, horiz);
-    const bx = boxOf(res[0], res[1], horiz);
-    let sc = 0;
-    for (const r of obst) sc += overlapArea(bx, r);
-    if (sc === 0) return res;
-    if (!best || sc < best.sc) best = { sc, res };
+    // 配線の両側 × 法線方向のオフセットを試す (短い区間でも逃げ場を作る)
+    for (const extra of [0, 3, 6]) {
+      for (const side of [1, -1]) {
+        const res = posOf(pt, horiz, side, extra);
+        const bx = boxOf(res[0], res[1], horiz);
+        let sc = 0;
+        for (const r of obst) sc += overlapArea(bx, padRect(r, LABEL_CLEAR / 2));
+        if (sc === 0) return res;
+        if (!best || sc < best.sc) best = { sc, res };
+      }
+    }
     return null;
   };
   // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す
@@ -212,7 +249,7 @@ function wireLabelPos(w, page) {
     if (ok) return ok;
   }
   // 全滅時は重なり面積が最小の候補 (無条件フォールバックはしない)
-  return best ? best.res : posOf(pt, horiz);
+  return best ? best.res : posOf(pt, horiz, 1, 0);
 }
 
 /** ピン番号を表示するか (隣接配線の線番と同名なら二重表示を避ける)。
@@ -242,7 +279,8 @@ const _labelCache = new WeakMap();   // page → { rev, map }
 function pinLabelBoxes(page) {
   const f = contentScale();
   const out = [];
-  page.devices.forEach(d2 => {
+  const devBoxes = page.devices.map(d => insetRect(devBounds(d), 1.2 * f));
+  page.devices.forEach((d2, di) => {
     const s2 = symOf(d2.sym);
     (s2.pins || []).forEach((p, pi) => {
       const vis = pinLabelVisible(page, d2, pi);
@@ -250,11 +288,52 @@ function pinLabelBoxes(page) {
       const h = TEXT_H.small * f, w2 = textWidthMM(vis.name, h, false, true);
       const rotated = (d2.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (s2.horizontalPins && p.y <= s2.bounds[1] + 2));
-      const ty = rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f;
-      out.push({ owner: d2.id, x: vis.abs.x + 1 * f, y: ty - h, w: w2, h });
+      // 端子番号もピンの左右・上下を試して、他の端子番号や図記号を避ける
+      const cands = [
+        [vis.abs.x + 1 * f, rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f],
+        [vis.abs.x - 1 * f - w2, rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f],
+        [vis.abs.x + 1 * f, rotated ? vis.abs.y + 3.4 * f : vis.abs.y + (isTop ? -1.6 : 3.4) * f],
+        [vis.abs.x - 1 * f - w2, rotated ? vis.abs.y + 3.4 * f : vis.abs.y + (isTop ? -1.6 : 3.4) * f],
+      ];
+      let best = null;
+      for (const [bx, by] of cands) {
+        const box = { owner: d2.id, x: bx, y: by - h, w: w2, h };
+        let sc = 0;
+        out.forEach(o => { sc += overlapArea(box, padRect(o, LABEL_CLEAR / 2)); });
+        devBoxes.forEach((r, ri) => { if (ri !== di) sc += overlapArea(box, r); });
+        if (sc === 0) { best = box; break; }
+        if (!best || sc < best.__sc) { best = box; best.__sc = sc; }
+      }
+      delete best.__sc;
+      out.push(best);
     });
   });
   return out;
+}
+/** 端子番号ラベルの位置 (描画・検図で共通)。dev.id とピン番号で引く */
+function pinLabelPos(page, dev, pinIdx) {
+  const key = `${dev.id}#${pinIdx}`;
+  const map = pinLabelPosMap(page);
+  return map.get(key) || null;
+}
+const _pinPosCache = new WeakMap();
+function pinLabelPosMap(page) {
+  const c = _pinPosCache.get(page);
+  if (c && c.rev === App.labelRev) return c.map;
+  const map = new Map();
+  const f = contentScale();
+  const boxes = pinLabelBoxes(page);
+  let i = 0;
+  page.devices.forEach(d2 => {
+    const s2 = symOf(d2.sym);
+    (s2.pins || []).forEach((p, pi) => {
+      if (!pinLabelVisible(page, d2, pi)) return;
+      const b = boxes[i++];
+      if (b) map.set(`${d2.id}#${pi}`, { x: b.x, y: b.y + b.h, box: b });
+    });
+  });
+  _pinPosCache.set(page, { rev: App.labelRev, map });
+  return map;
 }
 
 /** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
@@ -284,6 +363,10 @@ function labelObstacles(page) {
   });
   return out;
 }
+
+/** 文字どうしの最小あき (JIS Z 8313-0: 線幅の2倍以上)。配置探索でこのぶん膨らませる */
+const LABEL_CLEAR = 0.7;
+function padRect(r, d) { return { x: r.x - d, y: r.y - d, w: r.w + d * 2, h: r.h + d * 2, owner: r.owner }; }
 
 function overlapArea(a, b) {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
@@ -355,7 +438,7 @@ function placeDeviceLabels(page, dev, obstacles) {
       let score = 0;
       for (const o of cand) {
         score += outArea(o.box);
-        for (const r of relevant) score += overlapArea(o.box, r);
+        for (const r of relevant) score += overlapArea(o.box, padRect(r, LABEL_CLEAR / 2));
       }
       if (score === 0) return cand;
       if (!best || score < best.score) best = { cand, score };
@@ -407,7 +490,7 @@ function deviceXrefBox(page, dev) {
   for (const [x, y] of cands) {
     const box = { x, y: y - h, w, h };
     let sc = 0;
-    for (const r of obst) sc += overlapArea(box, r);
+    for (const r of obst) sc += overlapArea(box, padRect(r, LABEL_CLEAR / 2));
     if (sc === 0) return { x, y, text, box, size: h };
     if (!best || sc < best.sc) best = { sc, res: { x, y, text, box, size: h } };
   }
@@ -1503,24 +1586,41 @@ function runDRC() {
       const b0 = textBounds(t);
       labels.push({ ...b0, text: t, what: `注記「${t.text}」` });
     });
-    /* 判定は絶対量で行う: 重なり幅 0.3mm 超 かつ 高さ方向が文字高の 40% 超 */
+    /* 判定は絶対量で行う。JIS Z 8313-0 の文字間隔は線幅の2倍以上なので、
+       重なっていなくても「あき」が 0.7mm 未満なら判読できないものとして指摘する。 */
+    const MIN_GAP = 0.7 * f4;
     const realHit = (a, b2) => {
       const ox = Math.min(a.x + a.w, b2.x + b2.w) - Math.max(a.x, b2.x);
       const oy = Math.min(a.y + a.h, b2.y + b2.h) - Math.max(a.y, b2.y);
-      return ox > 0.3 * f4 && oy > Math.min(a.h, b2.h) * 0.4;
+      if (oy <= Math.min(a.h, b2.h) * 0.4) return false;    // 高さ方向がずれていれば読める
+      return ox > -MIN_GAP;                                  // 重なり or 0.7mm 未満のあき
+    };
+    /* 文字と図記号は「重なり」だけを見る (図記号のすぐ脇に置くのは通常の作法) */
+    const symHit = (a, r) => {
+      const ox = Math.min(a.x + a.w, r.x + r.w) - Math.max(a.x, r.x);
+      const oy = Math.min(a.y + a.h, r.y + r.h) - Math.max(a.y, r.y);
+      return ox > 0.3 * f4 && oy > Math.min(a.h, r.h) * 0.4;
     };
     const sameOwner = (a, b2) => (a.dev && a.dev === b2.dev) || (a.wire && a.wire === b2.wire) || (a.text && a.text === b2.text);
     let overlapCount = 0, overlapTotal = 0;
+    const pairSeen = new Set();          // 同じ組を両側から2回報告しない
     for (let i = 0; i < labels.length; i++) {
       const a = labels[i];
-      const other = labels.find((b2, j) => j !== i && !sameOwner(a, b2) && realHit(a, b2));
-      const onSym = other ? null : page.devices.find(d => d !== a.dev && realHit(a, insetRect(devBounds(d), 1.5 * f4)));
+      const oi = labels.findIndex((b2, j) => j !== i && !sameOwner(a, b2) && realHit(a, b2));
+      const other = oi >= 0 ? labels[oi] : null;
+      if (other) {
+        const pk = i < oi ? `${i}|${oi}` : `${oi}|${i}`;
+        if (pairSeen.has(pk)) continue;
+        pairSeen.add(pk);
+      }
+      const onSym = other ? null : page.devices.find(d => d !== a.dev && symHit(a, insetRect(devBounds(d), 1.5 * f4)));
       if (!other && !onSym) continue;
       overlapTotal++;
       if (overlapCount >= 20) continue;
       overlapCount++;
       const target = other ? other.what : `${displayTag(onSym) || "機器"} の図記号`;
-      issues.push({ sev: "warn", msg: `${a.what} が ${target} と重なっています`, page: page.no, target: (a.dev || a.wire || a.text || {}).id || null, loc: `${page.no}.${sheetCol(a.x)}` });
+      const near = other && (Math.min(a.x + a.w, other.x + other.w) - Math.max(a.x, other.x)) <= 0;
+      issues.push({ sev: "warn", msg: `${a.what} が ${target} と${near ? "近すぎます (あき 0.7mm 未満)" : "重なっています"}`, page: page.no, target: (a.dev || a.wire || a.text || {}).id || null, loc: `${page.no}.${sheetCol(a.x)}` });
     }
     if (overlapTotal > overlapCount) {
       issues.push({ sev: "warn", msg: `文字の重なりは他に ${overlapTotal - overlapCount} 箇所あります`, page: page.no, target: null, loc: `${page.no}.-` });
@@ -1540,15 +1640,7 @@ function runDRC() {
 
     // 注記テキスト・破線枠も同じ検査にかける
     page.texts.forEach(t => {
-      // 文字幅は概算のため 0.5mm の余裕を見る (誤検出を避ける)
-      const b0 = textBounds(t);
-      const b = { x: b0.x + 0.5, y: b0.y + 0.5, w: Math.max(0, b0.w - 1), h: Math.max(0, b0.h - 1) };
-      if (outOfFrame(b)) {
-        issues.push({ sev: "err", msg: `注記「${t.text}」が図枠の外にはみ出しています`, page: page.no, target: t.id, loc: `${page.no}.${sheetCol(t.x)}` });
-      } else {
-        const hitR = blocks.find(r => overlaps(b, r));
-        if (hitR) issues.push({ sev: "err", msg: `注記「${t.text}」が${blockName(hitR)}に重なっています`, page: page.no, target: t.id, loc: `${page.no}.${sheetCol(t.x)}` });
-      }
+      // 注記の枠外・欄との重なりは上の文字要素まとめて検査するブロックで見る
     });
     pageZones(page).forEach(z => {
       const b = { x: z.x, y: z.y, w: z.w, h: z.h };
@@ -1647,6 +1739,8 @@ function runDRC() {
     if (sym.sim === "psu") { potentialNames.add("+24V"); potentialNames.add("0V"); }
     if (sym.sim === "link" && dev.tag) potentialNames.add(dev.tag.replace(/^-/, ""));
   }));
+  // 主回路の相名 (L1 / 1L2 / M2-U1 …) は線番ではなく相の呼称なので重複を見ない
+  const RE_PHASE = /^([A-Z]+\d*-)?\d*[LUVWNRST]\d*$/;
   const numUse = new Map();               // 線番 → ネット代表の配列
   App.project.pages.forEach((page, pageIdx) => {
     const wn = openData[pageIdx].wireNet;
@@ -1665,7 +1759,7 @@ function runDRC() {
     if (list.length < 2) return;
     // 電位名 (+24V/0V) と電位リンク名は、同一ページでも複数ネットに現れて正しい。
     // シミュレータも同電位として扱うので、検図でも同じ解釈にそろえる。
-    if (potentialNames.has(num)) return;
+    if (potentialNames.has(num) || RE_PHASE.test(num)) return;
     const samePage = new Map();
     list.forEach(e => { if (!samePage.has(e.page.no)) samePage.set(e.page.no, []); samePage.get(e.page.no).push(e); });
     const dupPages = [...samePage.entries()].filter(([, v]) => v.length >= 2);
@@ -1705,7 +1799,14 @@ function runDRC() {
   }
 
   applySheet(curPage());   // 現在ページの図枠に戻す
-  return issues;
+  // 同じ対象・同じ内容の重複を1行にまとめる (検図一覧を作業キューとして使えるように)
+  const seenMsg = new Set();
+  const uniq = issues.filter(i => {
+    const k = `${i.page}|${i.sev}|${i.target || ""}|${i.msg}`;
+    if (seenMsg.has(k)) return false;
+    seenMsg.add(k); return true;
+  });
+  return uniq;
 }
 
 /* ══════════════ 部品表 (BOM) ══════════════ */

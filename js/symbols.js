@@ -110,8 +110,8 @@ const SYMBOLS = [
   {
     id: "thermo", jis: "07-08-04", cat: "input", letter: "B", name: "サーモスタット", nameEn: "Thermostat",
     desc: "温度スイッチ・b接点", typ: "US-622", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
-    sim: "contact_nc", momentary: false, bounds: [-16.3,-2, 18.3, 24],
-    body: G_NC + `<text x="-13" y="8.8" font-size="5.333" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text>` + gLink(-13, bladeXNC(10), 10),
+    sim: "contact_nc", momentary: false, bounds: [-18.2,-5.2, 20.2, 27.2],
+    body: G_NC + `<text x="-13" y="8.8" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text>` + gLink(-13, bladeXNC(10), 10),
   },
 
   /* ══════════ ロジック機器 ══════════ */
@@ -130,14 +130,14 @@ const SYMBOLS = [
   {
     id: "timer_on", jis: "07-15-08", cat: "logic", letter: "K", name: "タイマ (オンディレイ)", nameEn: "On-delay timer",
     desc: "励磁後 t 秒で動作", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
-    sim: "coil", bounds: [-7,-2, 22.2, 24], mirror: true, timer: "on", maxContacts: 2,
-    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,4.2 A3,3 0 0 1 3,4.2"/><text x="7" y="12.6" font-size="3.43" fill="currentColor" stroke="none" font-family="monospace">TON</text>`,
+    sim: "coil", bounds: [-7,-2, 39.5, 24], mirror: true, timer: "on", maxContacts: 2,
+    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,4.2 A3,3 0 0 1 3,4.2"/><text x="7" y="12.6" data-h="2.5" fill="currentColor" stroke="none" font-family="monospace">TON</text>`,
   },
   {
     id: "timer_off", jis: "07-15-09", cat: "logic", letter: "K", name: "タイマ (オフディレイ)", nameEn: "Off-delay timer",
     desc: "消磁後 t 秒で復帰", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
-    sim: "coil", bounds: [-7,-2, 22.2, 24], mirror: true, timer: "off", maxContacts: 2,
-    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,1.6 A3,3 0 0 0 3,1.6"/><text x="7" y="12.6" font-size="3.43" fill="currentColor" stroke="none" font-family="monospace">TOF</text>`,
+    sim: "coil", bounds: [-7,-2, 39.7, 24], mirror: true, timer: "off", maxContacts: 2,
+    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,1.6 A3,3 0 0 0 3,1.6"/><text x="7" y="12.6" data-h="2.5" fill="currentColor" stroke="none" font-family="monospace">TOF</text>`,
   },
   {
     id: "aux_no", jis: "07-02-01", cat: "logic", letter: "K", name: "補助接点 (a接点)", nameEn: "Aux contact NO",
@@ -185,13 +185,13 @@ const SYMBOLS = [
     id: "plc_di", jis: "12-15-01", cat: "logic", letter: "A", name: "PLC入力ポイント", nameEn: "PLC digital input",
     desc: "DIカードの1点", typ: "PLC DI", pins: [{x:0,y:0,n:"I"},{x:0,y:20,n:"COM"}],
     sim: "coil", bounds: [-10,-2, 20, 24],
-    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-8" y="4" width="16" height="12"/><text x="0" y="12.7" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DI</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-8" y="4" width="16" height="12"/><text x="0" y="12.7" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DI</text>`,
   },
   {
     id: "plc_do", jis: "12-15-02", cat: "logic", letter: "A", name: "PLC出力ポイント", nameEn: "PLC digital output",
     desc: "DOカードの1点 (シミュレーションではクリックでON/OFF)", typ: "PLC DO", pins: [{x:0,y:0,n:"Q"},{x:0,y:20,n:"COM"}],
     sim: "contact_no", bounds: [-10,-2, 20, 24],
-    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-8" y="4" width="16" height="12"/><text x="0" y="12.7" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DO</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-8" y="4" width="16" height="12"/><text x="0" y="12.7" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DO</text>`,
   },
 
   /* ══════════ アウトプット機器 ══════════ */
@@ -225,14 +225,14 @@ const SYMBOLS = [
     desc: "誘導電動機 3φ", typ: "0.75kW 4P 200V", horizontalPins: true,
     pins: [{x:-10,y:0,n:"U1"},{x:0,y:0,n:"V1"},{x:10,y:0,n:"W1"},{x:0,y:35,n:"PE"}],
     sim: "load3", bounds: [-12,-2, 24, 39],
-    body: `<path d="M-10,0 V8 M0,0 V11.5 M10,0 V8"/><path d="M-10,8 L-6,13.652 M10,8 L6,13.652"/><circle cx="0" cy="21" r="9.5"/><path d="M0,30.5 V35"/><text x="0" y="20.5" font-size="7.14" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="27" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">3~</text>`,
+    body: `<path d="M-10,0 V8 M0,0 V11.5 M10,0 V8"/><path d="M-10,8 L-6,13.652 M10,8 L6,13.652"/><circle cx="0" cy="21" r="9.5"/><path d="M0,30.5 V35"/><text x="0" y="20.5" data-h="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="27" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">3~</text>`,
   },
   {
     id: "motor1", jis: "06-04-01", cat: "output", letter: "M", name: "単相モータ", nameEn: "1-phase motor",
     desc: "誘導電動機 1φ (主回路を自動生成)", typ: "0.2kW 100V", horizontalPins: true,
     pins: [{x:-5,y:0,n:"U1"},{x:5,y:0,n:"U2"},{x:0,y:35,n:"PE"}],
     sim: "load", bounds: [-11.5,-2, 23, 39],
-    body: `<path d="M-5,0 V11.9 M5,0 V11.9"/><circle cx="0" cy="20" r="9.5"/><path d="M0,29.5 V35"/><text x="0" y="19.5" font-size="7.14" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="26" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">1~</text>`,
+    body: `<path d="M-5,0 V11.9 M5,0 V11.9"/><circle cx="0" cy="20" r="9.5"/><path d="M0,29.5 V35"/><text x="0" y="19.5" data-h="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="26" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">1~</text>`,
   },
   {
     id: "main_cont", cat: "output", letter: "Q", name: "主接点 (3極)", nameEn: "Main contacts 3P",
@@ -286,7 +286,7 @@ const SYMBOLS = [
     desc: "AC100/200V → DC24V", typ: "S8FS-G10024CD", horizontalPins: true,
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-7" y="12.5" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">AC</text><text x="7" y="22.5" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DC</text>`,
+    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-7" y="12.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">AC</text><text x="7" y="22.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DC</text>`,
   },
   {
     id: "supply3", jis: "02-01-01", cat: "power", letter: "W", name: "三相電源 L1/L2/L3", nameEn: "3-phase supply",
@@ -346,13 +346,13 @@ const SYMBOLS = [
 
   /* ══════════ 端子・その他 ══════════ */
   {
-    id: "terminal", jis: "03-02-08", cat: "misc", letter: "X", name: "端子", nameEn: "Terminal",
+    id: "terminal", stdNote: "端子 (JIS C 0617-3 接続部品。図記号番号は規格原本との照合が必要)", cat: "misc", letter: "X", name: "端子", nameEn: "Terminal",
     desc: "端子台の1点", typ: "UK-2.5N", pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}],
     sim: "passthru", bounds: [-4.2,-2, 8.4, 24],
     body: `<path d="M0,0 V7.8 M0,20 V12.2"/><circle cx="0" cy="10" r="2.2"/>`,
   },
   {
-    id: "link", jis: "03-02-09", cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
+    id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
     desc: "ページ間の電位接続点 (タグ一致で接続)", pins: [{x:0,y:0,n:""}],
     sim: "link", bounds: [-9,-2, 18, 12],
     body: `<path d="M0,0 V3 M-7,3 L0,8 L7,3 Z"/>`,
@@ -377,24 +377,71 @@ SYMBOLS.forEach(s => SYMBOLS_BY_ID[s.id] = s);
 /** シンボルの描画SVG文字列 (ローカル座標系) */
 function symBodySVG(sym, opts = {}) {
   const sw = opts.strokeWidth || SYM_STROKE;
-  let body = opts.textScale ? scaleSymbolGeom(sym.body, opts.textScale) : sym.body;
+  let body = symResolveTextSize(sym.body, opts.textScale || 1);
+  body = opts.textScale ? scaleSymbolGeom(body, opts.textScale) : body;
   // 機器を回転しても記号内の文字は図面の下辺から読める向きに保つ (JIS Z 8313-0)。
   // 回転グループの内側にあるので、文字だけ逆回転を掛けて打ち消す。
   const rot = ((opts.rot || 0) % 360 + 360) % 360;
-  if (rot) {
-    const [bx, by, bw, bh] = sym.bounds;
-    body = counterRotateText(body, rot, bx + bw / 2, by + bh / 2);
-  }
+  if (rot) body = counterRotateText(body, rot);
   return `<g fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
 }
 
-/** シンボル内の <text> に逆回転を掛け、機器の回転にかかわらず水平に保つ。
-    回転中心は記号全体で共通 (cx,cy)。各文字の位置で回すと複数行の上下順が
-    180° で入れ替わってしまうため。 */
-function counterRotateText(body, rot, cx, cy) {
+/** 記号内の文字の data-h (JIS の文字高 mm) から、実際の書体比で font-size を求める。
+    書体・太字・和文で比が違うので、図枠の文字と同じ svgFontSizeFor() を通す。 */
+function symResolveTextSize(body, f) {
+  if (!/data-h="/.test(body)) return body;
+  return body.replace(/<text\b([^>]*)>([\s\S]*?)<\/text>/g, (m, attrs, txt) => {
+    const hm = /data-h="([\d.]+)"/.exec(attrs);
+    if (!hm) return m;
+    const fam = (/font-family="([a-z-]+)"/.exec(attrs) || [])[1] || "sans-serif";
+    const bold = /font-weight="(bold|[6-9]00)"/.test(attrs);
+    const h = parseFloat(hm[1]) * (f || 1);
+    const fs = svgFontSizeFor(txt.trim(), h, fam === "monospace",
+      { bold, serif: fam === "serif" });
+    return `<text${attrs.replace(hm[0], `font-size="${fs}"`)}>${txt}</text>`;
+  });
+}
+
+/** シンボル内の <text> を、機器を回しても図面の下辺から読める向きに保つ。
+    ・位置は機器と一緒に回す (回転後も図記号の内側に留まる)
+    ・字面だけ各アンカ回りに逆回転して水平にする
+    ・複数行は回転後の並びが元の読み順 (上→下・左→右) になるようアンカを入れ替える */
+function counterRotateText(body, rot) {
+  const tags = [];
+  body.replace(/<text\b([^>]*)>/g, (m, attrs, idx) => { tags.push({ m, attrs, idx }); return m; });
+  if (!tags.length) return body;
+  const num = (attrs, name) => {
+    const r = new RegExp(name + '="(-?[\\d.]+)"').exec(attrs);
+    return r ? parseFloat(r[1]) : 0;
+  };
+  const rad = rot * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+  const pts = tags.map(t => ({ x: num(t.attrs, "x"), y: num(t.attrs, "y") }));
+  const rotated = pts.map(p => ({ x: p.x * cs - p.y * sn, y: p.x * sn + p.y * cs }));
+  const key = p => Math.round(p.y * 100) * 1e4 + Math.round(p.x * 100);   // 読み順 (上→下・左→右)
+  // 同じ x に縦に並ぶ文字 (複数行の見出し) だけを1つのまとまりとして扱い、
+  // 回転後も読み順が保たれるようアンカを入れ替える。
+  // 別々の位置を指す文字 (AC/DC のような側を示すラベル) は入れ替えない。
+  const target = pts.map((p, i) => i);
+  const groups = new Map();
+  pts.forEach((p, i) => {
+    const gk = Math.round(p.x * 2) / 2;
+    if (!groups.has(gk)) groups.set(gk, []);
+    groups.get(gk).push(i);
+  });
+  groups.forEach(idx => {
+    if (idx.length < 2) return;
+    const inOrder = [...idx].sort((a, b) => key(pts[a]) - key(pts[b]));
+    const slots = [...idx].sort((a, b) => key(rotated[a]) - key(rotated[b]));
+    inOrder.forEach((ti, k) => { target[ti] = slots[k]; });
+  });
+  let n = -1;
   return body.replace(/<text\b([^>]*)>/g, (m, attrs) => {
+    n++;
     if (/\btransform=/.test(attrs)) return m;
-    return `<text${attrs} transform="rotate(${-rot} ${cx} ${cy})">`;
+    const p = pts[n], q = pts[target[n]];
+    const dx = +(q.x - p.x).toFixed(3), dy = +(q.y - p.y).toFixed(3);
+    const tr = (dx || dy) ? `translate(${dx} ${dy}) ` : "";
+    return `<text${attrs} transform="${tr}rotate(${-rot} ${p.x} ${p.y})">`;
   });
 }
 
@@ -433,6 +480,9 @@ function fitDashPattern(pattern, len) {
   const e = p[0];
   const n = Math.max(1, Math.round((len - e) / per));
   const k = len / (n * per + e);
+  // 線素長は公称の ±20% までしか伸縮させない (JIS Z 8312 / ISO 128-20 表2)。
+  // それを超える短い線は、周期をそのまま使い端部の欠けを許す方が規格に近い。
+  if (k < 0.8 || k > 1.2) return p.map(v => +v.toFixed(3));
   return p.map(v => +(v * k).toFixed(3));
 }
 
@@ -473,7 +523,7 @@ function symThumbSVG(sym, size = 46) {
   // 文字はそのままにして、はみ出しを防ぐ。
   const k = 1.1 / 0.5;
   // 破線は「線素で始まり線素で終わる」補正を最後に掛ける (倍率は先に反映させる)
-  const scaled = sym.body
+  const scaled = symResolveTextSize(sym.body, 1)
     .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${(parseFloat(v) * k).toFixed(3)}"`)
     .replace(/stroke-dasharray="([\d. ]+)"/g, (m, v) => `stroke-dasharray="${v.trim().split(/\s+/).map(n => (parseFloat(n) * k).toFixed(3)).join(" ")}"`);
   const body = scaleSymbolGeom(scaled, 1);

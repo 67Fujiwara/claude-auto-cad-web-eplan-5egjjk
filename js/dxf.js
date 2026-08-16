@@ -111,7 +111,7 @@ function dxfSymPrimitives(sym) {
   const key = sym.id + "@" + contentScale();
   if (__dxfPrimCache.has(key)) return __dxfPrimCache.get(key);
   const prims = [];
-  const src = scaleSymbolGeom(sym.body, contentScale());
+  const src = scaleSymbolGeom(symResolveTextSize(sym.body, contentScale()), contentScale());
   // <g transform="translate(a,b)"> の入れ子を追跡
   const stack = [{ tx: 0, ty: 0 }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
@@ -164,9 +164,9 @@ function dxfSymPrimitives(sym) {
     } else if (tag === "text") {
       // SVG の font-size は em 寸法。DXF の TEXT 高さ (group 40) は大文字高なので換算する
       const fam = (attr(attrs, "font-family") || "sans-serif").toLowerCase();
-      const cap = fam.includes("mono") ? TEXT_CAP_MONO : fam.includes("serif") && !fam.includes("sans") ? TEXT_CAP_SERIF : TEXT_CAP;
+      const cap = capRatio(fam.includes("mono") ? "mono" : (fam.includes("serif") && !fam.includes("sans")) ? "serif" : "sans");
       pendingText = {
-        type: "text",
+        type: "text", mono: fam.includes("mono"),
         x: +attr(attrs, "x") + ox, y: +attr(attrs, "y") + oy,
         size: +((+(attr(attrs, "font-size") || 5) * cap).toFixed(3)),
         anchor: attr(attrs, "text-anchor") || "start",
@@ -218,11 +218,12 @@ function dxfEscape(text) {
   }
   return out;
 }
-function dxfText(x, y, size, text, layer, anchor = "start", angle = 0) {
+function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}) {
   if (!text) return "";
   // 和文は JIS Z 8313-10 の最小呼び (3.5mm) に合わせる。画面と同じ判定を使う
   size = textHeightMM(text, size);
-  const w = textWidthMM(String(text), size, false, true);
+  // 幅は画面と同じ書体で測る (中央寄せの位置が画面とずれないように)
+  const w = textWidthMM(String(text), size, !!opts.bold, opts.mono !== false);
   const rad = angle * Math.PI / 180;
   const off = anchor === "middle" ? -w / 2 : anchor === "end" ? -w : 0;
   const ax = x + off * Math.cos(rad);       // 回転後の基線方向へ寄せる
@@ -338,8 +339,8 @@ function pageToDXF(page) {
     const cx = cxmm[ci], cwv = cwmm[ci] - 3.4;
     const size = fitTextSize(String(value), cwv, TEXT_H.normal);
     const text = truncateToWidth(String(value), cwv, size);
-    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(3.6), S(TEXT_H.small), label, "FRAME");
-    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(size), text, "TEXT");
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(3.6), S(TEXT_H.small), label, "FRAME", "start", 0, { mono: false });
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(size), text, "TEXT", "start", 0, { mono: false });
   };
   const R = TITLE_BLOCK.rowH;
   tbCell(0, 0, "図名 (プロジェクト)", App.project.name);
@@ -429,18 +430,16 @@ function pageToDXF(page) {
         const [rcx, rcy] = xf(scx, scy);
         const k = contentScale();
         ents += dxfText(rcx + (pr.x - scx) * k, rcy + (pr.y - scy) * k,
-          pr.size * k, pr.text, "SYMBOL", pr.anchor || "middle");
+          pr.size * k, pr.text, "SYMBOL", pr.anchor || "middle", 0, { mono: pr.mono });
       }
     });
     // ピン番号 (画面と同じく回転後の絶対座標に水平で置く)
     sym.pins.forEach((p, pi) => {
       const vis = pinLabelVisible(page, dev, pi);
       if (!vis) return;
-      const name = vis.name, abs = vis.abs;
-      const rotated = (dev.rot || 0) % 360 !== 0;
-      const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
-      const tx = abs.x + C(1), ty = rotated ? abs.y - C(1.6) : abs.y + (isTop ? C(3.4) : C(-1.6));
-      ents += dxfText(tx, ty, C(TEXT_H.small), name, "PIN");
+      const pos = pinLabelPos(page, dev, pi);      // 位置は画面・検図と同じ探索結果
+      if (!pos) return;
+      ents += dxfText(pos.x, pos.y, C(TEXT_H.small), vis.name, "PIN");
     });
     // タグ / 機能テキスト (配置は画面と同じ deviceLabelBoxes に従う)
     const b = devBounds(dev);
@@ -454,7 +453,7 @@ function pageToDXF(page) {
 
   // ── フリーテキスト ──
   page.texts.forEach(t => {
-    ents += dxfText(t.x, t.y, textHeight(t) * contentScale(), t.text, "TEXT", t.anchor || "middle");
+    ents += dxfText(t.x, t.y, textHeight(t) * contentScale(), t.text, "TEXT", t.anchor || "middle", 0, { mono: false });
   });
 
   // ── DXF 全体 (R12) ──

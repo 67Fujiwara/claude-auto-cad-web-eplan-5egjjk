@@ -538,3 +538,56 @@ text.svg-ui { font-family: var(--font); }
 
 /* 選択不可テキスト内の入力だけ選択可能に */
 input, textarea { user-select: text; }
+
+/* ══════════════ シンボル作成 ══════════════ */
+.se-wrap { display: grid; grid-template-columns: 210px 1fr 270px; gap: 14px; align-items: start; }
+.se-left, .se-right { min-width: 0; }
+.se-mid { position: relative; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+#seCanvas { display: block; width: 100%; height: min(58vh, 520px); background: var(--bg); cursor: crosshair; }
+.se-status { position: absolute; left: 10px; bottom: 8px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); pointer-events: none; }
+.se-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.se-tool { padding: 7px 6px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text-dim); cursor: pointer; }
+.se-tool:hover { border-color: var(--accent); color: var(--text); }
+.se-tool.on { background: var(--accent-dim, rgba(77,163,255,.18)); border-color: var(--accent); color: var(--accent-2, var(--accent)); }
+.se-pins { max-height: 180px; overflow: auto; }
+.se-pin { display: grid; grid-template-columns: 18px 1fr 62px 22px; gap: 6px; align-items: center; margin-bottom: 5px; }
+.se-pin input { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+  color: var(--text); font-size: 12px; padding: 3px 6px; outline: none; }
+.se-pin-xy { font-size: 10.5px; color: var(--text-faint); text-align: right; }
+.se-pin-del { background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 12px; }
+.se-pin-del:hover { color: var(--err, #e5484d); }
+.se-preview { display: flex; align-items: center; justify-content: center; min-height: 100px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 8px; }
+.se-empty { font-size: 11.5px; color: var(--text-faint); }
+
+/* 自作シンボルの管理 */
+.cs-row { display: grid; grid-template-columns: 56px 1fr auto auto; gap: 10px; align-items: center;
+  padding: 8px; border-bottom: 1px solid var(--line); }
+.cs-thumb { display: flex; align-items: center; justify-content: center; height: 46px; color: var(--text); }
+.cs-name { font-size: 13px; font-weight: 600; }
+.cs-sub { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+/* ══════════════ 設計完了 / 履歴 ══════════════ */
+.tb-badge { display: inline-block; min-width: 16px; margin-left: 5px; padding: 0 4px; border-radius: 8px;
+  background: var(--accent); color: #06101d; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.rel-sum { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 4px; }
+.rel-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; }
+.rel-card.ok { border-color: rgba(61,220,151,.45); }
+.rel-card.warn { border-color: rgba(255,180,84,.5); }
+.rel-card.bad { border-color: rgba(229,72,77,.6); }
+.rel-k { font-size: 10.5px; color: var(--text-faint); letter-spacing: .06em; }
+.rel-v { font-size: 20px; font-weight: 700; margin-top: 2px; }
+.rel-alert { margin: 10px 0 2px; padding: 10px 12px; border-radius: 9px; font-size: 12px;
+  background: rgba(229,72,77,.12); border: 1px solid rgba(229,72,77,.4); color: var(--text); line-height: 1.7; }
+.rel-head, .rel-row { display: grid; grid-template-columns: 108px 1fr 190px 96px 250px; gap: 10px; align-items: center; }
+.rel-head { font-size: 10.5px; color: var(--text-faint); letter-spacing: .06em; margin-bottom: 6px; padding: 0 8px; }
+.rel-rows { max-height: 56vh; overflow: auto; }
+.rel-row { padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.rel-row:hover { background: var(--panel-2); }
+.rel-dim { font-size: 11px; color: var(--text-faint); }
+.rel-ok { color: #3ddc97; }
+.rel-bad { color: #e5484d; font-weight: 600; }
+.rel-act { display: flex; gap: 5px; flex-wrap: wrap; }
+.rel-act .btn-solid { padding: 4px 9px; font-size: 11px; }
+.rel-act .btn-solid[disabled] { opacity: .4; cursor: not-allowed; }

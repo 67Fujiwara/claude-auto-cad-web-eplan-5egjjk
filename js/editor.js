@@ -333,10 +333,10 @@ function devicesSVG(page, opts = {}) {
     sym.pins.forEach((p, pi) => {
       const vis = pinLabelVisible(page, dev, pi);
       if (!vis) return;
-      const name = vis.name, abs = vis.abs;
-      const rotated = (dev.rot || 0) % 360 !== 0;
-      const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
-      const tx = abs.x + 1 * fr, ty = rotated ? abs.y - 1.6 * fr : abs.y + (isTop ? 3.4 : -1.6) * fr;
+      const name = vis.name;
+      const pos = pinLabelPos(page, dev, pi);      // 位置は検図・DXF と同じ探索結果
+      if (!pos) return;
+      const tx = pos.x, ty = pos.y;
       out += `<text x="${tx}" y="${ty}" font-size="${svgFontSizeFor(name, TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
