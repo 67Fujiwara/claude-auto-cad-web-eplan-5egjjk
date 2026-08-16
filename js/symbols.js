@@ -23,9 +23,9 @@ const SYM_CATS = {
 const G_NO = `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/>`;
 const G_NC = `<path d="M0,0 V7 M0,7 H-5 M0,13 L-4.8,3.4 M0,20 V13"/>`;
 // 押しボタン操作部 (E形キャップ + 破線リンク)
-const G_PB = `<path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13" /><path d="M-11,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`;
+const G_PB = `<path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13" /><path d="M-11,10 H-1.8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`;
 // キノコ頭 (非常停止)
-const G_MUSH = `<path d="M-13,4.5 A6.5,6.5 0 0 0 -13,15.5"/><path d="M-13,4.5 V15.5"/><path d="M-13,10 H-11"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><path d="M-8.5,10 L-7,12.5 L-5.5,10" />`;
+const G_MUSH = `<path d="M-13,4.5 A6.5,6.5 0 0 0 -13,15.5"/><path d="M-13,4.5 V15.5"/><path d="M-13,10 H-11"/><path d="M-11,10 H-1.8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/><path d="M-8.5,10 L-7,12.5 L-5.5,10" />`;
 // 接触器主接点1極 (固定接点に接触器機能の小円弧)
 const G_NO_CONT = G_NO + `<path d="M-1.8,7 A1.8,1.8 0 0 0 1.8,7"/>`;
 // 遮断器1極 (接点 + ×)
@@ -58,12 +58,12 @@ const SYMBOLS = [
     id: "sel_sw", cat: "input", letter: "S", name: "セレクタスイッチ", nameEn: "Selector switch",
     desc: "回転式・オルタネイト (JIS C 0617 手動操作・回転)", typ: "XB4-BD21", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-18,-2, 21, 24],
-    body: G_NO + `<path d="M-15,7 L-11,10 L-15,13"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NO + `<path d="M-15,7 L-11,10 L-15,13"/><path d="M-11,10 H-1.8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ", nameEn: "Limit switch",
     desc: "位置スイッチ・メーク接点", jis: "07-08-01", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
-    sim: "contact_no", momentary: false, bounds: [-12,-2, 14, 24],
+    sim: "contact_no", momentary: false, bounds: [-11.6,-2, 13.6, 24],
     // 07-08-01: メーク接点 + 可動接点先端の直角三角形 (位置スイッチ)
     body: G_NO + `<path d="M-4.8,5 L-9.6,5 L-9.6,9.8 Z"/>`,
   },
@@ -83,19 +83,19 @@ const SYMBOLS = [
     id: "press_sw", cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
     desc: "設定圧で動作・a接点", typ: "SNS-C102X", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-18,-2, 21, 24],
-    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/><path d="M-11.6,9.9 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/><path d="M-11.6,10 H-1.8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "float_sw", cat: "input", letter: "B", name: "フロートスイッチ", nameEn: "Float switch",
     desc: "液面レベル検出", typ: "", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NO + `<circle cx="-13" cy="13.5" r="3"/><path d="M-13,10.5 V10 M-13,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NO + `<circle cx="-13" cy="13.5" r="3"/><path d="M-13,10.5 V10 M-13,10 H-1.8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "thermo", cat: "input", letter: "B", name: "サーモスタット", nameEn: "Thermostat",
     desc: "温度スイッチ・b接点", typ: "US-622", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
     sim: "contact_nc", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NC + `<text x="-13" y="12.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-10.2,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NC + `<text x="-13" y="12.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-10.2,10 H-1.5" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
 
   /* ══════════ ロジック機器 ══════════ */
@@ -114,13 +114,13 @@ const SYMBOLS = [
   {
     id: "timer_on", cat: "logic", letter: "K", name: "タイマ (オンディレイ)", nameEn: "On-delay timer",
     desc: "励磁後 t 秒で動作", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
-    sim: "coil", bounds: [-8,0, 21, 20], mirror: true, timer: "on", maxContacts: 2,
+    sim: "coil", bounds: [-8,0, 22.5, 20], mirror: true, timer: "on", maxContacts: 2,
     body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,4.2 A3,3 0 0 1 3,4.2"/><text x="7" y="12.6" font-size="3.5" fill="currentColor" stroke="none" font-family="monospace">TON</text>`,
   },
   {
     id: "timer_off", cat: "logic", letter: "K", name: "タイマ (オフディレイ)", nameEn: "Off-delay timer",
     desc: "消磁後 t 秒で復帰", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
-    sim: "coil", bounds: [-8,0, 21, 20], mirror: true, timer: "off", maxContacts: 2,
+    sim: "coil", bounds: [-8,0, 22.5, 20], mirror: true, timer: "off", maxContacts: 2,
     body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,1.6 A3,3 0 0 0 3,1.6"/><text x="7" y="12.6" font-size="3.5" fill="currentColor" stroke="none" font-family="monospace">TOF</text>`,
   },
   {
@@ -238,26 +238,26 @@ const SYMBOLS = [
     desc: "モールドケース遮断器 3極", typ: "NF63-CV 3P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "breaker3", bounds: [-8,-2, 31, 24],
-    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><g transform="translate(20,0)">${G_CB}</g><path d="M-3,9 L17,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><g transform="translate(20,0)">${G_CB}</g><path d="M-2.4,9 L17.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "ol3", cat: "power", letter: "F", name: "サーマルリレー 3極", nameEn: "Thermal overload 3P",
     desc: "モータ過負荷保護", typ: "TH-T18 5A", mirror: true, maxContacts: 2,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
-    sim: "passthru3", bounds: [-6,0, 29, 20],
+    sim: "passthru3", bounds: [-7,-2, 34, 24],
     body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><g transform="translate(20,0)">${G_OL}</g><rect x="-5" y="5" width="30" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "ol_nc", cat: "power", letter: "F", name: "サーマル接点 (95-96)", nameEn: "Thermal OL contact NC",
     desc: "過負荷時に開くb接点", linked: true, pins: [{x:0,y:0,n:"95"},{x:0,y:20,n:"96"}],
     sim: "contact_nc", bounds: [-12,-2, 15, 24],
-    body: G_NC + `<path d="M-10,7 H-7 V13 H-10" transform="translate(0,0)"/><path d="M-10.2,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NC + `<path d="M-10,7 H-7 V13 H-10" transform="translate(0,0)"/><path d="M-10.2,10 H-1.5" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "ol_no", cat: "power", letter: "F", name: "サーマル接点 (97-98)", nameEn: "Thermal OL contact NO",
     desc: "過負荷時に閉じるa接点 (警報用)", linked: true, pins: [{x:0,y:0,n:"97"},{x:0,y:20,n:"98"}],
     sim: "contact_no", bounds: [-12,-2, 15, 24],
-    body: G_NO + `<path d="M-10,7 H-7 V13 H-10"/><path d="M-10.2,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NO + `<path d="M-10,7 H-7 V13 H-10"/><path d="M-10.2,10 H-1.5" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "fuse", cat: "power", letter: "F", name: "ヒューズ", nameEn: "Fuse",
@@ -291,34 +291,35 @@ const SYMBOLS = [
     desc: "モールドケース遮断器 2極 (単相用)", typ: "NF32-SV 2P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "breaker2", bounds: [-8,-2, 21, 24],
-    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><path d="M-2.4,9 L7.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "main_cont2", cat: "output", letter: "Q", name: "主接点 (2極)", nameEn: "Main contacts 2P",
     desc: "電磁接触器の主接点 (単相用)", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "contact2_no", bounds: [-8,-2, 21, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><path d="M-2.4,9 L7.6,9" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "ol2", cat: "power", letter: "F", name: "サーマルリレー 2極", nameEn: "Thermal overload 2P",
     desc: "モータ過負荷保護 (単相用)", typ: "TH-T18 3.6A", mirror: true, maxContacts: 2,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
-    sim: "passthru2", bounds: [-6,0, 19, 20],
+    sim: "passthru2", bounds: [-7,-2, 24, 24],
     body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><rect x="-5" y="5" width="20" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "trafo", cat: "power", letter: "T", name: "変圧器 (シールド付)", nameEn: "Shielded transformer",
     desc: "制御トランス 2巻線+静電遮蔽", jis: "06-10-02", typ: "PT-100E", horizontalPins: true,
-    pins: [{x:-10,y:0,n:"1"},{x:10,y:0,n:"2"},{x:-10,y:40,n:"3"},{x:10,y:40,n:"4"}],
-    sim: "trafo", bounds: [-15,0, 30, 40],
+    pins: [{x:-10,y:0,n:"1"},{x:10,y:0,n:"2"},{x:-10,y:40,n:"3"},{x:10,y:40,n:"4"},{x:-20,y:20,n:"S"}],
+    sim: "trafo", bounds: [-22,0, 37, 40],
     body: `<path d="M-10,0 V16 M10,0 V16 M-10,40 V24 M10,24 V40"/>` +
       // 一次巻線: 4コブ (凸側を遮蔽側へ向ける)
       `<path d="M-10,16 A2.5,2.5 0 0 0 -5,16 A2.5,2.5 0 0 0 0,16 A2.5,2.5 0 0 0 5,16 A2.5,2.5 0 0 0 10,16"/>` +
       // 二次巻線: 4コブ
       `<path d="M-10,24 A2.5,2.5 0 0 1 -5,24 A2.5,2.5 0 0 1 0,24 A2.5,2.5 0 0 1 5,24 A2.5,2.5 0 0 1 10,24"/>` +
       // 静電遮蔽 (破線) — 06-10-02 は遮蔽のみを描く
-      `<path d="M-12.75,20 H12.75" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+      `<path d="M-12.75,20 H12.75" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>` +
+      `<path d="M-20,20 H-12.75"/>`,   // 遮蔽の接地引出し (端子 S)
   },
   {
     id: "earth", cat: "power", letter: "E", name: "接地 (一般)", nameEn: "Earth",
@@ -370,22 +371,36 @@ function scaleSymbolGeom(body, f) {
   let out = body;
   if (f !== 1) {
     out = out
-      .replace(/font-size="([\d.]+)"/g, (m, v) => `font-size="${Math.max(parseFloat(v), 2.5 * f)}"`)
+      .replace(/font-size="([\d.]+)"/g, (m, v) => `font-size="${Math.max(parseFloat(v) * f, 2.5)}"`)
       .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${parseFloat(v) * f}"`);
   }
-  // 破線は「線素で始まり線素で終わる」(JIS Z 8312) ため、短い連結線では
-  // パターンを縮めて必ず 2 線素以上が入るようにする
-  return out.replace(/<path([^>]*?)stroke-dasharray="([^"]+)"([^>]*?)\/>/g, (tag, a, dash, b) => {
-    const d = (/ d="([^"]+)"/.exec(a + b) || [])[1];
-    const len = d ? pathLengthMM(d) : 0;
+  /* 破線は「線素で始まり線素で終わる」(JIS Z 8312)。線素:すき間 = 4:1 を保ったまま
+     線の実長に合わせて周期を伸縮する。path / rect / circle に対応。 */
+  return out.replace(/<(path|rect|circle)([^>]*?)stroke-dasharray="([^"]+)"([^>]*?)\/>/g, (tag, el, a, dash, b) => {
+    const attrs = a + b;
+    const len = dashTargetLength(el, attrs);
     const base = dash.trim().split(/[\s,]+/).map(n => parseFloat(n) * f);
-    let [e, g] = [base[0] || 3 * f, base[1] || 0.75 * f];
-    if (len > 0 && e * 2 + g > len) {          // 2線素+すき間が入らない場合は縮める
-      e = Math.max(0.4, (len - g) / 2);
-      if (e * 2 + g > len) g = Math.max(0.2, len - e * 2);
+    let e = base[0] || 3 * f, g = base[1] || 0.75 * f;
+    if (len > 0) {
+      const per = e + g;
+      const n = Math.max(1, Math.round((len - e) / per));
+      const k = len / (n * per + e);
+      e *= k; g *= k;                       // 比を保ったまま端数をゼロにする
     }
-    return `<path${a}stroke-dasharray="${+e.toFixed(3)} ${+g.toFixed(3)}"${b}/>`;
+    return `<${el}${a}stroke-dasharray="${+e.toFixed(3)} ${+g.toFixed(3)}"${b}/>`;
   });
+}
+
+/** 破線を掛ける図形の実長 (mm)。path=折線長 / rect=周長 / circle=円周 */
+function dashTargetLength(el, attrs) {
+  const num = name => {
+    const m = new RegExp(name + '="(-?[\\d.]+)"').exec(attrs);
+    return m ? parseFloat(m[1]) : 0;
+  };
+  if (el === "rect") return 2 * (num("width") + num("height"));
+  if (el === "circle") return 2 * Math.PI * num("r");
+  const d = (/ d="([^"]+)"/.exec(attrs) || [])[1];
+  return d ? pathLengthMM(d) : 0;
 }
 
 /** 直線のみで構成された path の長さ (mm)。M/L/H/V に対応 */
@@ -408,6 +423,12 @@ function symThumbSVG(sym, size = 46) {
   const [bx, by, bw, bh] = sym.bounds;
   const pad = 3;
   const vb = `${bx - pad} ${by - pad} ${bw + pad * 2} ${bh + pad * 2}`;
-  const thumb = { ...sym, body: scaleSymbolGeom(sym.body, 1.1 / 0.5) };   // 連結破線 (0.25mm) も見えるように
-  return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + pad * 2) / (bw + pad * 2)}" style="max-height:100%">${symBodySVG(thumb, { strokeWidth: 1.1, textScale: 1 })}</svg>`;
+  // 個別指定の線幅・破線もサムネイル倍率で拡大する (連結破線が消えないように)。
+  // 文字はそのままにして、はみ出しを防ぐ。
+  const k = 1.1 / 0.5;
+  const body = sym.body
+    .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${(parseFloat(v) * k).toFixed(3)}"`)
+    .replace(/stroke-dasharray="([\d. ]+)"/g, (m, v) => `stroke-dasharray="${v.trim().split(/\s+/).map(n => (parseFloat(n) * k).toFixed(3)).join(" ")}"`);
+  return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + pad * 2) / (bw + pad * 2)}" style="max-height:100%">` +
+    `<g fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
 }
