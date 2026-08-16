@@ -107,7 +107,7 @@ function sheetSVG(page, opts = {}) {
     stroke="${INK}" stroke-width="${cmw}" fill="none"/>`;
   // 格子参照: 列 1,2,3… / 行 A,B,C… (I・O は使わない)
   const cw = (w - ml - m) / cols, rh = (h - 2 * m) / rows;
-  const fs = TEXT_H.normal * fr, tick = LINE_W.thin * fr, zw = 5 * fr;
+  const fs = TEXT_H.normal * fr, tick = 0.35 * fr, zw = 5 * fr;
   for (let i = 0; i < cols; i++) {
     const cx = ml + cw * i + cw / 2;
     out += `<text x="${cx}" y="${m - 1.4 * fr}" font-size="${fs}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${i + 1}</text>`;
@@ -268,14 +268,14 @@ function wiresSVG(page, opts = {}) {
     if (!print) out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="${4 * fr}" fill="none" data-id="${w.id}" class="wire-hit"/>`;
     // 配線番号 (numShow=false のワイヤはネット内の代表ワイヤに表示を譲る)
     if (w.num && w.numShow !== false && cond) {
-      const [mx, my, horiz] = wireLabelPos(w);
+      const [mx, my, horiz] = wireLabelPos(w, page);
       // 縦区間は配線から法線方向 (左) にオフセットして重なりを防ぐ
       const lx = horiz ? mx : mx - 0.6 * fr, ly = my;
       out += `<text x="${lx}" y="${ly}" font-size="${TEXT_H.small * fr}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec) {
-      const [mx, my, horiz] = wireLabelPos(w);
+      const [mx, my, horiz] = wireLabelPos(w, page);
       const sx = horiz ? mx : mx + 3.4 * fr, sy = horiz ? my + 4.6 * fr : my;
       out += `<text x="${sx}" y="${sy}" font-size="${TEXT_H.small * fr}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
@@ -285,18 +285,6 @@ function wiresSVG(page, opts = {}) {
     out += `<circle cx="${x}" cy="${y}" r="${LINE_W.thick * 1.5 * fr}" fill="${INK}"/>`;
   });
   return out;
-}
-function wireLabelPos(w) {
-  // 最長区間の中点にラベル
-  let best = 0, bi = 0;
-  for (let i = 0; i < w.pts.length - 1; i++) {
-    const len = Math.abs(w.pts[i + 1][0] - w.pts[i][0]) + Math.abs(w.pts[i + 1][1] - w.pts[i][1]);
-    if (len > best) { best = len; bi = i; }
-  }
-  const a = w.pts[bi], b = w.pts[bi + 1];
-  const horiz = Math.abs(b[1] - a[1]) < 0.01;
-  const f = sheetScale();
-  return [(a[0] + b[0]) / 2 + (horiz ? 0 : -1.8 * f), (a[1] + b[1]) / 2 - 1.4 * f, horiz];
 }
 
 /* ── デバイス ── */
@@ -317,27 +305,23 @@ function devicesSVG(page, opts = {}) {
       if (st.color) color = st.color;
       extra = st.extra || "";
     }
-    out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})" data-id="${dev.id}" class="device" style="color:${color}">`;
+    out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0}) scale(${fr})" data-id="${dev.id}" class="device" style="color:${color}">`;
     if (selected || hovered) {
       const [bx, by, bw, bh] = sym.bounds;
-      out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${(selected ? 0.5 : 0.3) * fr}" stroke-dasharray="${selected ? "none" : `${1.5 * fr} ${1.2 * fr}`}" rx="${fr}"/>`;
+      out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${selected ? 0.5 : 0.3}" stroke-dasharray="${selected ? "none" : "1.5 1.2"}" rx="1"/>`;
     }
     out += extra;
-    // シンボルの線は太線 0.5mm (SYM_STROKE を用紙上 0.5mm に正規化)
-    out += symBodySVG(sym, { strokeWidth: LINE_W.thick * fr, textScale: fr });
+    // シンボルの線は太線 0.5mm (グループの scale で用紙上一定になる)
+    out += symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 });
     out += `</g>`;
     // 端子番号 (13/14, A1/A2, X1/X2 …) — EPLAN同様ピン脇に表示。
     // 連動接点は同一コイル内の順位で 13/14 → 23/24 と自動採番。
     // 隣接ワイヤの線番と同名 (主回路の U1 等) なら二重表示を抑制。
     // 回転グループの外で描くため、機器を回してもピン番号は水平を保つ。
     sym.pins.forEach((p, pi) => {
-      if (!p.n || dev.sym === "terminal") return;
-      const name = effectivePinName(dev, pi);
-      if (!name) return;
-      const abs = pinAbs(dev, p);
-      const dupWire = page.wires.some(wr => wr.num === name &&
-        wr.pts.some(pt => Math.abs(pt[0] - abs.x) < .01 && Math.abs(pt[1] - abs.y) < .01));
-      if (dupWire) return;
+      const vis = pinLabelVisible(page, dev, pi);
+      if (!vis) return;
+      const name = vis.name, abs = vis.abs;
       const rotated = (dev.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
       const tx = abs.x + 1 * fr, ty = rotated ? abs.y - 1.6 * fr : abs.y + (isTop ? 3.4 : -1.6) * fr;
@@ -414,7 +398,7 @@ function mirrorSVG(coilDev) {
   const rowH = 4.2 * mfr;
   const MAXROWS = 4;
   let out = `<g font-family="monospace">`;
-  out += `<path d="M${coilDev.x + 2.5 * mfr},${coilDev.y + 21.5 * mfr} L${x},${y0 - 2.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr).join(" ")}"/>`;
+  out += `<path d="M${coilDev.x},${coilDev.y + 20 * mfr} L${x},${y0 - 1.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr).join(" ")}"/>`;
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = SYMBOLS_BY_ID[c.sym];
@@ -495,7 +479,7 @@ function overlaySVG(page) {
   if (Editor.ghost) {
     const g = Editor.ghost;
     const sym = SYMBOLS_BY_ID[g.symId];
-    out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick * sheetScale(), textScale: sheetScale() })}</g>`;
+    out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0}) scale(${sheetScale()})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 })}</g>`;
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
   // ラバーバンド (右→左ドラッグは交差選択: 緑破線)

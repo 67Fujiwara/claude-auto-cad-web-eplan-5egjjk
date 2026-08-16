@@ -8,7 +8,9 @@
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
-const DXF_LAYERS = ["FRAME", "WIRE", "AUXLINE", "SYMBOL", "TEXT", "WIRENUM", "PIN"];
+const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "TEXT", "WIRENUM", "PIN"];
+/* R12 は線幅を持たないため、太さの区分はレイヤと色 (ペン) で伝える。
+   FRAME=輪郭 0.7 / FRAME_THIN=区分線・仕切り 0.25 / WIRE=0.5 / AUXLINE=0.25 */
 
 /* 線種テーブル (R12)。作図線を AutoCAD 側でも破線・一点鎖線として開くため */
 const DXF_LTYPES = [
@@ -109,7 +111,7 @@ function dxfSymPrimitives(sym) {
   const key = sym.id + "@" + sheetScale();
   if (__dxfPrimCache.has(key)) return __dxfPrimCache.get(key);
   const prims = [];
-  const src = scaleSymbolGeom(sym.body, sheetScale());
+  const src = scaleSymbolGeom(sym.body, 1);
   // <g transform="translate(a,b)"> の入れ子を追跡
   const stack = [{ tx: 0, ty: 0 }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
@@ -215,8 +217,8 @@ function dxfText(x, y, size, text, layer, anchor = "start", angle = 0) {
 /** デバイス座標変換 (回転 + 平行移動) */
 function dxfDevXform(dev) {
   const r = (dev.rot || 0) * Math.PI / 180;
-  const c = Math.cos(r), s = Math.sin(r);
-  return (x, y) => [dev.x + x * c - y * s, dev.y + x * s + y * c];
+  const c = Math.cos(r), s = Math.sin(r), k = sheetScale();   // 図記号は尺度倍
+  return (x, y) => [dev.x + (x * k) * c - (y * k) * s, dev.y + (x * k) * s + (y * k) * c];
 }
 
 /** 投影法の記号 (画面の projSymbolSVG と同一寸法) */
@@ -226,12 +228,12 @@ function dxfProjSymbol(x, y, u, proj) {
   const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
   const bx = x + (first ? 11 * u : 3.4 * u), sx = x + (first ? 3.4 * u : 11 * u);
   let out = "";
-  out += dxfPoly([[bx - big * 1.7, cy - big], [bx + big * 1.7, cy - smallR]], "FRAME");
-  out += dxfPoly([[bx - big * 1.7, cy + big], [bx + big * 1.7, cy + smallR]], "FRAME");
-  out += dxfLine(bx - big * 1.7, cy - big, bx - big * 1.7, cy + big, "FRAME");
-  out += dxfLine(bx + big * 1.7, cy - smallR, bx + big * 1.7, cy + smallR, "FRAME");
-  out += dxfCircle(sx, cy, big, "FRAME");
-  out += dxfCircle(sx, cy, smallR, "FRAME");
+  out += dxfPoly([[bx - big * 1.7, cy - big], [bx + big * 1.7, cy - smallR]], "FRAME_THIN");
+  out += dxfPoly([[bx - big * 1.7, cy + big], [bx + big * 1.7, cy + smallR]], "FRAME_THIN");
+  out += dxfLine(bx - big * 1.7, cy - big, bx - big * 1.7, cy + big, "FRAME_THIN");
+  out += dxfLine(bx + big * 1.7, cy - smallR, bx + big * 1.7, cy + smallR, "FRAME_THIN");
+  out += dxfCircle(sx, cy, big, "FRAME_THIN");
+  out += dxfCircle(sx, cy, smallR, "FRAME_THIN");
   return out;
 }
 
@@ -243,17 +245,17 @@ function dxfMirrorTable(coilDev, S) {
   const wide = csym0.bounds[2] > 20;
   const x = wide ? coilDev.x - S(24) : coilDev.x + S(3);
   const y0 = coilDev.y + S(24), rowH = S(4.2), MAXROWS = 4;
-  let out = dxfPoly([[coilDev.x + S(2.5), coilDev.y + S(21.5)], [x, y0 - S(2.5)]], "WIRENUM", "DASHED");
+  let out = dxfPoly([[coilDev.x, coilDev.y + S(20)], [x, y0 - S(1.5)]], "WIRENUM", "DASHED");
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
     const csym = SYMBOLS_BY_ID[c.sym];
     // ミニ接点グリフ (b接点は横バーつき) — DXF だけ種別が分からなくならないように
     out += dxfPoly([[x, cy + S(1.5)], [x + S(2), cy + S(1.5)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
-    out += dxfPoly([[x + S(5.2), cy + S(1.5)], [x + S(6), cy + S(1.5)]], "WIRENUM");
+    out += dxfPoly([[x + S(4.6), cy + S(1.5)], [x + S(5.4), cy + S(1.5)]], "WIRENUM");
     if (csym.sim === "contact_nc") out += dxfPoly([[x + S(2), cy + S(-1.3)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
-    if (n0 && n1) out += dxfText(x + S(7), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
-    out += dxfText(x + S(15), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
+    if (n0 && n1) out += dxfText(x + S(8), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
+    out += dxfText(x + S(18), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
   });
   if (contacts.length > MAXROWS) {
     out += dxfText(x, y0 + MAXROWS * rowH + S(2), S(TEXT_H.small), `+${contacts.length - MAXROWS}`, "WIRENUM");
@@ -284,14 +286,14 @@ function pageToDXF(page) {
     const cx = ml + cw * i + cw / 2;
     ents += dxfText(cx, mg - S(1.4), fs, String(i + 1), "FRAME", "middle");
     ents += dxfText(cx, h - mg + S(4.2), fs, String(i + 1), "FRAME", "middle");
-    if (i) { ents += dxfLine(ml + cw * i, mg - zw, ml + cw * i, mg, "FRAME"); ents += dxfLine(ml + cw * i, h - mg, ml + cw * i, h - mg + zw, "FRAME"); }
+    if (i) { ents += dxfLine(ml + cw * i, mg - zw, ml + cw * i, mg, "FRAME_THIN"); ents += dxfLine(ml + cw * i, h - mg, ml + cw * i, h - mg + zw, "FRAME_THIN"); }
   }
   for (let i = 0; i < rows; i++) {
     const cy = mg + rh * i + rh / 2 + S(1.3);
     const ch = SHEET_ROW_LETTERS[i] || "Z";
     ents += dxfText(ml - S(2.8), cy, fs, ch, "FRAME", "middle");
     ents += dxfText(w - mg + S(2.8), cy, fs, ch, "FRAME", "middle");
-    if (i) { ents += dxfLine(ml - zw, mg + rh * i, ml, mg + rh * i, "FRAME"); ents += dxfLine(w - mg, mg + rh * i, w - mg + zw, mg + rh * i, "FRAME"); }
+    if (i) { ents += dxfLine(ml - zw, mg + rh * i, ml, mg + rh * i, "FRAME_THIN"); ents += dxfLine(w - mg, mg + rh * i, w - mg + zw, mg + rh * i, "FRAME_THIN"); }
   }
   // ── 表題欄 (割付・文字高・縮小規則は画面と同一。engine の TITLE_BLOCK を使う) ──
   const tb = titleBlockRect();
@@ -299,9 +301,9 @@ function pageToDXF(page) {
   const cwmm = TITLE_BLOCK.cols;
   const cxmm = [0, cwmm[0], cwmm[0] + cwmm[1], cwmm[0] + cwmm[1] + cwmm[2]];
   ents += dxfPoly([[tbX, tbY], [tbX + tbW, tbY], [tbX + tbW, tbY + tbH], [tbX, tbY + tbH], [tbX, tbY]], "FRAME");
-  ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH), tbX + tbW, tbY + S(TITLE_BLOCK.rowH), "FRAME");
-  ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH * 2), tbX + tbW, tbY + S(TITLE_BLOCK.rowH * 2), "FRAME");
-  cxmm.slice(1).forEach(o => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), tbY + tbH, "FRAME"));
+  ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH), tbX + tbW, tbY + S(TITLE_BLOCK.rowH), "FRAME_THIN");
+  ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH * 2), tbX + tbW, tbY + S(TITLE_BLOCK.rowH * 2), "FRAME_THIN");
+  cxmm.slice(1).forEach(o => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), tbY + tbH, "FRAME_THIN"));
   /* DXF はクリップできないため、欄に収まる文字高へ縮小し、それでも溢れる場合は
      末尾を「…」で切り詰めて隣の欄へはみ出させない (画面と同じ判定を使う) */
   const tbCell = (ci, ry, label, value) => {
@@ -321,7 +323,7 @@ function pageToDXF(page) {
   tbCell(2, R, "日付", meta.date || todayStr());
   tbCell(3, R, "尺度", meta.scale || "1:1");
   tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
-  tbCell(1, R * 2, "用紙 / 投影法", `${meta.paper} ${pw}x${ph} / ${meta.proj || "第三角法"}`);
+  tbCell(1, R * 2, "用紙 / 投影法", `${meta.paper} ${pw}\u00d7${ph} / ${meta.proj || "第三角法"}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
   ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
@@ -337,8 +339,8 @@ function pageToDXF(page) {
     cols.forEach(c => xs.push(xs[xs.length - 1] + c));
     ents += dxfPoly([[rev.x, rev.y], [rev.x + rev.w, rev.y], [rev.x + rev.w, rev.y + rev.h],
       [rev.x, rev.y + rev.h], [rev.x, rev.y]], "FRAME");
-    for (let i = 1; i <= rows.length; i++) ents += dxfLine(rev.x, rev.y + rh * i, rev.x + rev.w, rev.y + rh * i, "FRAME");
-    xs.slice(1, -1).forEach(x => ents += dxfLine(x, rev.y, x, rev.y + rev.h, "FRAME"));
+    for (let i = 1; i <= rows.length; i++) ents += dxfLine(rev.x, rev.y + rh * i, rev.x + rev.w, rev.y + rh * i, "FRAME_THIN");
+    xs.slice(1, -1).forEach(x => ents += dxfLine(x, rev.y, x, rev.y + rev.h, "FRAME_THIN"));
     ["改訂", "日付", "内容", "承認"].forEach((t, i) => {
       ents += dxfText(xs[i] + S(1.6), rev.y + rh - S(1.6), S(TEXT_H.small), t, "FRAME");
     });
@@ -369,11 +371,11 @@ function pageToDXF(page) {
     }
     ents += dxfPoly(wr.pts, "WIRE", lt);
     if (wr.num && wr.numShow !== false) {
-      const [mx, my, horiz] = wireLabelPos(wr);
+      const [mx, my, horiz] = wireLabelPos(wr, page);
       ents += dxfText(horiz ? mx : mx - S(0.6), my, S(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec) {
-      const [mx, my, horiz] = wireLabelPos(wr);
+      const [mx, my, horiz] = wireLabelPos(wr, page);
       ents += dxfText(horiz ? mx : mx + S(3.4), horiz ? my + S(4.6) : my, S(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
@@ -392,15 +394,14 @@ function pageToDXF(page) {
         ents += dxfCircle(cx, cy, pr.r, "SYMBOL");
       } else if (pr.type === "text") {
         const [tx, ty] = xf(pr.x, pr.y);
-        ents += dxfText(tx, ty, pr.size, pr.text, "SYMBOL", pr.anchor || "middle");
+        ents += dxfText(tx, ty, pr.size * sheetScale(), pr.text, "SYMBOL", pr.anchor || "middle");
       }
     });
     // ピン番号 (画面と同じく回転後の絶対座標に水平で置く)
     sym.pins.forEach((p, pi) => {
-      if (!p.n || dev.sym === "terminal") return;
-      const name = effectivePinName(dev, pi);
-      if (!name) return;
-      const abs = pinAbs(dev, p);
+      const vis = pinLabelVisible(page, dev, pi);
+      if (!vis) return;
+      const name = vis.name, abs = vis.abs;
       const rotated = (dev.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
       const tx = abs.x + S(1), ty = rotated ? abs.y - S(1.6) : abs.y + (isTop ? S(3.4) : S(-1.6));
@@ -431,7 +432,7 @@ function pageToDXF(page) {
   // ── DXF 全体 (R12) ──
   /* R12 は線幅を持たないため、太さの区分は色番号 (ペン) で伝える。
      7=太線 0.5mm / 6=中間 / 8=細線 0.25mm / 5=輪郭 0.7mm */
-  const LAYER_COLOR = { FRAME: 5, WIRE: 7, AUXLINE: 8, SYMBOL: 7, TEXT: 7, WIRENUM: 6, PIN: 8 };
+  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, TEXT: 7, WIRENUM: 6, PIN: 8 };
   const layers = DXF_LAYERS.map(l =>
     dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, LAYER_COLOR[l] || 7], [6, "CONTINUOUS"]])).join("");
   return [
@@ -444,7 +445,7 @@ function pageToDXF(page) {
     "0", "SECTION", "2", "TABLES",
     "0", "TABLE", "2", "STYLE", "70", "1",
     "0", "STYLE", "2", "JP", "70", "0", "40", "0.0", "41", "1.0", "50", "0.0",
-    "71", "0", "42", "2.5", "3", "msgothic.ttc", "4", "@msgothic",
+    "71", "0", "42", "2.5", "3", "msgothic.ttc", "4", "",
     "0", "ENDTAB",
     "0", "TABLE", "2", "LTYPE", "70", String(DXF_LTYPES.length),
   ].join("\n") + "\n" + dxfLtypeTable() +

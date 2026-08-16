@@ -66,6 +66,18 @@ function applySheet() {
   }
   return SHEET;
 }
+/** すべての図形座標を k 倍する (尺度変更で図面の見た目を保つため) */
+function scaleProjectGeometry(k) {
+  if (!(k > 0) || k === 1) return;
+  const r = v => Math.round(v * k * 100) / 100;
+  App.project.pages.forEach(pg => {
+    pg.devices.forEach(d => { d.x = r(d.x); d.y = r(d.y); });
+    pg.wires.forEach(w => { w.pts = w.pts.map(p => [r(p[0]), r(p[1])]); });
+    pg.texts.forEach(t => { t.x = r(t.x); t.y = r(t.y); });
+    pageZones(pg).forEach(z => { z.x = r(z.x); z.y = r(z.y); z.w = r(z.w); z.h = r(z.h); });
+  });
+}
+
 /** 尺度倍率。線幅・文字高はこれを掛けて用紙上で一定の大きさに見せる */
 function sheetScale() { return scaleFactor(projectMeta().scale); }
 
@@ -99,6 +111,62 @@ function titleBlocksRects() {
   if (rev) out.push(Object.assign(rev, { kind: "rev" }));
   return out;
 }
+/** 線番ラベルの位置。最長区間の中点を基本とし、機器の図記号に重なる場合は
+    同じ区間内で空いている位置へずらす (画面・DXF・検図で共有)。 */
+function wireLabelPos(w, page) {
+  const f = sheetScale();
+  const segs = [];
+  for (let i = 0; i < w.pts.length - 1; i++) {
+    const a = w.pts[i], b = w.pts[i + 1];
+    segs.push({ a, b, len: Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]) });
+  }
+  segs.sort((x, y) => y.len - x.len);
+  const devs = page ? page.devices : [];
+  const notes = page ? page.texts : [];
+  const hit = (bx, db) => bx.x < db.x + db.w && bx.x + bx.w > db.x && bx.y < db.y + db.h && bx.y + bx.h > db.y;
+  const boxAt = (pt, horiz) => {
+    const h = TEXT_H.small * f, wd = textWidthMM(String(w.num || ""), h);
+    return horiz ? { x: pt[0] - wd / 2, y: pt[1] - 1.4 * f - h, w: wd, h }
+                 : { x: pt[0] - 1.8 * f - h, y: pt[1] - wd / 2, w: h, h: wd };
+  };
+  const free = (pt, horiz) => {
+    const bx = boxAt(pt, horiz);
+    return !devs.some(d => hit(bx, insetRect(devBounds(d), 1.5 * f))) && !notes.some(t => hit(bx, textBounds(t)));
+  };
+  // 長い区間から順に、機器・注記に当たらない位置を探す
+  for (const sg of segs) {
+    const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
+    const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
+    for (const t of [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85]) {
+      const pt = at(t);
+      if (free(pt, horiz)) return [pt[0] + (horiz ? 0 : -1.8 * f), pt[1] - 1.4 * f, horiz];
+    }
+  }
+  // どの区間にも空きが無い場合は、配線から法線方向へ離して逃がす
+  const sg = segs[0] || { a: w.pts[0], b: w.pts[w.pts.length - 1] };
+  const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
+  const pt = [(sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2];
+  for (const off of [1.8, 4.5, 7, -4.5, -7]) {
+    const cand = horiz ? [pt[0], pt[1] - (off - 1.8) * f] : [pt[0] - off * f, pt[1]];
+    if (free(cand, horiz)) return [cand[0], cand[1] - 1.4 * f, horiz];
+  }
+  return [pt[0] + (horiz ? 0 : -1.8 * f), pt[1] - 1.4 * f, horiz];
+}
+
+/** ピン番号を表示するか (隣接配線の線番と同名なら二重表示を避ける)。
+    画面・DXF で同じ判定を使う。 */
+function pinLabelVisible(page, dev, pinIdx) {
+  const sym = SYMBOLS_BY_ID[dev.sym];
+  const p = sym.pins[pinIdx];
+  if (!p || !p.n || dev.sym === "terminal") return null;
+  const name = effectivePinName(dev, pinIdx);
+  if (!name) return null;
+  const abs = pinAbs(dev, p);
+  const dup = page.wires.some(wr => wr.num === name &&
+    wr.pts.some(pt => Math.abs(pt[0] - abs.x) < .01 && Math.abs(pt[1] - abs.y) < .01));
+  return dup ? null : { name, abs, pin: p };
+}
+
 /** 機器ラベル (タグ・機能テキスト) の配置。左に置くと隣の機器へ被る場合は
     右側へ寄せる。画面描画と検図で同じ結果を使うためエンジンに置く。 */
 function deviceLabelBoxes(page, dev) {
@@ -135,6 +203,11 @@ function labelBox(o) {
   const x = o.anchor === "middle" ? o.x - o.w / 2 : o.anchor === "end" ? o.x - o.w : o.x;
   return { x, y: o.y - o.h, w: o.w, h: o.h };
 }
+/** 矩形を内側へ縮める (当たり判定の余白ぶんを外して実描画に近づける) */
+function insetRect(r, d) {
+  return { x: r.x + d, y: r.y + d, w: Math.max(0, r.w - d * 2), h: Math.max(0, r.h - d * 2) };
+}
+
 /** 面積比 ratio 以上で重なっているか */
 function rectsOverlap(a, b, ratio = 0) {
   const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
@@ -243,10 +316,13 @@ function pageZones(page) {
 function curPage() { return App.project.pages[App.pageIdx]; }
 
 /* ══════════════ デバイス ══════════════ */
+/* 図記号は用紙上で常に同じ大きさになるよう尺度倍で描く (回路図記号は実物では
+   ないため、線幅・文字と同じ扱いにする)。ピン位置・当たり判定も同じ倍率。 */
 function pinAbs(dev, pin) {
   const r = (dev.rot || 0) * Math.PI / 180;
-  const c = Math.cos(r), s = Math.sin(r);
-  return { x: dev.x + pin.x * c - pin.y * s, y: dev.y + pin.x * s + pin.y * c };
+  const c = Math.cos(r), s = Math.sin(r), k = sheetScale();
+  const px = pin.x * k, py = pin.y * k;
+  return { x: dev.x + px * c - py * s, y: dev.y + px * s + py * c };
 }
 function devPins(dev) {
   const sym = SYMBOLS_BY_ID[dev.sym];
@@ -256,7 +332,7 @@ function devBounds(dev) {
   const sym = SYMBOLS_BY_ID[dev.sym];
   const [bx, by, bw, bh] = sym.bounds;
   const corners = [[bx, by], [bx + bw, by], [bx, by + bh], [bx + bw, by + bh]]
-    .map(([x, y]) => pinAbs(dev, { x, y }));
+    .map(([x, y]) => pinAbs(dev, { x, y }));   // pinAbs が尺度倍を含む
   const xs = corners.map(p => p.x), ys = corners.map(p => p.y);
   return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
@@ -873,19 +949,56 @@ function runDRC() {
         }
       }
     });
-    // ラベル同士・ラベルと図記号の重なり (縮尺で図記号が小さくなる影響も検出)
+    // 用紙に出る文字要素どうし・文字と図記号の重なり (検図の要)
+    const f4 = sheetScale();
     const labels = [];
-    page.devices.forEach(dev => deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev })));
-    let overlapCount = 0;
-    for (let i = 0; i < labels.length && overlapCount < 5; i++) {
+    page.devices.forEach(dev => {
+      deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev, what: `${displayTag(dev) || "機器"} の文字` }));
+      // ピン番号 (描画と同じ位置で判定する)
+      const symD = SYMBOLS_BY_ID[dev.sym];
+      symD.pins.forEach((p, pi) => {
+        const vis = pinLabelVisible(page, dev, pi);
+        if (!vis) return;
+        const h = TEXT_H.small * f4, w2 = textWidthMM(vis.name, h);
+        const rotated = (dev.rot || 0) % 360 !== 0;
+        const isTop = !rotated && (p.y <= 0 || (symD.horizontalPins && p.y <= symD.bounds[1] + 2));
+        const ty = rotated ? vis.abs.y - 1.6 * f4 : vis.abs.y + (isTop ? 3.4 : -1.6) * f4;
+        labels.push({ x: vis.abs.x + 1 * f4, y: ty - h, w: w2, h, dev, what: `${displayTag(dev) || "機器"} の端子番号` });
+      });
+    });
+    // 線番・電線仕様・注記
+    condWires(page).forEach(w => {
+      if (!w.num || w.numShow === false) return;
+      const [mx, my, horiz] = wireLabelPos(w, page);
+      const h = TEXT_H.small * f4, w2 = textWidthMM(w.num, h);
+      labels.push(horiz ? { x: mx - w2 / 2, y: my - h, w: w2, h, wire: w, what: `線番 ${w.num}` }
+                        : { x: mx - h, y: my - w2 / 2, w: h, h: w2, wire: w, what: `線番 ${w.num}` });
+    });
+    page.texts.forEach(t => {
+      const b0 = textBounds(t);
+      labels.push({ ...b0, text: t, what: `注記「${t.text}」` });
+    });
+    /* 判定は絶対量で行う: 重なり幅 0.3mm 超 かつ 高さ方向が文字高の 40% 超 */
+    const realHit = (a, b2) => {
+      const ox = Math.min(a.x + a.w, b2.x + b2.w) - Math.max(a.x, b2.x);
+      const oy = Math.min(a.y + a.h, b2.y + b2.h) - Math.max(a.y, b2.y);
+      return ox > 0.3 * f4 && oy > Math.min(a.h, b2.h) * 0.4;
+    };
+    const sameOwner = (a, b2) => (a.dev && a.dev === b2.dev) || (a.wire && a.wire === b2.wire) || (a.text && a.text === b2.text);
+    let overlapCount = 0, overlapTotal = 0;
+    for (let i = 0; i < labels.length; i++) {
       const a = labels[i];
-      const other = labels.find((b2, j) => j !== i && b2.dev !== a.dev && rectsOverlap(a, b2, 0.3));
-      const onSym = other ? null : page.devices.find(d => d !== a.dev && rectsOverlap(a, devBounds(d), 0.3));
-      if (other || onSym) {
-        overlapCount++;
-        const target = other ? (displayTag(other.dev) || "機器") : (displayTag(onSym) || "機器");
-        issues.push({ sev: "warn", msg: `${displayTag(a.dev) || "機器"} の文字が ${target} と重なっています${sheetScale() !== 1 ? " (縮尺では図記号が小さくなります)" : ""}`, page: page.no, target: a.dev.id, loc: `${page.no}.${sheetCol(a.dev.x)}` });
-      }
+      const other = labels.find((b2, j) => j !== i && !sameOwner(a, b2) && realHit(a, b2));
+      const onSym = other ? null : page.devices.find(d => d !== a.dev && realHit(a, insetRect(devBounds(d), 1.5 * f4)));
+      if (!other && !onSym) continue;
+      overlapTotal++;
+      if (overlapCount >= 20) continue;
+      overlapCount++;
+      const target = other ? other.what : `${displayTag(onSym) || "機器"} の図記号`;
+      issues.push({ sev: "warn", msg: `${a.what} が ${target} と重なっています`, page: page.no, target: (a.dev || a.wire || a.text || {}).id || null, loc: `${page.no}.${sheetCol(a.x)}` });
+    }
+    if (overlapTotal > overlapCount) {
+      issues.push({ sev: "warn", msg: `文字の重なりは他に ${overlapTotal - overlapCount} 箇所あります`, page: page.no, target: null, loc: `${page.no}.-` });
     }
 
     // 縮小尺度では図記号だけが用紙上小さくなるため、回路図ページでは必ず知らせる

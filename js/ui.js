@@ -1048,19 +1048,24 @@ UI.sheetSetup = () => {
     // 表題欄の改訂記号は履歴の最新行に合わせる (管理図面の整合)
     const lastRev = [...meta.revs].reverse().find(r => r.rev);
     if (lastRev && meta.rev !== lastRev.rev) meta.rev = lastRev.rev;
-    // 改訂履歴欄は表題欄の上に伸びるため、回路と重なる場合は知らせる
-    const revHits = runDRC().filter(d => /改訂履歴欄/.test(d.msg)).length;
-    if (revHits) UI.toast(`⚠ 改訂履歴欄が回路と ${revHits} 箇所で重なっています (検図に表示)`, 5000);
+
+    const oldK = sheetScale();
     const paperChanged = paperChanging;
     meta.paper = q("#tbPaper").value;
     meta.scale = q("#tbScale").value;
     applySheet();
+    // 尺度が変わったら図形も同じ倍率で拡大縮小し、図面の見た目と接続を保つ
+    const newK = sheetScale();
+    if (newK !== oldK) scaleProjectGeometry(newK / oldK);
     const nameInput = document.getElementById("projectName");
     if (nameInput) nameInput.value = App.project.name;
     m.close();
     UI.refresh();
     if (paperChanged) { zoomFit(); UI.setMsg(`用紙 ${meta.paper} / 尺度 ${meta.scale} — 作図領域 ${SHEET.w}×${SHEET.h} mm に変更しました`); }
     else UI.setMsg("表題欄を更新しました");
+    // 図枠確定後に干渉を判定して知らせる
+    const revHits = runDRC().filter(d => /改訂履歴欄/.test(d.msg)).length;
+    if (revHits) UI.toast(`⚠ 改訂履歴欄が回路と ${revHits} 箇所で重なっています (検図に表示)`, 5000);
   });
 };
 function escAttr(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }

@@ -94,7 +94,7 @@ const SYMBOLS = [
     id: "thermo", cat: "input", letter: "B", name: "サーモスタット", nameEn: "Thermostat",
     desc: "温度スイッチ・b接点", typ: "US-622", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
     sim: "contact_nc", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NC + `<text x="-13" y="12.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-9,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NC + `<text x="-13" y="12.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-10.2,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
 
   /* ══════════ ロジック機器 ══════════ */
@@ -249,13 +249,13 @@ const SYMBOLS = [
     id: "ol_nc", cat: "power", letter: "F", name: "サーマル接点 (95-96)", nameEn: "Thermal OL contact NC",
     desc: "過負荷時に開くb接点", linked: true, pins: [{x:0,y:0,n:"95"},{x:0,y:20,n:"96"}],
     sim: "contact_nc", bounds: [-12,-2, 15, 24],
-    body: G_NC + `<path d="M-10,7 H-7 V13 H-10" transform="translate(0,0)"/><path d="M-7,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NC + `<path d="M-10,7 H-7 V13 H-10" transform="translate(0,0)"/><path d="M-10.2,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "ol_no", cat: "power", letter: "F", name: "サーマル接点 (97-98)", nameEn: "Thermal OL contact NO",
     desc: "過負荷時に閉じるa接点 (警報用)", linked: true, pins: [{x:0,y:0,n:"97"},{x:0,y:20,n:"98"}],
     sim: "contact_no", bounds: [-12,-2, 15, 24],
-    body: G_NO + `<path d="M-10,7 H-7 V13 H-10"/><path d="M-7,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    body: G_NO + `<path d="M-10,7 H-7 V13 H-10"/><path d="M-10.2,10 H-3" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "fuse", cat: "power", letter: "F", name: "ヒューズ", nameEn: "Fuse",
@@ -363,12 +363,40 @@ function symBodySVG(sym, opts = {}) {
 /** シンボル内の文字・線幅・破線を尺度に追従させる。
     文字は用紙上 2.5mm 以上 (JIS Z 8313)、線幅と破線要素は用紙上一定 (JIS Z 8312)。 */
 function scaleSymbolGeom(body, f) {
-  if (f === 1) return body;
-  return body
-    .replace(/font-size="([\d.]+)"/g, (m, v) => `font-size="${Math.max(parseFloat(v), 2.5 * f)}"`)
-    .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${parseFloat(v) * f}"`)
-    .replace(/stroke-dasharray="([^"]+)"/g, (m, v) =>
-      `stroke-dasharray="${v.trim().split(/[\s,]+/).map(n => parseFloat(n) * f).join(" ")}"`);
+  let out = body;
+  if (f !== 1) {
+    out = out
+      .replace(/font-size="([\d.]+)"/g, (m, v) => `font-size="${Math.max(parseFloat(v), 2.5 * f)}"`)
+      .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${parseFloat(v) * f}"`);
+  }
+  // 破線は「線素で始まり線素で終わる」(JIS Z 8312) ため、短い連結線では
+  // パターンを縮めて必ず 2 線素以上が入るようにする
+  return out.replace(/<path([^>]*?)stroke-dasharray="([^"]+)"([^>]*?)\/>/g, (tag, a, dash, b) => {
+    const d = (/ d="([^"]+)"/.exec(a + b) || [])[1];
+    const len = d ? pathLengthMM(d) : 0;
+    const base = dash.trim().split(/[\s,]+/).map(n => parseFloat(n) * f);
+    let [e, g] = [base[0] || 3 * f, base[1] || 0.75 * f];
+    if (len > 0 && e * 2 + g > len) {          // 2線素+すき間が入らない場合は縮める
+      e = Math.max(0.4, (len - g) / 2);
+      if (e * 2 + g > len) g = Math.max(0.2, len - e * 2);
+    }
+    return `<path${a}stroke-dasharray="${+e.toFixed(3)} ${+g.toFixed(3)}"${b}/>`;
+  });
+}
+
+/** 直線のみで構成された path の長さ (mm)。M/L/H/V に対応 */
+function pathLengthMM(d) {
+  const t = d.match(/[MLHVmlhvZz]|-?\d*\.?\d+/g) || [];
+  let i = 0, x = 0, y = 0, len = 0;
+  const num = () => parseFloat(t[i++]);
+  while (i < t.length) {
+    const c = t[i++];
+    if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; }
+    else if (c === "L" || c === "l") { const nx = num(), ny = num(); const ax = c === "L" ? nx : x + nx, ay = c === "L" ? ny : y + ny; len += Math.hypot(ax - x, ay - y); x = ax; y = ay; }
+    else if (c === "H" || c === "h") { const nx = num(); const ax = c === "H" ? nx : x + nx; len += Math.abs(ax - x); x = ax; }
+    else if (c === "V" || c === "v") { const ny = num(); const ay = c === "V" ? ny : y + ny; len += Math.abs(ay - y); y = ay; }
+  }
+  return len;
 }
 
 /** サムネイル用SVG (ライブラリパレット / プロパティ表示用) */
