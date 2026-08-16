@@ -69,11 +69,72 @@ function applySheet() {
 /** 尺度倍率。線幅・文字高はこれを掛けて用紙上で一定の大きさに見せる */
 function sheetScale() { return scaleFactor(projectMeta().scale); }
 
+/* 表題欄の割付 (用紙上 mm)。画面・DXF で必ず同じものを使う */
+const TITLE_BLOCK = { w: 160, h: 30, rowH: 10, cols: [52, 44, 34, 30] };
+const REV_TABLE = { rowH: 6, maxRows: 4, cols: [16, 26, 0, 22] }; // cols[2]=残り
+
 /** 表題欄の矩形 (作図領域座標)。図枠描画・DXF・DRC で共有する */
 function titleBlockRect() {
   const f = sheetScale();
-  const w = 160 * f, h = 30 * f;
+  const w = TITLE_BLOCK.w * f, h = TITLE_BLOCK.h * f;
   return { x: SHEET.w - SHEET.margin - w, y: SHEET.h - SHEET.margin - h, w, h };
+}
+/** 改訂履歴欄の矩形 (無ければ null)。表題欄の直上に置く */
+function revisionRect() {
+  const revs = revisionRows();
+  if (!revs.length) return null;
+  const f = sheetScale(), tb = titleBlockRect();
+  const h = REV_TABLE.rowH * f * (revs.length + 1);
+  return { x: tb.x, y: tb.y - h, w: tb.w, h };
+}
+/** 表題欄と改訂履歴欄の矩形 (検図・試算で共有) */
+function titleBlocksRects() {
+  const out = [Object.assign(titleBlockRect(), { kind: "title" })];
+  const rev = revisionRect();
+  if (rev) out.push(Object.assign(rev, { kind: "rev" }));
+  return out;
+}
+/** 注記テキストの概算 bbox */
+function textBounds(t) {
+  const h = (t.size || TEXT_H.normal) * sheetScale();
+  const w = textWidthMM(t.text || "", h);
+  const anchor = t.anchor || "middle";
+  const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;
+  return { x, y: t.y - h, w, h: h * 1.25 };
+}
+
+/** 表示する改訂行 (新しい方から最大 maxRows 行) */
+function revisionRows() {
+  const revs = (projectMeta().revs || []).filter(r => r && (r.rev || r.date || r.desc || r.appr));
+  return revs.slice(-REV_TABLE.maxRows);
+}
+
+/** 文字列の概算幅 (mm)。CJK は全角として数える */
+function textWidthMM(s, size, bold = false) {
+  let n = 0;
+  for (const ch of String(s)) {
+    const c = ch.codePointAt(0);
+    const wide = (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF) ||
+      (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) ||
+      (c >= 0xFE30 && c <= 0xFE6F) || (c >= 0xFF00 && c <= 0xFF60) ||
+      (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x20000 && c <= 0x3FFFD);
+    n += wide ? 1 : 0.58;
+  }
+  return n * size * (bold ? 1.05 : 1);
+}
+/** 欄幅に収まる文字高を求める (最小 2.5mm。それ以下は呼び出し側で切る) */
+function fitTextSize(value, cellW, startSize, bold = false) {
+  let size = startSize;
+  while (size > TEXT_H.small && textWidthMM(value, size, bold) > cellW) size -= 0.25;
+  return size;
+}
+/** 欄に収まらない文字列を末尾「…」で切り詰める (クリップできない DXF 用) */
+function truncateToWidth(value, cellW, size, bold = false) {
+  const s = String(value);
+  if (textWidthMM(s, size, bold) <= cellW) return s;
+  let out = s;
+  while (out.length > 1 && textWidthMM(out + "…", size, bold) > cellW) out = out.slice(0, -1);
+  return out + "…";
 }
 /** 線分 a-b が矩形 r と交差する (端点が内側の場合を含む) か。直交配線前提の簡易判定 */
 function segCrossesRect(a, b, r) {
@@ -732,16 +793,20 @@ function runDRC() {
       issues.push({ sev: "err", msg: `自動生成: ${msg}`, page: page.no, target: null, loc: `${page.no}.-` });
     });
 
-    // 図枠外へのはみ出し / 表題欄との重なり (用紙・尺度変更後の破綻を必ず可視化する)
-    const fr = frameRect(), tb = titleBlockRect();
+    // 図枠外へのはみ出し / 表題欄・改訂履歴欄との重なり (用紙・尺度変更後の破綻を必ず可視化する)
+    const fr = frameRect();
+    const blocks = titleBlocksRects();       // 表題欄 + 改訂履歴欄
+    const blockName = r => (r.kind === "rev" ? "改訂履歴欄" : "表題欄");
+    const outOfFrame = b => b.x < fr.x || b.y < fr.y || b.x + b.w > fr.x + fr.w || b.y + b.h > fr.y + fr.h;
     const overlaps = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
     page.devices.forEach(dev => {
       const b = devBounds(dev);
       const tag = displayTag(dev) || SYMBOLS_BY_ID[dev.sym].name;
-      if (b.x < fr.x || b.y < fr.y || b.x + b.w > fr.x + fr.w || b.y + b.h > fr.y + fr.h) {
+      if (outOfFrame(b)) {
         issues.push({ sev: "err", msg: `${tag} が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
-      } else if (overlaps(b, tb)) {
-        issues.push({ sev: "err", msg: `${tag} が表題欄に重なっています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
+      } else {
+        const hitR = blocks.find(r => overlaps(b, r));
+        if (hitR) issues.push({ sev: "err", msg: `${tag} が${blockName(hitR)}に重なっています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
       }
     });
     page.wires.forEach(w => {
@@ -751,11 +816,36 @@ function runDRC() {
         issues.push({ sev: "err", msg: `配線が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[0][0])}` });
         return;
       }
-      for (let i = 0; i < w.pts.length - 1; i++) {
-        if (segCrossesRect(w.pts[i], w.pts[i + 1], tb)) {
-          issues.push({ sev: "err", msg: `配線が表題欄に重なっています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[i][0])}` });
+      for (let i = 0; i < w.pts.length - 1 && i < 200; i++) {
+        const hitR = blocks.find(r => segCrossesRect(w.pts[i], w.pts[i + 1], r));
+        if (hitR) {
+          issues.push({ sev: "err", msg: `配線が${blockName(hitR)}に重なっています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[i][0])}` });
           break;
         }
+      }
+    });
+    // 注記テキスト・破線枠も同じ検査にかける
+    page.texts.forEach(t => {
+      // 文字幅は概算のため 0.5mm の余裕を見る (誤検出を避ける)
+      const b0 = textBounds(t);
+      const b = { x: b0.x + 0.5, y: b0.y + 0.5, w: Math.max(0, b0.w - 1), h: Math.max(0, b0.h - 1) };
+      if (outOfFrame(b)) {
+        issues.push({ sev: "err", msg: `注記「${t.text}」が図枠の外にはみ出しています`, page: page.no, target: t.id, loc: `${page.no}.${sheetCol(t.x)}` });
+      } else {
+        const hitR = blocks.find(r => overlaps(b, r));
+        if (hitR) issues.push({ sev: "err", msg: `注記「${t.text}」が${blockName(hitR)}に重なっています`, page: page.no, target: t.id, loc: `${page.no}.${sheetCol(t.x)}` });
+      }
+    });
+    pageZones(page).forEach(z => {
+      const b = { x: z.x, y: z.y, w: z.w, h: z.h };
+      if (outOfFrame(b)) {
+        issues.push({ sev: "err", msg: `破線枠${z.label ? ` (${z.label})` : ""} が図枠の外にはみ出しています`, page: page.no, target: z.id, loc: `${page.no}.${sheetCol(z.x)}` });
+      } else {
+        // 枠線が欄を横切る場合のみ指摘 (内側に欄を含むだけなら図として成立する)
+        const edges = [[[z.x, z.y], [z.x + z.w, z.y]], [[z.x + z.w, z.y], [z.x + z.w, z.y + z.h]],
+                       [[z.x + z.w, z.y + z.h], [z.x, z.y + z.h]], [[z.x, z.y + z.h], [z.x, z.y]]];
+        const hitR = blocks.find(r => edges.some(([a, b2]) => segCrossesRect(a, b2, r)));
+        if (hitR) issues.push({ sev: "err", msg: `破線枠${z.label ? ` (${z.label})` : ""} が${blockName(hitR)}に重なっています`, page: page.no, target: z.id, loc: `${page.no}.${sheetCol(z.x)}` });
       }
     });
 

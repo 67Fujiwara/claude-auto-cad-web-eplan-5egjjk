@@ -147,7 +147,7 @@ function aiGenerate(sel) {
       const s2 = addWire(page, [[L.psuX + 10, L.psuY - 10], [L.psuX + 10, L.psuY]]);
       if (s1) s1.stub = true;
       if (s2) s2.stub = true;
-      page.texts.push({ id: uid("t"), x: 21, y: 19, text: "L", size: 3.5 });
+      page.texts.push({ id: uid("t"), x: 24, y: 19, text: "L", size: 3.5 });
       page.texts.push({ id: uid("t"), x: L.psuX + 10, y: L.psuY - 13, text: "N", size: 3.5 });
       page.texts.push({ id: uid("t"), x: L.psuX + 13, y: 15, text: "AC100V", size: 3.5, anchor: "start" });
       // 24V 分岐保護を +24V レール横引きに挿入 (0V縦引き x=psuX+10 を跨がない位置)

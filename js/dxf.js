@@ -18,7 +18,9 @@ const DXF_LTYPES = [
   { name: "DIVIDE", desc: "Long-dash double-dot (JIS Z 8312 type 05)", pat: WIRE_STYLES.dashdotdot.dxf },
 ];
 function dxfLtypeTable() {
-  return DXF_LTYPES.map(lt => {
+  const f = sheetScale();   // 線種パターンも用紙上一定にする
+  return DXF_LTYPES.map(lt0 => {
+    const lt = { ...lt0, pat: lt0.pat.map(v => v * f) };
     const total = lt.pat.reduce((s, v) => s + Math.abs(v), 0);
     const pairs = [[0, "LTYPE"], [2, lt.name], [70, 0], [3, lt.desc], [72, 65], [73, lt.pat.length], [40, total.toFixed(3)]];
     lt.pat.forEach(v => pairs.push([49, v.toFixed(3)]));
@@ -104,9 +106,10 @@ function dxfArcToPoints(x1, y1, x2, y2, rx, ry, laf, sf) {
 
 /** シンボルボディ → プリミティブ配列 (ローカル座標) */
 function dxfSymPrimitives(sym) {
-  if (__dxfPrimCache.has(sym.id)) return __dxfPrimCache.get(sym.id);
+  const key = sym.id + "@" + sheetScale();
+  if (__dxfPrimCache.has(key)) return __dxfPrimCache.get(key);
   const prims = [];
-  const src = sym.body;
+  const src = scaleSymbolText(sym.body, sheetScale());
   // <g transform="translate(a,b)"> の入れ子を追跡
   const stack = [{ tx: 0, ty: 0 }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
@@ -164,7 +167,7 @@ function dxfSymPrimitives(sym) {
       lastIndex = tagRe.lastIndex;
     }
   }
-  __dxfPrimCache.set(sym.id, prims);
+  __dxfPrimCache.set(key, prims);
   return prims;
 }
 
@@ -203,6 +206,22 @@ function dxfDevXform(dev) {
   return (x, y) => [dev.x + x * c - y * s, dev.y + x * s + y * c];
 }
 
+/** 投影法の記号 (画面の projSymbolSVG と同一寸法) */
+function dxfProjSymbol(x, y, u, proj) {
+  if (proj === "該当なし (回路図)") return "";
+  const first = proj === "第一角法";
+  const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
+  const bx = x + (first ? 11 * u : 3.4 * u), sx = x + (first ? 3.4 * u : 11 * u);
+  let out = "";
+  out += dxfPoly([[bx - big * 1.7, cy - big], [bx + big * 1.7, cy - smallR]], "FRAME");
+  out += dxfPoly([[bx - big * 1.7, cy + big], [bx + big * 1.7, cy + smallR]], "FRAME");
+  out += dxfLine(bx - big * 1.7, cy - big, bx - big * 1.7, cy + big, "FRAME");
+  out += dxfLine(bx + big * 1.7, cy - smallR, bx + big * 1.7, cy + smallR, "FRAME");
+  out += dxfCircle(sx, cy, big, "FRAME");
+  out += dxfCircle(sx, cy, smallR, "FRAME");
+  return out;
+}
+
 /** 1ページ → DXF 文字列 */
 function pageToDXF(page) {
   let ents = "";
@@ -235,29 +254,65 @@ function pageToDXF(page) {
     ents += dxfText(w - mg + S(2.8), cy, fs, ch, "FRAME", "middle");
     if (i) { ents += dxfLine(ml - zw, mg + rh * i, ml, mg + rh * i, "FRAME"); ents += dxfLine(w - mg, mg + rh * i, w - mg + zw, mg + rh * i, "FRAME"); }
   }
-  // ── 表題欄 (画面と同じ項目・同じ割付) ──
+  // ── 表題欄 (割付・文字高・縮小規則は画面と同一。engine の TITLE_BLOCK を使う) ──
   const tb = titleBlockRect();
   const tbX = tb.x, tbY = tb.y, tbW = tb.w, tbH = tb.h;
+  const cwmm = TITLE_BLOCK.cols;
+  const cxmm = [0, cwmm[0], cwmm[0] + cwmm[1], cwmm[0] + cwmm[1] + cwmm[2]];
   ents += dxfPoly([[tbX, tbY], [tbX + tbW, tbY], [tbX + tbW, tbY + tbH], [tbX, tbY + tbH], [tbX, tbY]], "FRAME");
-  ents += dxfLine(tbX, tbY + S(10), tbX + tbW, tbY + S(10), "FRAME");
-  ents += dxfLine(tbX, tbY + S(20), tbX + tbW, tbY + S(20), "FRAME");
-  [56, 112, 136].forEach(o => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), tbY + tbH, "FRAME"));
-  const tbCell = (cx, ry, label, value, big = false) => {
+  ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH), tbX + tbW, tbY + S(TITLE_BLOCK.rowH), "FRAME");
+  ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH * 2), tbX + tbW, tbY + S(TITLE_BLOCK.rowH * 2), "FRAME");
+  cxmm.slice(1).forEach(o => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), tbY + tbH, "FRAME"));
+  /* DXF はクリップできないため、欄に収まる文字高へ縮小し、それでも溢れる場合は
+     末尾を「…」で切り詰めて隣の欄へはみ出させない (画面と同じ判定を使う) */
+  const tbCell = (ci, ry, label, value) => {
+    const cx = cxmm[ci], cwv = cwmm[ci] - 3.4;
+    const size = fitTextSize(String(value), cwv, TEXT_H.normal);
+    const text = truncateToWidth(String(value), cwv, size);
     ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(3.6), S(TEXT_H.small), label, "FRAME");
-    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(big ? TEXT_H.normal : TEXT_H.small), value, "TEXT");
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(size), text, "TEXT");
   };
-  tbCell(0, 0, "図名", App.project.name, true);
-  tbCell(56, 0, "ページ名", page.name, true);
-  tbCell(112, 0, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"), true);
-  tbCell(136, 0, "改訂", meta.rev || "0", true);
-  tbCell(0, 10, "設計", meta.designer || "—", true);
-  tbCell(56, 10, "検図", meta.checker || "—", true);
-  tbCell(112, 10, "日付", meta.date || todayStr());
-  tbCell(136, 10, "尺度", meta.scale || "1:1", true);
-  tbCell(0, 20, "企業 (団体) 名", meta.author || "—", true);
-  tbCell(56, 20, "用紙 / 投影法", `${meta.paper} ${pw}x${ph} / ${meta.proj || "第三角法"}`);
-  ents += dxfText(tbX + S(112) + S(2), tbY + S(20) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
-  ents += dxfText(tbX + S(112) + S(2), tbY + S(20) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
+  const R = TITLE_BLOCK.rowH;
+  tbCell(0, 0, "図名 (プロジェクト)", App.project.name);
+  tbCell(1, 0, "ページ名", page.name);
+  tbCell(2, 0, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"));
+  tbCell(3, 0, "改訂", meta.rev || "0");
+  tbCell(0, R, "設計 (署名)", meta.designer || "—");
+  tbCell(1, R, "検図 (署名)", meta.checker || "—");
+  tbCell(2, R, "日付", meta.date || todayStr());
+  tbCell(3, R, "尺度", meta.scale || "1:1");
+  tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
+  tbCell(1, R * 2, "用紙 / 投影法", `${meta.paper} ${pw}x${ph} / ${meta.proj || "第三角法"}`);
+  ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
+  ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
+  ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(1), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
+
+  // ── 改訂履歴欄 (画面と同じ寸法。管理図面に必須) ──
+  const rev = revisionRect();
+  if (rev) {
+    const rows = revisionRows();
+    const rh = S(REV_TABLE.rowH);
+    const cols = [S(REV_TABLE.cols[0]), S(REV_TABLE.cols[1]),
+      rev.w - S(REV_TABLE.cols[0]) - S(REV_TABLE.cols[1]) - S(REV_TABLE.cols[3]), S(REV_TABLE.cols[3])];
+    const xs = [rev.x];
+    cols.forEach(c => xs.push(xs[xs.length - 1] + c));
+    ents += dxfPoly([[rev.x, rev.y], [rev.x + rev.w, rev.y], [rev.x + rev.w, rev.y + rev.h],
+      [rev.x, rev.y + rev.h], [rev.x, rev.y]], "FRAME");
+    for (let i = 1; i <= rows.length; i++) ents += dxfLine(rev.x, rev.y + rh * i, rev.x + rev.w, rev.y + rh * i, "FRAME");
+    xs.slice(1, -1).forEach(x => ents += dxfLine(x, rev.y, x, rev.y + rev.h, "FRAME"));
+    ["改訂", "日付", "内容", "承認"].forEach((t, i) => {
+      ents += dxfText(xs[i] + S(1.6), rev.y + rh - S(1.6), S(TEXT_H.small), t, "FRAME");
+    });
+    rows.slice().reverse().forEach((r, ri) => {
+      const y = rev.y + rh * (ri + 1);
+      [r.rev, r.date, r.desc, r.appr].forEach((v, i) => {
+        if (!v) return;
+        const cwv = cols[i] / f - 3.2;
+        const size = fitTextSize(String(v), cwv, TEXT_H.small);
+        ents += dxfText(xs[i] + S(1.6), y + rh - S(1.6), S(size), truncateToWidth(String(v), cwv, size), "TEXT");
+      });
+    });
+  }
 
   // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {

@@ -205,20 +205,24 @@ UI.showProps = (focusTag = false) => {
       : `<div class="prop-note">作図線です。接続ドット・線番は付かず、ネット解析・
          シミュレーション・検図 (DRC)・端子表・接続リストの対象外です。<br>
          破線のまま回路として扱いたい場合は上のチェックを外してください。</div>`}`;
-    const applyAux = (aux, silent) => {
-      if (aux && w.num && !silent &&
+    /** aux: 作図線にするか。auto=true は線種変更に伴う自動設定 (後で線種を
+        実線に戻したときに自動解除できるよう印を付ける) */
+    const applyAux = (aux, auto) => {
+      if (aux && w.num && !auto &&
           !confirm(`線番 ${w.num} を削除し、この配線を回路から切り離します。よろしいですか？`)) return false;
       commit();
-      w.aux = aux;
+      if (aux) { w.aux = true; if (auto) w.auxAuto = true; else delete w.auxAuto; }
+      else { delete w.aux; delete w.auxAuto; }
       if (aux) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
       return true;
     };
     pane.querySelector("#pStyle").addEventListener("change", e => {
       const v = e.target.value;
       const wantAux = v !== "solid";
-      // 作図線かどうかを明示済み (チェックを操作済み) なら線種変更で書き換えない
-      if (w.aux === undefined && wantAux !== !isWireConductive(w)) {
-        if (!applyAux(wantAux)) { e.target.value = w.style || "solid"; return; }
+      // 手動指定 (auxAuto なし) は尊重し、自動設定だけを線種に追従させる
+      const manual = w.aux !== undefined && !w.auxAuto;
+      if (!manual && wantAux !== !isWireConductive(w)) {
+        if (!applyAux(wantAux, true)) { e.target.value = w.style || "solid"; return; }
       } else commit();
       if (v === "solid") delete w.style; else w.style = v;
       UI.refresh(false);
@@ -297,7 +301,11 @@ UI.showProps = (focusTag = false) => {
       commit();
       selWires.forEach(w => {
         if (v === "solid") delete w.style; else w.style = v;
-        w.aux = v !== "solid";
+        const manual = w.aux !== undefined && !w.auxAuto;
+        if (!manual) {
+          if (v === "solid") { delete w.aux; delete w.auxAuto; }
+          else { w.aux = true; w.auxAuto = true; }
+        }
         if (!isWireConductive(w)) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
       });
       UI.refresh(false);
@@ -740,7 +748,7 @@ UI.openTextInput = (clientX, clientY, wx, wy, existing = null) => {
     if (save && v && (!existing || v !== existing.text)) {
       commit();
       if (existing) existing.text = v;
-      else curPage().texts.push({ id: uid("t"), x: wx, y: wy, text: v, size: 4 });
+      else curPage().texts.push({ id: uid("t"), x: wx, y: wy, text: v, size: TEXT_H.normal });
       UI.refresh(false);
     }
     UI.setTool("select");
@@ -942,16 +950,34 @@ UI.sheetSetup = () => {
     <div class="prop-sect">改訂履歴 (表題欄の上に表示)</div>
     <div id="tbRevs"></div>
   </div>`);
-  // 改訂履歴 3 行 (記号・日付・内容・承認)
-  const revs = (meta.revs || []).slice(-3);
-  while (revs.length < 3) revs.push({ rev: "", date: "", desc: "", appr: "" });
-  body.querySelector("#tbRevs").innerHTML = revs.map((r, i) => `
-    <div class="rev-row">
-      <input id="rv${i}a" class="mono" value="${escAttr(r.rev)}" placeholder="A" title="改訂記号"/>
-      <input id="rv${i}b" class="mono" value="${escAttr(r.date)}" placeholder="2026-01-31" title="日付"/>
-      <input id="rv${i}c" value="${escAttr(r.desc)}" placeholder="改訂内容" title="内容"/>
-      <input id="rv${i}d" value="${escAttr(r.appr)}" placeholder="承認" title="承認"/>
-    </div>`).join("");
+  // 改訂履歴 (行数可変。既存の改訂は1件も切り捨てない)
+  const revRows = (meta.revs || []).map(r => ({ ...r }));
+  if (!revRows.length) revRows.push({ rev: "", date: "", desc: "", appr: "" });
+  const revHost = body.querySelector("#tbRevs");
+  const renderRevs = () => {
+    revHost.innerHTML = revRows.map((r, i) => `
+      <div class="rev-row">
+        <input id="rv${i}a" class="mono" value="${escAttr(r.rev)}" placeholder="A" title="改訂記号"/>
+        <input id="rv${i}b" class="mono" value="${escAttr(r.date)}" placeholder="2026-01-31" title="日付"/>
+        <input id="rv${i}c" value="${escAttr(r.desc)}" placeholder="改訂内容" title="内容"/>
+        <input id="rv${i}d" value="${escAttr(r.appr)}" placeholder="承認" title="承認"/>
+      </div>`).join("") +
+      `<button class="btn-solid" id="revAdd" style="margin-top:2px">＋ 行を追加</button>
+       <div style="font-size:11px;color:var(--text-faint);margin-top:6px">図面には新しい方から最大 ${REV_TABLE.maxRows} 行を表示します (記録はすべて保持)。</div>`;
+    revHost.querySelector("#revAdd").addEventListener("click", () => {
+      collectRevs();
+      revRows.push({ rev: "", date: "", desc: "", appr: "" });
+      renderRevs();
+    });
+  };
+  const collectRevs = () => {
+    revRows.forEach((r, i) => {
+      const g = k => (revHost.querySelector(`#rv${i}${k}`) || {}).value || "";
+      r.rev = g("a").trim(); r.date = g("b").trim(); r.desc = g("c").trim(); r.appr = g("d").trim();
+    });
+  };
+  renderRevs();
+
   const q = id => body.querySelector(id);
   const info = () => {
     const [pw, ph] = PAPERS[q("#tbPaper").value] || PAPERS.A3;
@@ -971,16 +997,18 @@ UI.sheetSetup = () => {
   function countOverflow(paper, scale) {
     const save = { paper: meta.paper, scale: meta.scale };
     meta.paper = paper; meta.scale = scale; applySheet();
-    const fr2 = frameRect(), tb = titleBlockRect();
+    const fr2 = frameRect(), blocks = titleBlocksRects();
     const hit = (b) => b.x < fr2.x || b.y < fr2.y || b.x + b.w > fr2.x + fr2.w || b.y + b.h > fr2.y + fr2.h ||
-      (b.x < tb.x + tb.w && b.x + b.w > tb.x && b.y < tb.y + tb.h && b.y + b.h > tb.y);
+      blocks.some(r => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y);
     let devs = 0, wires = 0;
     App.project.pages.forEach(pg => {
       pg.devices.forEach(d => { if (hit(devBounds(d))) devs++; });
+      pg.texts.forEach(t => { if (hit(textBounds(t))) devs++; });
+      pageZones(pg).forEach(z => { if (hit({ x: z.x, y: z.y, w: z.w, h: z.h })) devs++; });
       pg.wires.forEach(w => {
         const outside = w.pts.some(p => p[0] < fr2.x || p[1] < fr2.y || p[0] > fr2.x + fr2.w || p[1] > fr2.y + fr2.h);
-        const onTb = w.pts.some((p, i) => i < w.pts.length - 1 && segCrossesRect(p, w.pts[i + 1], tb));
-        if (outside || onTb) wires++;
+        const onBlk = w.pts.some((p, i) => i < w.pts.length - 1 && blocks.some(r => segCrossesRect(p, w.pts[i + 1], r)));
+        if (outside || onBlk) wires++;
       });
     });
     meta.paper = save.paper; meta.scale = save.scale; applySheet();
@@ -1014,10 +1042,8 @@ UI.sheetSetup = () => {
     meta.date = q("#tbDate").value.trim();
     meta.author = q("#tbAuth").value.trim();
     meta.proj = q("#tbProjMethod").value;
-    meta.revs = [0, 1, 2].map(i => ({
-      rev: q(`#rv${i}a`).value.trim(), date: q(`#rv${i}b`).value.trim(),
-      desc: q(`#rv${i}c`).value.trim(), appr: q(`#rv${i}d`).value.trim(),
-    })).filter(r => r.rev || r.date || r.desc || r.appr);
+    collectRevs();
+    meta.revs = revRows.filter(r => r.rev || r.date || r.desc || r.appr);
     const paperChanged = paperChanging;
     meta.paper = q("#tbPaper").value;
     meta.scale = q("#tbScale").value;
