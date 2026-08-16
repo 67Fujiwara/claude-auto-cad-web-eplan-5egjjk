@@ -15,6 +15,7 @@ const SYM_CATS = {
   output: { name: "アウトプット機器", color: "#ffb454" },
   power:  { name: "電源・保護",       color: "#c792ea" },
   misc:   { name: "端子・その他",     color: "#8b96ab" },
+  db:     { name: "データベース",     color: "#e5c07b" },
 };
 
 // ── 部品ジオメトリのヘルパ ─────────────────────────────
@@ -143,7 +144,7 @@ const SYMBOLS = [
     id: "aux_ton_nc", cat: "logic", letter: "K", name: "限時動作b接点 (TON)", nameEn: "On-delay contact NC",
     desc: "オンディレイタイマの限時動作接点", pins: [{x:0,y:0,n:"15"},{x:0,y:20,n:"16"}],
     sim: "contact_nc", linked: true, bounds: [-12,-2, 15, 24],
-    body: G_NC + `<path d="M-6.8,11 A2.8,2.8 0 0 1 -1.2,11" />`,
+    body: G_NC + `<path d="M-6.8,11.2 A2.8,2.8 0 0 1 -1.2,11.2" />`,
   },
   {
     id: "aux_toff_no", cat: "logic", letter: "K", name: "限時復帰a接点 (TOF)", nameEn: "Off-delay contact NO",
