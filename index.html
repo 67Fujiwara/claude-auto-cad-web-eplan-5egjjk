@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ElectraCAD Studio — 電気設計CAD</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1420'/%3E%3Cpath d='M18 4 8 18h6l-2 10L22 14h-6l2-10z' fill='%234da3ff'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════════ タイトルバー / メニュー ══════════════ -->
+  <header id="titlebar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="22" height="22"><rect width="32" height="32" rx="7" fill="#0e1420"/><path d="M18 4 8 18h6l-2 10L22 14h-6l2-10z" fill="#4da3ff"/></svg>
+      <span class="brand-name">ElectraCAD <em>Studio</em></span>
+    </div>
+    <nav id="menubar">
+      <div class="menu" data-menu="file">ファイル</div>
+      <div class="menu" data-menu="edit">編集</div>
+      <div class="menu" data-menu="view">表示</div>
+      <div class="menu" data-menu="insert">挿入</div>
+      <div class="menu" data-menu="project">プロジェクト</div>
+      <div class="menu" data-menu="help">ヘルプ</div>
+    </nav>
+    <div class="titlebar-center"><input id="projectName" value="無題プロジェクト" spellcheck="false" title="プロジェクト名"/></div>
+    <div class="titlebar-right">
+      <button class="tb-chip" id="btnSave" title="保存 (Ctrl+S)"><svg viewBox="0 0 16 16"><path d="M3 2h8l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm2 1v3h6V3H5zm-1 6v5h8V9H4z" fill="currentColor"/></svg>保存</button>
+      <button class="tb-chip accent" id="btnAIWizard" title="AI自動作図 (F2)"><svg viewBox="0 0 16 16"><path d="M8 1l1.8 4.2L14 7l-4.2 1.8L8 13 6.2 8.8 2 7l4.2-1.8L8 1zm5 9l.9 2.1L16 13l-2.1.9L13 16l-.9-2.1L10 13l2.1-.9L13 10z" fill="currentColor"/></svg>AI自動作図</button>
+    </div>
+  </header>
+
+  <!-- ══════════════ リボンツールバー ══════════════ -->
+  <div id="ribbon">
+    <div class="rgroup">
+      <button class="rbtn" id="btnUndo" title="元に戻す (Ctrl+Z)"><svg viewBox="0 0 20 20"><path d="M8 5 3 9.5 8 14v-3c4 0 6.5 1.2 8.5 4-.6-5.2-3.7-8-8.5-8V5z" fill="currentColor"/></svg><span>戻す</span></button>
+      <button class="rbtn" id="btnRedo" title="やり直し (Ctrl+Y)"><svg viewBox="0 0 20 20"><path d="M12 5l5 4.5L12 14v-3c-4 0-6.5 1.2-8.5 4 .6-5.2 3.7-8 8.5-8V5z" fill="currentColor"/></svg><span>やり直し</span></button>
+    </div>
+    <div class="rsep"></div>
+    <div class="rgroup" id="toolGroup">
+      <button class="rbtn tool active" data-tool="select" title="選択 (V / Esc)"><svg viewBox="0 0 20 20"><path d="M5 2l10 8-4.5.8L13 16l-2.5 1-2.4-5.2L5 14V2z" fill="currentColor"/></svg><span>選択</span></button>
+      <button class="rbtn tool" data-tool="wire" title="配線 (W)"><svg viewBox="0 0 20 20"><circle cx="4" cy="16" r="2" fill="currentColor"/><circle cx="16" cy="4" r="2" fill="currentColor"/><path d="M4 16V9h12V4" stroke="currentColor" stroke-width="1.8" fill="none"/></svg><span>配線</span></button>
+      <button class="rbtn tool" data-tool="pan" title="パン (H / Space)"><svg viewBox="0 0 20 20"><path d="M10 2v16M2 10h16M10 2l-2.5 2.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg><span>パン</span></button>
+      <button class="rbtn tool" data-tool="text" title="テキスト (T)"><svg viewBox="0 0 20 20"><path d="M3 4h14v3h-1.5V6h-4v10H13v1.5H7V16h1.5V6h-4v1H3V4z" fill="currentColor"/></svg><span>文字</span></button>
+    </div>
+    <div class="rsep"></div>
+    <div class="rgroup">
+      <button class="rbtn" id="btnRotate" title="回転 (R)"><svg viewBox="0 0 20 20"><path d="M10 3a7 7 0 1 1-6.7 5H1.5L5 3.5 8.5 8H5.3A5 5 0 1 0 10 5V3z" fill="currentColor"/></svg><span>回転</span></button>
+      <button class="rbtn" id="btnDelete" title="削除 (Del)"><svg viewBox="0 0 20 20"><path d="M7 2h6l1 2h4v2H2V4h4l1-2zM4 7h12l-1 11H5L4 7zm4 2v7h1.5V9H8zm3 0v7h1.5V9H11z" fill="currentColor"/></svg><span>削除</span></button>
+    </div>
+    <div class="rsep"></div>
+    <div class="rgroup">
+      <button class="rbtn" id="btnWireNum" title="配線番号を自動付与"><svg viewBox="0 0 20 20"><path d="M2 10h16" stroke="currentColor" stroke-width="1.8"/><rect x="6" y="6" width="8" height="8" rx="1.5" fill="var(--panel)" stroke="currentColor" stroke-width="1.4"/><text x="10" y="12.7" font-size="7" text-anchor="middle" fill="currentColor" font-family="monospace">12</text></svg><span>線番</span></button>
+      <button class="rbtn" id="btnDRC" title="設計ルールチェック"><svg viewBox="0 0 20 20"><path d="M10 2 18.5 17H1.5L10 2zm-1 5.5v4.5h2V7.5H9zM9 14v2h2v-2H9z" fill="currentColor"/></svg><span>DRC</span></button>
+      <button class="rbtn" id="btnBOM" title="部品表を生成"><svg viewBox="0 0 20 20"><rect x="3" y="2" width="14" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 6h8M6 9.5h8M6 13h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>部品表</span></button>
+    </div>
+    <div class="rsep"></div>
+    <div class="rgroup">
+      <button class="rbtn sim" id="btnSim" title="通電シミュレーション (F5)"><svg viewBox="0 0 20 20"><path d="M6 3.5v13l10-6.5-10-6.5z" fill="currentColor"/></svg><span>シミュレーション</span></button>
+    </div>
+    <div class="ribbon-spacer"></div>
+    <div class="rgroup zoomgroup">
+      <button class="rbtn mini" id="btnZoomOut" title="縮小 (−)"><svg viewBox="0 0 20 20"><path d="M4 9h12v2H4z" fill="currentColor"/></svg></button>
+      <span id="zoomLabel" title="クリックで100%">100%</span>
+      <button class="rbtn mini" id="btnZoomIn" title="拡大 (+)"><svg viewBox="0 0 20 20"><path d="M9 4h2v5h5v2h-5v5H9v-5H4V9h5V4z" fill="currentColor"/></svg></button>
+      <button class="rbtn mini" id="btnZoomFit" title="全体表示 (F)"><svg viewBox="0 0 20 20"><path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></button>
+    </div>
+  </div>
+
+  <!-- ══════════════ メインレイアウト ══════════════ -->
+  <div id="main">
+
+    <!-- ── 左: デバイスナビゲータ ── -->
+    <aside id="sidebar">
+      <div class="side-head">
+        <span>シンボルライブラリ</span>
+        <span class="side-head-sub">IEC 60617</span>
+      </div>
+      <div class="side-search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><input id="symSearch" placeholder="シンボルを検索…" spellcheck="false"/></div>
+      <div id="symTree"></div>
+      <div class="side-foot">クリックで選択 → キャンバス上でクリック配置 (連続配置 / Escで終了)</div>
+    </aside>
+
+    <!-- ── 中央: キャンバス ── -->
+    <div id="center">
+      <div id="pagebar">
+        <div id="pageTabs"></div>
+        <button id="btnAddPage" title="ページを追加">＋</button>
+      </div>
+      <div id="canvasWrap">
+        <svg id="canvas" tabindex="0"></svg>
+        <div id="simBanner" class="hidden"><span class="simdot"></span>シミュレーション実行中 — 入力機器をクリックして操作。<b>Esc</b>で終了</div>
+        <div id="hintToast" class="hidden"></div>
+      </div>
+    </div>
+
+    <!-- ── 右: プロパティ / パネル ── -->
+    <aside id="rightbar">
+      <div id="rightTabs">
+        <button class="rtab active" data-rtab="props">プロパティ</button>
+        <button class="rtab" data-rtab="drc">DRC</button>
+        <button class="rtab" data-rtab="bom">部品表</button>
+      </div>
+      <div id="rightBody">
+        <div class="rpane active" id="pane-props"></div>
+        <div class="rpane" id="pane-drc"></div>
+        <div class="rpane" id="pane-bom"></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ══════════════ ステータスバー ══════════════ -->
+  <footer id="statusbar">
+    <span id="stCoords">X: 0.0  Y: 0.0</span>
+    <span class="stsep"></span>
+    <span id="stGrid">グリッド: 5mm</span>
+    <span class="stsep"></span>
+    <span id="stMode">選択モード</span>
+    <span class="st-spacer"></span>
+    <span id="stMsg"></span>
+    <span class="st-spacer"></span>
+    <span id="stCount"></span>
+  </footer>
+</div>
+
+<!-- ドロップダウンメニュー / モーダルのマウント先 -->
+<div id="overlay-root"></div>
+
+<script src="js/symbols.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/autogen.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
