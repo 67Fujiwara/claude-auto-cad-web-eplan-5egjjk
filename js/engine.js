@@ -14,6 +14,8 @@ const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
 const TEXT_H = { small: 2.5, normal: 3.5, large: 5 };
 /* 格子参照の行記号。JIS Z 8311 により I と O は使用しない */
 const SHEET_ROW_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+/* 格子参照の区分数 [列, 行] (JIS Z 8311 表2) */
+const SHEET_DIVISIONS = { A0: [24, 16], A1: [16, 12], A2: [12, 8], A3: [8, 6], A4: [6, 4] };
 
 /* 用紙 (横置き実寸 mm) と尺度。図面の作図領域は 用紙 × 尺度分母/分子 になる。
    例: A3 (420×297) を 1:2 で描くと作図領域は 840×594 となり、実物の
@@ -50,14 +52,18 @@ function applySheet() {
   SHEET.h = ph * f;
   SHEET.margin = c * f;
   SHEET.marginLeft = Math.max(20, c) * f;      // とじ代 20mm
-  const evenDiv = (len, target) => {           // len(mm) を 25〜75mm の偶数個に分ける
-    let n = 2 * Math.max(1, Math.round(len / target / 2));
-    while (n > 2 && len / n < 25) n -= 2;
-    while (len / n > 75) n += 2;
-    return n;
-  };
-  SHEET.cols = evenDiv(pw - c - Math.max(20, c), 40);
-  SHEET.rows = evenDiv(ph - c * 2, 46);
+  const div = SHEET_DIVISIONS[m.paper];
+  if (div) { SHEET.cols = div[0]; SHEET.rows = div[1]; }
+  else {                                       // 表にない用紙は 25〜75mm の偶数個に分ける
+    const evenDiv = (len, target) => {
+      let n = 2 * Math.max(1, Math.round(len / target / 2));
+      while (n > 2 && len / n < 25) n -= 2;
+      while (len / n > 75) n += 2;
+      return n;
+    };
+    SHEET.cols = evenDiv(pw - c - Math.max(20, c), 50);
+    SHEET.rows = evenDiv(ph - c * 2, 50);
+  }
   return SHEET;
 }
 /** 尺度倍率。線幅・文字高はこれを掛けて用紙上で一定の大きさに見せる */
@@ -69,6 +75,15 @@ function titleBlockRect() {
   const w = 160 * f, h = 30 * f;
   return { x: SHEET.w - SHEET.margin - w, y: SHEET.h - SHEET.margin - h, w, h };
 }
+/** 線分 a-b が矩形 r と交差する (端点が内側の場合を含む) か。直交配線前提の簡易判定 */
+function segCrossesRect(a, b, r) {
+  const inside = p => p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h;
+  if (inside(a) || inside(b)) return true;
+  const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]);
+  const y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+  return x0 <= r.x + r.w && x1 >= r.x && y0 <= r.y + r.h && y1 >= r.y;
+}
+
 /** 輪郭線の内側 (作図してよい範囲) */
 function frameRect() {
   return { x: SHEET.marginLeft, y: SHEET.margin, w: SHEET.w - SHEET.marginLeft - SHEET.margin, h: SHEET.h - SHEET.margin * 2 };
@@ -730,8 +745,18 @@ function runDRC() {
       }
     });
     page.wires.forEach(w => {
-      const out = w.pts.some(p => p[0] < fr.x || p[1] < fr.y || p[0] > fr.x + fr.w || p[1] > fr.y + fr.h);
-      if (out) issues.push({ sev: "err", msg: `配線が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[0][0])}` });
+      // 頂点だけでなく区間で判定する (両端が枠内でも途中が枠外/表題欄上を通る場合がある)
+      const outside = w.pts.some(p => p[0] < fr.x || p[1] < fr.y || p[0] > fr.x + fr.w || p[1] > fr.y + fr.h);
+      if (outside) {
+        issues.push({ sev: "err", msg: `配線が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[0][0])}` });
+        return;
+      }
+      for (let i = 0; i < w.pts.length - 1; i++) {
+        if (segCrossesRect(w.pts[i], w.pts[i + 1], tb)) {
+          issues.push({ sev: "err", msg: `配線が表題欄に重なっています`, page: page.no, target: w.id, loc: `${page.no}.${sheetCol(w.pts[i][0])}` });
+          break;
+        }
+      }
     });
 
     // 電源短絡 (+24V と 0V が閉状態で同一ネット)
@@ -950,6 +975,8 @@ function undo() {
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
   applySheet(); // 用紙・尺度も一緒に巻き戻す
   retainSelection();
+  App.dirty = true;
+  if (typeof UI !== "undefined" && UI.updateSaveButton) UI.updateSaveButton();
   saveLocal();
   return true;
 }
@@ -961,6 +988,8 @@ function redo() {
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
   applySheet();
   retainSelection();
+  App.dirty = true;
+  if (typeof UI !== "undefined" && UI.updateSaveButton) UI.updateSaveButton();
   saveLocal();
   return true;
 }

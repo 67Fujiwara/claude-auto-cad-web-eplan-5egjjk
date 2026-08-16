@@ -216,8 +216,8 @@ UI.showProps = (focusTag = false) => {
     pane.querySelector("#pStyle").addEventListener("change", e => {
       const v = e.target.value;
       const wantAux = v !== "solid";
-      // 線種を変えると既定の扱い (実線=配線 / それ以外=作図線) に追従する
-      if (wantAux !== !isWireConductive(w)) {
+      // 作図線かどうかを明示済み (チェックを操作済み) なら線種変更で書き換えない
+      if (w.aux === undefined && wantAux !== !isWireConductive(w)) {
         if (!applyAux(wantAux)) { e.target.value = w.style || "solid"; return; }
       } else commit();
       if (v === "solid") delete w.style; else w.style = v;
@@ -270,9 +270,9 @@ UI.showProps = (focusTag = false) => {
     pane.innerHTML = `
       <div class="prop-head"><div class="prop-head-txt"><div class="t1">テキスト</div><div class="t2">図面注記</div></div></div>
       <div class="prop-row"><label>内容</label><input id="pTxt" value="${(t.text || "").replace(/"/g, "&quot;")}"/></div>
-      <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2" value="${t.size || 4}"/></div>`;
+      <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2.5" value="${textHeight(t)}"/></div>`;
     pane.querySelector("#pTxt").addEventListener("change", e => { commit(); t.text = e.target.value; UI.refresh(false); });
-    pane.querySelector("#pTsz").addEventListener("change", e => { commit(); const n = parseFloat(e.target.value); if (!isNaN(n)) t.size = Math.max(2, n); UI.refresh(false); });
+    pane.querySelector("#pTsz").addEventListener("change", e => { commit(); const n = parseFloat(e.target.value); if (!isNaN(n)) t.size = Math.max(2.5, n); UI.refresh(false); });
   } else if (selDevs.length + selWires.length + selTexts.length + selZones.length > 1) {
     const total = selDevs.length + selWires.length + selTexts.length + selZones.length;
     pane.innerHTML = `
@@ -925,7 +925,7 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>日付</label><input id="tbDate" class="mono" value="${escAttr(meta.date || todayStr())}" placeholder="2026-01-31"/></div>
       <div class="prop-row"><label>企業 (団体) 名</label><input id="tbAuth" value="${escAttr(meta.author || "")}" placeholder="社名を入力"/></div>
-      <div class="prop-row"><label>投影法</label><select id="tbProj">
+      <div class="prop-row"><label>投影法</label><select id="tbProjMethod">
         ${["第三角法", "第一角法", "該当なし (回路図)"].map(v => opt(v, meta.proj || "第三角法")).join("")}
       </select></div>
     </div>
@@ -939,7 +939,19 @@ UI.sheetSetup = () => {
       </select></div>
     </div>
     <div class="prop-note" id="tbInfo"></div>
+    <div class="prop-sect">改訂履歴 (表題欄の上に表示)</div>
+    <div id="tbRevs"></div>
   </div>`);
+  // 改訂履歴 3 行 (記号・日付・内容・承認)
+  const revs = (meta.revs || []).slice(-3);
+  while (revs.length < 3) revs.push({ rev: "", date: "", desc: "", appr: "" });
+  body.querySelector("#tbRevs").innerHTML = revs.map((r, i) => `
+    <div class="rev-row">
+      <input id="rv${i}a" class="mono" value="${escAttr(r.rev)}" placeholder="A" title="改訂記号"/>
+      <input id="rv${i}b" class="mono" value="${escAttr(r.date)}" placeholder="2026-01-31" title="日付"/>
+      <input id="rv${i}c" value="${escAttr(r.desc)}" placeholder="改訂内容" title="内容"/>
+      <input id="rv${i}d" value="${escAttr(r.appr)}" placeholder="承認" title="承認"/>
+    </div>`).join("");
   const q = id => body.querySelector(id);
   const info = () => {
     const [pw, ph] = PAPERS[q("#tbPaper").value] || PAPERS.A3;
@@ -949,7 +961,8 @@ UI.sheetSetup = () => {
     q("#tbInfo").innerHTML = `作図領域は <b>${Math.round(pw * f)} × ${Math.round(ph * f)} mm</b> になります` +
       (sc === "NS" ? " (非尺度)。" : f === 1 ? " (現尺)。"
         : `。用紙 ${pw}×${ph} mm に ${sc} で印刷される想定で、実物の${f > 1 ? `${f} 倍の範囲を1枚に収められます` : `${1 / f} 倍に拡大して描けます`}。`) +
-      `<br>線の太さと文字の高さは尺度に追従するため、用紙上では常に同じ大きさで印刷されます。` +
+      `<br>線の太さ・文字の高さ・線種は尺度に追従し、用紙上では常に同じ大きさで印刷されます。` +
+      (f !== 1 ? `<br><b>図記号 (シンボル) は実寸のまま</b>なので、用紙上では ${f > 1 ? `1/${f}` : `${1 / f} 倍`} の大きさになります。回路図は NS または 1:1、実寸で描く配置図などに縮尺をお使いください。` : "") +
       (over.total
         ? `<br><b style="color:var(--warn,#e5a03d)">⚠ この用紙では機器 ${over.devs} 点・配線 ${over.wires} 本が図枠外または表題欄に重なります。</b>`
         : `<br>現在の図形はすべて新しい図枠に収まります。`);
@@ -965,7 +978,9 @@ UI.sheetSetup = () => {
     App.project.pages.forEach(pg => {
       pg.devices.forEach(d => { if (hit(devBounds(d))) devs++; });
       pg.wires.forEach(w => {
-        if (w.pts.some(p => p[0] < fr2.x || p[1] < fr2.y || p[0] > fr2.x + fr2.w || p[1] > fr2.y + fr2.h)) wires++;
+        const outside = w.pts.some(p => p[0] < fr2.x || p[1] < fr2.y || p[0] > fr2.x + fr2.w || p[1] > fr2.y + fr2.h);
+        const onTb = w.pts.some((p, i) => i < w.pts.length - 1 && segCrossesRect(p, w.pts[i + 1], tb));
+        if (outside || onTb) wires++;
       });
     });
     meta.paper = save.paper; meta.scale = save.scale; applySheet();
@@ -998,7 +1013,11 @@ UI.sheetSetup = () => {
     meta.checker = q("#tbChk").value.trim();
     meta.date = q("#tbDate").value.trim();
     meta.author = q("#tbAuth").value.trim();
-    meta.proj = q("#tbProj").value;
+    meta.proj = q("#tbProjMethod").value;
+    meta.revs = [0, 1, 2].map(i => ({
+      rev: q(`#rv${i}a`).value.trim(), date: q(`#rv${i}b`).value.trim(),
+      desc: q(`#rv${i}c`).value.trim(), appr: q(`#rv${i}d`).value.trim(),
+    })).filter(r => r.rev || r.date || r.desc || r.appr);
     const paperChanged = paperChanging;
     meta.paper = q("#tbPaper").value;
     meta.scale = q("#tbScale").value;
@@ -1070,6 +1089,7 @@ UI.saveOver = async () => {
       UI.setMsg(`上書き保存しました — ${App.fileHandle.name}`);
       return;
     } catch (e) {
+      UI.updateSaveButton();
       UI.setMsg("上書き保存に失敗しました: " + (e && e.message ? e.message : e));
       return;
     }

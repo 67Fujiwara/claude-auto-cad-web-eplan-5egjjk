@@ -147,9 +147,9 @@ function aiGenerate(sel) {
       const s2 = addWire(page, [[L.psuX + 10, L.psuY - 10], [L.psuX + 10, L.psuY]]);
       if (s1) s1.stub = true;
       if (s2) s2.stub = true;
-      page.texts.push({ id: uid("t"), x: 21, y: 19, text: "L", size: 3.4 });
-      page.texts.push({ id: uid("t"), x: L.psuX + 10, y: L.psuY - 13, text: "N", size: 3.4 });
-      page.texts.push({ id: uid("t"), x: L.psuX + 13, y: 15, text: "AC100V", size: 3.6, anchor: "start" });
+      page.texts.push({ id: uid("t"), x: 21, y: 19, text: "L", size: 3.5 });
+      page.texts.push({ id: uid("t"), x: L.psuX + 10, y: L.psuY - 13, text: "N", size: 3.5 });
+      page.texts.push({ id: uid("t"), x: L.psuX + 13, y: 15, text: "AC100V", size: 3.5, anchor: "start" });
       // 24V 分岐保護を +24V レール横引きに挿入 (0V縦引き x=psuX+10 を跨がない位置)
       addWire(page, [[L.psuX - 10, L.psuY + 30], [L.psuX - 10, L.topRailY], [L.psuX + 15, L.topRailY]]);
       addDevice(page, "fuse", L.psuX + 35, L.topRailY, { rot: 90, desc: "" }); // pins (90,65),(70,65)
@@ -165,7 +165,7 @@ function aiGenerate(sel) {
         });
         ctrlRailY = chainY + 25; // = topRailY + 40 → ラング縦許容 80mm (端子込み4スロット)
         addWire(page, [[sx, chainY], [sx, ctrlRailY]]);
-        page.texts.push({ id: uid("t"), x: L.safetyX, y: ctrlRailY + 5, text: "安全回路", size: 3.4, anchor: "start" });
+        page.texts.push({ id: uid("t"), x: L.safetyX, y: ctrlRailY + 5, text: "安全回路", size: 3.5, anchor: "start" });
         ctrlStartX = sx;
       }
     } else {
@@ -202,8 +202,8 @@ function aiGenerate(sel) {
       }
       const wn = addWire(pg, [[L.psuX + 10, L.psuY + 30], [L.psuX + 10, L.botRailY], [endX, L.botRailY]]);
       if (wn && !hasNext) wn.stub = true;
-      pg.texts.push({ id: uid("t"), x: L.psuX - 24, y: L.topRailY - 3, text: "+24V", size: 4.2 });
-      pg.texts.push({ id: uid("t"), x: L.psuX + 24, y: L.botRailY - 3, text: "0V", size: 4.2 });
+      pg.texts.push({ id: uid("t"), x: L.psuX - 24, y: L.topRailY - 3, text: "+24V", size: 3.5 });
+      pg.texts.push({ id: uid("t"), x: L.psuX + 24, y: L.botRailY - 3, text: "0V", size: 3.5 });
     } else {
       const wc = addWire(pg, [[45, sheet.ctrlRailY], [endX, sheet.ctrlRailY]]);
       const wn = addWire(pg, [[45, L.botRailY], [endX, L.botRailY]]);
@@ -319,7 +319,7 @@ function aiGenerate(sel) {
     } else {
       addWire(page, [[x, bodyTop + bodyH], [x, L.botRailY]]);
     }
-    if (funcText) page.texts.push({ id: uid("t"), x, y: L.botRailY + 10, text: funcText, size: 3.8 });
+    if (funcText) page.texts.push({ id: uid("t"), x, y: L.botRailY + 10, text: funcText, size: 3.5 });
 
     cur.prevRightAbs = x + rightMost;
     cur.xCursor = x + Math.max(L.rungGapMin, gridUp(rightMost + 25));
@@ -568,7 +568,7 @@ function aiGenerate(sel) {
       if (phase === 3) {
         // ── 三相ブロック (3極) ──
         addDevice(pw, "supply3", bx + 10, 25, { tag: "", desc: "" });
-        pw.texts.push({ id: uid("t"), x: bx + 10, y: 16, text: "AC200V 3φ", size: 4 });
+        pw.texts.push({ id: uid("t"), x: bx + 10, y: 16, text: "AC200V 3φ", size: 3.5 });
         [["L1", 0], ["L2", 10], ["L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 35], [bx + o, 55]], mp + ph));
         addDevice(pw, "mcb3", bx, 55, { desc: "主回路保護" });
         [["1L1", 0], ["1L2", 10], ["1L3", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 75], [bx + o, 100]], mp + ph));
@@ -579,12 +579,12 @@ function aiGenerate(sel) {
         [["U1", 0], ["V1", 10], ["W1", 20]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 160], [bx + o, 180]], mp + ph));
         addDevice(pw, "motor3", bx + 10, 180, { desc: "電動機" });
         addDevice(pw, "earth", bx + 10, 215, { tag: "", desc: "" });
-        pw.texts.push({ id: uid("t"), x: bx + 10, y: 240, text: `モータ回路 ${mi + 1} (3φ)`, size: 3.8 });
+        pw.texts.push({ id: uid("t"), x: bx + 10, y: 240, text: `モータ回路 ${mi + 1} (3φ)`, size: 3.5 });
         bx += 85;
       } else {
         // ── 単相ブロック (2極: L/N) ──
         addDevice(pw, "supply1", bx + 5, 25, { tag: "", desc: "" });
-        pw.texts.push({ id: uid("t"), x: bx + 5, y: 16, text: "AC100V 1φ", size: 4 });
+        pw.texts.push({ id: uid("t"), x: bx + 5, y: 16, text: "AC100V 1φ", size: 3.5 });
         [["L", 0], ["N", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 35], [bx + o, 55]], mp + ph));
         addDevice(pw, "mcb2", bx, 55, { desc: "主回路保護" });
         [["1L", 0], ["1N", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 75], [bx + o, 100]], mp + ph));
@@ -595,7 +595,7 @@ function aiGenerate(sel) {
         [["U1", 0], ["U2", 10]].forEach(([ph, o]) => fixWire(pw, [[bx + o, 160], [bx + o, 180]], mp + ph));
         addDevice(pw, "motor1", bx + 5, 180, { desc: "電動機" });
         addDevice(pw, "earth", bx + 5, 215, { tag: "", desc: "" });
-        pw.texts.push({ id: uid("t"), x: bx + 5, y: 240, text: `モータ回路 ${mi + 1} (1φ)`, size: 3.8 });
+        pw.texts.push({ id: uid("t"), x: bx + 5, y: 240, text: `モータ回路 ${mi + 1} (1φ)`, size: 3.5 });
         bx += 70;
       }
     });

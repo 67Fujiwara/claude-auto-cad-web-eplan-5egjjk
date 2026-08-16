@@ -79,27 +79,30 @@ function renderAll() {
 }
 
 /* ── シート (図枠 + グリッド + 表題欄) ── */
-function sheetSVG(page) {
+function sheetSVG(page, opts = {}) {
   const { w, h, margin: m, marginLeft: ml, cols, rows } = SHEET;
   const fr = sheetScale(); // 尺度 (線幅・文字高はこの倍率で描き、用紙上では常に同じ大きさ)
+  const print = !!opts.print;   // 出力用: 画面専用の影・作図グリッドを描かない
   let out = "";
   // 影 + 用紙
-  out += `<rect x="2.5" y="3.5" width="${w}" height="${h}" fill="rgba(0,0,0,.45)" rx="1"/>`;
-  out += `<rect x="0" y="0" width="${w}" height="${h}" fill="#f7f8f5" rx="0.5"/>`;
-  // グリッド
-  let grid = "";
-  for (let x = ml; x <= w - m; x += GRID) grid += `M${x},${m} V${h - m}`;
-  for (let y = m; y <= h - m; y += GRID) grid += `M${ml},${y} H${w - m}`;
-  out += `<path d="${grid}" stroke="rgba(30,50,90,.055)" stroke-width="${0.3 * fr}" fill="none"/>`;
-  let grid2 = "";
-  for (let x = ml; x <= w - m; x += GRID * 4) grid2 += `M${x},${m} V${h - m}`;
-  for (let y = m; y <= h - m; y += GRID * 4) grid2 += `M${ml},${y} H${w - m}`;
-  out += `<path d="${grid2}" stroke="rgba(30,50,90,.09)" stroke-width="${0.3 * fr}" fill="none"/>`;
+  if (!print) out += `<rect x="2.5" y="3.5" width="${w}" height="${h}" fill="rgba(0,0,0,.45)" rx="1"/>`;
+  out += `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff" rx="${print ? 0 : 0.5}"/>`;
+  // 作図グリッド (画面専用。出力・印刷には載せない)
+  if (!print) {
+    let grid = "";
+    for (let x = ml; x <= w - m; x += GRID) grid += `M${x},${m} V${h - m}`;
+    for (let y = m; y <= h - m; y += GRID) grid += `M${ml},${y} H${w - m}`;
+    out += `<path d="${grid}" stroke="rgba(30,50,90,.055)" stroke-width="${0.3 * fr}" fill="none"/>`;
+    let grid2 = "";
+    for (let x = ml; x <= w - m; x += GRID * 4) grid2 += `M${x},${m} V${h - m}`;
+    for (let y = m; y <= h - m; y += GRID * 4) grid2 += `M${ml},${y} H${w - m}`;
+    out += `<path d="${grid2}" stroke="rgba(30,50,90,.09)" stroke-width="${0.3 * fr}" fill="none"/>`;
+  }
   // 輪郭線 (JIS Z 8311: とじ代側 20mm・他辺 c)
   out += `<rect x="${ml}" y="${m}" width="${w - ml - m}" height="${h - 2 * m}" fill="none" stroke="${INK}" stroke-width="${LINE_W.extra * fr}"/>`;
   // 中心マーク (4辺の中点。輪郭線の内側 5mm まで) — JIS Z 8311 必須
   const cmw = LINE_W.thick * fr, cm5 = 5 * fr;
-  const cxm = (ml + (w - m)) / 2, cym = h / 2;
+  const cxm = w / 2, cym = h / 2;   // 中心マークは用紙の対称軸上 (JIS Z 8311)
   out += `<path d="M${cxm},0 V${m + cm5} M${cxm},${h} V${h - m - cm5} M0,${cym} H${ml + cm5} M${w},${cym} H${w - m - cm5}"
     stroke="${INK}" stroke-width="${cmw}" fill="none"/>`;
   // 格子参照: 列 1,2,3… / 行 A,B,C… (I・O は使わない)
@@ -123,42 +126,97 @@ function sheetSVG(page) {
   const S = v => v * fr;                       // 用紙実寸 mm → 作図領域 mm
   const tbW = S(160), tbH = S(30), tbX = w - m - tbW, tbY = h - m - tbH;
   const [pw, ph] = PAPERS[meta.paper] || PAPERS.A3;
-  const c1 = tbX, c2 = tbX + S(56), c3 = tbX + S(112), c4 = tbX + S(136);
+  // 列割り: 図名 52 / ページ名 44 / 図番 34 / 改訂 30 mm (実務の図番桁数に合わせる)
+  const c1 = tbX, c2 = tbX + S(52), c3 = tbX + S(96), c4 = tbX + S(130);
+  const cw2 = [S(52), S(44), S(34), S(30)];
   const r1 = tbY, r2 = tbY + S(10), r3 = tbY + S(20), r4 = tbY + tbH;
-  const cell = (x, y, label, value, valSize = TEXT_H.normal, bold = false) =>
-    `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${label}</text>` +
-    `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${S(valSize)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text>`;
+  /* セル。値が欄幅を超える場合は文字高を段階的に落とし、それでも入らなければ
+     clipPath で切る (隣の欄へはみ出させない)。 */
+  let clipN = 0;
+  const cell = (x, y, ci, label, value, valSize = TEXT_H.normal, bold = false) => {
+    const cwv = cw2[ci] - S(3.4);
+    let size = valSize;
+    const width = (v, sz) => textWidthMM(String(v), sz * fr, bold);
+    while (size > TEXT_H.small && width(value, size) > cwv) size -= 0.25;  // 最小 2.5mm (JIS Z 8313)
+    const id = `tbc${clipN++}`;
+    return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${cw2[ci]}" height="${S(10)}"/></clipPath>` +
+      `<g clip-path="url(#${id})">` +
+      `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${escXML(label)}</text>` +
+      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${S(size)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text></g>`;
+  };
+  out += revisionTableSVG(tbX, tbY, tbW, S, fr, meta);
   out += `<g font-family="sans-serif" data-titleblock="1">
     <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="${S(LINE_W.thick)}"/>
     <path d="M${c1},${r2} H${tbX + tbW} M${c1},${r3} H${tbX + tbW} M${c2},${r1} V${r4} M${c3},${r1} V${r4} M${c4},${r1} V${r4}"
       stroke="${INK}" stroke-width="${S(LINE_W.thin)}"/>
-    ${cell(c1, r1, "図名 (プロジェクト)", App.project.name, TEXT_H.normal, true)}
-    ${cell(c2, r1, "ページ名", page.name, TEXT_H.normal, true)}
-    ${cell(c3, r1, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
-    ${cell(c4, r1, "改訂", meta.rev || "0")}
-    ${cell(c1, r2, "設計 (署名)", meta.designer || "—")}
-    ${cell(c2, r2, "検図 (署名)", meta.checker || "—")}
-    ${cell(c3, r2, "日付", meta.date || todayStr(), TEXT_H.small)}
-    ${cell(c4, r2, "尺度", meta.scale || "1:1")}
-    ${cell(c1, r3, "企業 (団体) 名", meta.author || "—", TEXT_H.normal)}
-    ${cell(c2, r3, "用紙 / 投影法", `${meta.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`, TEXT_H.small)}
+    ${cell(c1, r1, 0, "図名 (プロジェクト)", App.project.name, TEXT_H.normal, true)}
+    ${cell(c2, r1, 1, "ページ名", page.name, TEXT_H.normal, true)}
+    ${cell(c3, r1, 2, "図面番号", meta.dwgNo || "E-" + String(page.no).padStart(3, "0"))}
+    ${cell(c4, r1, 3, "改訂", meta.rev || "0")}
+    ${cell(c1, r2, 0, "設計 (署名)", meta.designer || "—")}
+    ${cell(c2, r2, 1, "検図 (署名)", meta.checker || "—")}
+    ${cell(c3, r2, 2, "日付", meta.date || todayStr())}
+    ${cell(c4, r2, 3, "尺度", meta.scale || "1:1")}
+    ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
+    ${cell(c2, r3, 1, "用紙 / 投影法", `${meta.paper} ${pw}×${ph} / ${meta.proj || "第三角法"}`)}
     <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">ページ</text>
     <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${S(TEXT_H.large)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
-    ${projSymbolSVG(c4 + S(4), r3 + S(2.4), S(1), meta.proj)}
+    ${projSymbolSVG(c4 + S(1), r3 + S(2.4), S(1), meta.proj)}
   </g>`;
   return out;
 }
 
-/** 投影法の記号 (JIS Z 8316)。第三角法=小円が左、第一角法=小円が右 */
+/** 文字列の概算幅 (mm)。和文は全角として数える */
+function textWidthMM(s, size, bold = false) {
+  let n = 0;
+  for (const ch of String(s)) n += /[　-鿿！-｠]/.test(ch) ? 1 : 0.58;
+  return n * size * (bold ? 1.05 : 1);
+}
+
+/** 改訂履歴欄 (表題欄の直上。JIS Z 8311 附属書: 改訂記号・日付・内容・承認) */
+function revisionTableSVG(tbX, tbY, tbW, S, fr, meta) {
+  const revs = (meta.revs || []).filter(r => r && (r.rev || r.desc));
+  if (!revs.length) return "";
+  const rows = revs.slice(-4);
+  const rh = S(6), h = rh * (rows.length + 1);
+  const y0 = tbY - h;
+  const cols = [S(16), S(26), tbW - S(16) - S(26) - S(22), S(22)]; // 記号/日付/内容/承認
+  const xs = [tbX];
+  cols.forEach(c => xs.push(xs[xs.length - 1] + c));
+  const head = ["改訂", "日付", "内容", "承認"];
+  let out = `<g font-family="sans-serif" data-revtable="1">
+    <rect x="${tbX}" y="${y0}" width="${tbW}" height="${h}" fill="#fff" stroke="${INK}" stroke-width="${S(LINE_W.thick)}"/>`;
+  let grid = "";
+  for (let i = 1; i <= rows.length; i++) grid += `M${tbX},${y0 + rh * i} H${tbX + tbW} `;
+  xs.slice(1, -1).forEach(x => { grid += `M${x},${y0} V${y0 + h} `; });
+  out += `<path d="${grid}" stroke="${INK}" stroke-width="${S(LINE_W.thin)}" fill="none"/>`;
+  head.forEach((t, i) => {
+    out += `<text x="${xs[i] + S(1.6)}" y="${y0 + rh - S(1.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${t}</text>`;
+  });
+  // 新しい改訂が上に来るように下から積む (JIS の一般的な書式)
+  rows.slice().reverse().forEach((r, ri) => {
+    const y = y0 + rh * (ri + 1);
+    [r.rev, r.date, r.desc, r.appr].forEach((v, i) => {
+      if (!v) return;
+      out += `<text x="${xs[i] + S(1.6)}" y="${y + rh - S(1.6)}" font-size="${S(TEXT_H.small)}" fill="${INK}">${escXML(v)}</text>`;
+    });
+  });
+  return out + `</g>`;
+}
+
+/** 投影法の記号 (JIS Z 8316 / ISO 5456-2)。円すい台とその端面図を並べ、
+    第三角法は端面図 (同心円) を右、第一角法は左に置く。同心円の径は
+    円すい台の大端 (φ6) と小端 (φ3.72) に一致させる。 */
 function projSymbolSVG(x, y, u, proj) {
+  if (proj === "該当なし (回路図)") return "";
   const first = proj === "第一角法";
-  const big = 3 * u, small = 1.9 * u, cy = y + 3.6 * u;
+  const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
   const bx = x + (first ? 11 * u : 3.4 * u), sx = x + (first ? 3.4 * u : 11 * u);
-  const sw = 0.25 * u;
+  const sw = LINE_W.thin * u;
   return `<g stroke="${INK}" stroke-width="${sw}" fill="none">
-    <path d="M${bx - big * 1.7},${cy - big} L${bx + big * 1.7},${cy - big * 0.62} M${bx - big * 1.7},${cy + big} L${bx + big * 1.7},${cy + big * 0.62}
-             M${bx - big * 1.7},${cy - big} V${cy + big} M${bx + big * 1.7},${cy - big * 0.62} V${cy + big * 0.62}"/>
-    <circle cx="${sx}" cy="${cy}" r="${small}"/><circle cx="${sx}" cy="${cy}" r="${small * 0.5}"/>
+    <path d="M${bx - big * 1.7},${cy - big} L${bx + big * 1.7},${cy - smallR} M${bx - big * 1.7},${cy + big} L${bx + big * 1.7},${cy + smallR}
+             M${bx - big * 1.7},${cy - big} V${cy + big} M${bx + big * 1.7},${cy - smallR} V${cy + smallR}"/>
+    <circle cx="${sx}" cy="${cy}" r="${big}"/><circle cx="${sx}" cy="${cy}" r="${smallR}"/>
   </g>`;
 }
 
@@ -273,7 +331,7 @@ function devicesSVG(page) {
       const rotated = (dev.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
       const tx = abs.x + 1, ty = rotated ? abs.y - 1.6 : abs.y + (isTop ? 3.4 : -1.6);
-      out += `<text x="${tx}" y="${ty}" font-size="2.5" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
+      out += `<text x="${tx}" y="${ty}" font-size="${TEXT_H.small * fr}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
     out += devLabelsSVG(dev, sym);
@@ -310,26 +368,29 @@ function simDevVisual(dev, sym) {
 function devLabelsSVG(dev, sym) {
   const b = devBounds(dev);
   const tag = displayTag(dev);
+  const fr = sheetScale();
+  // 文字高は JIS Z 8313 の呼び (漢字は 3.5mm 以上) を用紙上で確保する
+  const hTag = TEXT_H.normal * fr, hDesc = TEXT_H.normal * fr, hRef = TEXT_H.small * fr;
   let out = "";
   const horizontal = (dev.rot || 0) % 180 !== 0;
   if (horizontal) {
     // 横向きデバイス: タグは右肩に置く (レール・隣接ピン名との重なり防止)
-    if (tag) out += `<text x="${b.x + b.w - 2.5}" y="${b.y - 2}" font-size="3.6" text-anchor="start" fill="${INK}" font-weight="600" font-family="monospace">${escXML(tag)}</text>`;
-    if (dev.desc) out += `<text x="${b.x + b.w / 2}" y="${b.y + b.h + 4}" font-size="2.8" text-anchor="middle" fill="${INK_SOFT}">${escXML(dev.desc)}</text>`;
+    if (tag) out += `<text x="${b.x + b.w - 2.5 * fr}" y="${b.y - 2 * fr}" font-size="${hTag}" text-anchor="start" fill="${INK}" font-weight="600" font-family="monospace">${escXML(tag)}</text>`;
+    if (dev.desc) out += `<text x="${b.x + b.w / 2}" y="${b.y + b.h + 4.4 * fr}" font-size="${hDesc}" text-anchor="middle" fill="${INK_SOFT}">${escXML(dev.desc)}</text>`;
     return out;
   }
-  const labelX = b.x - 2.2, labelYc = b.y + b.h / 2;
+  const labelX = b.x - 2.2 * fr, labelYc = b.y + b.h / 2;
   if (tag) {
-    out += `<text x="${labelX}" y="${labelYc - 0.6}" font-size="3.6" text-anchor="end" fill="${INK}" font-weight="600" font-family="monospace">${escXML(tag)}</text>`;
+    out += `<text x="${labelX}" y="${labelYc - 0.8 * fr}" font-size="${hTag}" text-anchor="end" fill="${INK}" font-weight="600" font-family="monospace">${escXML(tag)}</text>`;
   }
   if (dev.desc) {
-    out += `<text x="${labelX}" y="${labelYc + (tag ? 3.4 : 0.8)}" font-size="2.8" text-anchor="end" fill="${INK_SOFT}">${escXML(dev.desc)}</text>`;
+    out += `<text x="${labelX}" y="${labelYc + (tag ? 4 : 1) * fr}" font-size="${hDesc}" text-anchor="end" fill="${INK_SOFT}">${escXML(dev.desc)}</text>`;
   }
   // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)
   if (dev.linkTo) {
     const f = findDevice(dev.linkTo);
     if (f) {
-      out += `<text x="${b.x + b.w + 1.6}" y="${labelYc + 1.2}" font-size="3" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
+      out += `<text x="${b.x + b.w + 1.6 * fr}" y="${labelYc + 1.2 * fr}" font-size="${hRef}" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
     }
   }
   return out;
@@ -340,6 +401,7 @@ function devLabelsSVG(dev, sym) {
 function mirrorSVG(coilDev) {
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
+  const mfr = sheetScale();
   const csym0 = SYMBOLS_BY_ID[coilDev.sym];
   // 多極デバイス (サーマル等) は極間の配線を避けて左下に表示
   const wide = csym0.bounds[2] > 20;
@@ -359,11 +421,11 @@ function mirrorSVG(coilDev) {
     } else {
       out += `<path d="M${x},${cy + 1.5} h2 l2.6,-2.8 m0.6,2.8 h0.8" stroke="${INK_SOFT}" stroke-width="0.35" fill="none"/>`;
     }
-    out += `<text x="${x + 7}" y="${cy + 2.3}" font-size="2.4" fill="${INK_SOFT}">${pinLabel}</text>`;
-    out += `<text x="${x + 15}" y="${cy + 2.3}" font-size="2.6" fill="#7a4ec2">/${devLocation(c)}</text>`;
+    out += `<text x="${x + 7}" y="${cy + 2.3}" font-size="${TEXT_H.small * mfr}" fill="${INK_SOFT}">${pinLabel}</text>`;
+    out += `<text x="${x + 15}" y="${cy + 2.3}" font-size="${TEXT_H.small * mfr}" fill="#7a4ec2">/${devLocation(c)}</text>`;
   });
   if (contacts.length > MAXROWS) {
-    out += `<text x="${x}" y="${y0 + MAXROWS * 4.2 + 2}" font-size="2.4" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
+    out += `<text x="${x}" y="${y0 + MAXROWS * 4.2 + 2}" font-size="${TEXT_H.small * mfr}" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
   }
   out += `</g>`;
   return out;
@@ -372,16 +434,20 @@ function mirrorSVG(coilDev) {
 /* ── テキスト ── */
 function textsSVG(page) {
   let out = "";
+  const fr = sheetScale();
   page.texts.forEach(t => {
+    const h = textHeight(t) * fr;   // 用紙上の文字高 × 尺度
     const selected = App.selection.has(t.id);
     if (selected) {
-      const wApprox = (t.text.length * (t.size || 4)) * 0.62 + 2;
-      out += `<rect x="${t.x - wApprox / 2}" y="${t.y - (t.size || 4)}" width="${wApprox}" height="${(t.size || 4) + 2.5}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="0.35" rx="0.8"/>`;
+      const wApprox = t.text.length * h * 0.62 + 2 * fr;
+      out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"/>`;
     }
-    out += `<text x="${t.x}" y="${t.y}" font-size="${t.size || 4}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
+    out += `<text x="${t.x}" y="${t.y}" font-size="${h}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
   });
   return out;
 }
+/** 自由文字の高さ (既定は JIS Z 8313 の呼び 3.5mm) */
+function textHeight(t) { return t.size || TEXT_H.normal; }
 
 /* ── オーバーレイ (ピン / 作図中ワイヤ / ゴースト / ラバーバンド) ── */
 function overlaySVG(page) {
@@ -456,7 +522,9 @@ function hitTest(wx, wy) {
   // テキスト
   for (let i = page.texts.length - 1; i >= 0; i--) {
     const t = page.texts[i];
-    const w = t.text.length * (t.size || 4) * 0.62 + 2, h = (t.size || 4) + 2;
+    const fr = sheetScale();
+    const th = textHeight(t) * fr;
+    const w = t.text.length * th * 0.62 + 2 * fr, h = th + 2 * fr;
     if (wx > t.x - w / 2 && wx < t.x + w / 2 && wy > t.y - h && wy < t.y + 1.5) return { type: "text", obj: t };
   }
   // デバイス
@@ -898,10 +966,8 @@ function onDblClick(e) {
 
 /** 表題欄 (右下) の内側か */
 function inTitleBlock(x, y) {
-  const f = scaleFactor(projectMeta().scale);
-  const tbW = 150 * f, tbH = 30 * f;
-  const tbX = SHEET.w - SHEET.margin - tbW, tbY = SHEET.h - SHEET.margin - tbH;
-  return x >= tbX && x <= tbX + tbW && y >= tbY && y <= tbY + tbH;
+  const tb = titleBlockRect();
+  return x >= tb.x && x <= tb.x + tb.w && y >= tb.y && y <= tb.y + tb.h;
 }
 
 function finishWireDraft() {
@@ -1199,7 +1265,7 @@ function updateStatusCount() {
 function exportSheetSVG(page = null) {
   page = page || curPage();
   const body =
-    `<g>${sheetSVG(page)}</g><g>${zonesSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
+    `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page)}</g><g>${wiresSVG(page)}</g><g>${devicesSVG(page)}</g><g>${textsSVG(page)}</g>`;
   // viewBox は用紙そのもの (余白を足すと印刷時に尺度がずれるため)
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SHEET.w} ${SHEET.h}" width="${SHEET.w / sheetScale()}mm" height="${SHEET.h / sheetScale()}mm" font-family="sans-serif">${body}</svg>`;
 }

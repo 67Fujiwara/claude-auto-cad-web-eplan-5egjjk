@@ -23,9 +23,9 @@ const SYM_CATS = {
 const G_NO = `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/>`;
 const G_NC = `<path d="M0,0 V7 M0,7 H-5 M0,13 L-4.8,3.4 M0,20 V13"/>`;
 // 押しボタン操作部 (E形キャップ + 破線リンク)
-const G_PB = `<path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13" /><path d="M-11,10 H-3" stroke-dasharray="1.6 1.6"/>`;
+const G_PB = `<path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13" /><path d="M-11,10 H-3" stroke-dasharray="3 0.75"/>`;
 // キノコ頭 (非常停止)
-const G_MUSH = `<path d="M-13,4.5 A6.5,6.5 0 0 0 -13,15.5"/><path d="M-13,4.5 V15.5"/><path d="M-13,10 H-11"/><path d="M-11,10 H-3" stroke-dasharray="1.6 1.6"/><path d="M-8.5,10 L-7,12.5 L-5.5,10" />`;
+const G_MUSH = `<path d="M-13,4.5 A6.5,6.5 0 0 0 -13,15.5"/><path d="M-13,4.5 V15.5"/><path d="M-13,10 H-11"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75"/><path d="M-8.5,10 L-7,12.5 L-5.5,10" />`;
 // 接触器主接点1極 (固定接点に接触器機能の小円弧)
 const G_NO_CONT = G_NO + `<path d="M-1.8,7 A1.8,1.8 0 0 0 1.8,7"/>`;
 // 遮断器1極 (接点 + ×)
@@ -58,13 +58,13 @@ const SYMBOLS = [
     id: "sel_sw", cat: "input", letter: "S", name: "セレクタスイッチ", nameEn: "Selector switch",
     desc: "回転式・オルタネイト (JIS C 0617 手動操作・回転)", typ: "XB4-BD21", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-18,-2, 21, 24],
-    body: G_NO + `<path d="M-15,7 L-11,10 L-15,13"/><path d="M-11,10 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NO + `<path d="M-15,7 L-11,10 L-15,13"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ", nameEn: "Limit switch",
     desc: "ローラレバー・a接点", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NO + `<path d="M-10,14 L-15,6"/><circle cx="-15.8" cy="4.6" r="1.7"/><path d="M-12.5,10 L-3,10" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NO + `<path d="M-10,14 L-15,6"/><circle cx="-15.8" cy="4.6" r="1.7"/><path d="M-12.5,10 L-3,10" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "prox", cat: "input", letter: "B", name: "近接センサ", nameEn: "Proximity sensor",
@@ -82,19 +82,19 @@ const SYMBOLS = [
     id: "press_sw", cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
     desc: "設定圧で動作・a接点", typ: "SNS-C102X", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-18,-2, 21, 24],
-    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/><path d="M-11.6,9.9 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/><path d="M-11.6,9.9 H-3" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "float_sw", cat: "input", letter: "B", name: "フロートスイッチ", nameEn: "Float switch",
     desc: "液面レベル検出", typ: "", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NO + `<circle cx="-13" cy="13.5" r="3"/><path d="M-13,10.5 V10 M-13,10 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NO + `<circle cx="-13" cy="13.5" r="3"/><path d="M-13,10.5 V10 M-13,10 H-3" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "thermo", cat: "input", letter: "B", name: "サーモスタット", nameEn: "Thermostat",
     desc: "温度スイッチ・b接点", typ: "US-622", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
     sim: "contact_nc", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NC + `<text x="-13" y="12.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-9,10 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NC + `<text x="-13" y="12.6" font-size="7" text-anchor="middle" fill="currentColor" stroke="none" font-family="serif" font-style="italic">ϑ</text><path d="M-9,10 H-3" stroke-dasharray="3 0.75"/>`,
   },
 
   /* ══════════ ロジック機器 ══════════ */
@@ -114,13 +114,13 @@ const SYMBOLS = [
     id: "timer_on", cat: "logic", letter: "K", name: "タイマ (オンディレイ)", nameEn: "On-delay timer",
     desc: "励磁後 t 秒で動作", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
     sim: "coil", bounds: [-8,0, 21, 20], mirror: true, timer: "on", maxContacts: 2,
-    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,4.2 A3,3 0 0 1 3,4.2"/><text x="7" y="12.6" font-size="3.2" fill="currentColor" stroke="none" font-family="monospace">TON</text>`,
+    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,4.2 A3,3 0 0 1 3,4.2"/><text x="7" y="12.6" font-size="3.5" fill="currentColor" stroke="none" font-family="monospace">TON</text>`,
   },
   {
     id: "timer_off", cat: "logic", letter: "K", name: "タイマ (オフディレイ)", nameEn: "Off-delay timer",
     desc: "消磁後 t 秒で復帰", typ: "H3Y-2 DC24V", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
     sim: "coil", bounds: [-8,0, 21, 20], mirror: true, timer: "off", maxContacts: 2,
-    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,1.6 A3,3 0 0 0 3,1.6"/><text x="7" y="12.6" font-size="3.2" fill="currentColor" stroke="none" font-family="monospace">TOF</text>`,
+    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><path d="M-3,1.6 A3,3 0 0 0 3,1.6"/><text x="7" y="12.6" font-size="3.5" fill="currentColor" stroke="none" font-family="monospace">TOF</text>`,
   },
   {
     id: "aux_no", cat: "logic", letter: "K", name: "補助接点 (a接点)", nameEn: "Aux contact NO",
@@ -162,7 +162,7 @@ const SYMBOLS = [
     id: "safety_relay", cat: "logic", letter: "K", name: "セーフティリレー", nameEn: "Safety relay",
     desc: "強制ガイド式接点リレー", typ: "G7SA-3A1B", pins: [{x:0,y:0,n:"A1"},{x:0,y:20,n:"A2"}],
     sim: "coil", bounds: [-9,0, 18, 20], mirror: true, maxContacts: 4,
-    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><rect x="-7" y="4" width="14" height="12" stroke-dasharray="2 1.6"/>`,
+    body: `<path d="M0,0 V6 M0,20 V14"/><rect x="-5" y="6" width="10" height="8"/><rect x="-7" y="4" width="14" height="12" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "plc_di", cat: "logic", letter: "A", name: "PLC入力ポイント", nameEn: "PLC digital input",
@@ -221,7 +221,7 @@ const SYMBOLS = [
     desc: "電磁接触器の主接点", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "contact3_no", bounds: [-8,-2, 31, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g><path d="M-3,9 L17,9" stroke-dasharray="1.6 1.6"/>`,
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g><path d="M-3,9 L17,9" stroke-dasharray="3 0.75"/>`,
   },
 
   /* ══════════ 電源・保護 ══════════ */
@@ -236,26 +236,26 @@ const SYMBOLS = [
     desc: "モールドケース遮断器 3極", typ: "NF63-CV 3P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "breaker3", bounds: [-8,-2, 31, 24],
-    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><g transform="translate(20,0)">${G_CB}</g><path d="M-3,9 L17,9" stroke-dasharray="1.6 1.6"/>`,
+    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><g transform="translate(20,0)">${G_CB}</g><path d="M-3,9 L17,9" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "ol3", cat: "power", letter: "F", name: "サーマルリレー 3極", nameEn: "Thermal overload 3P",
     desc: "モータ過負荷保護", typ: "TH-T18 5A", mirror: true, maxContacts: 2,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "passthru3", bounds: [-6,0, 29, 20],
-    body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><g transform="translate(20,0)">${G_OL}</g><rect x="-5" y="5" width="30" height="10" stroke-dasharray="2 1.6"/>`,
+    body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><g transform="translate(20,0)">${G_OL}</g><rect x="-5" y="5" width="30" height="10" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "ol_nc", cat: "power", letter: "F", name: "サーマル接点 (95-96)", nameEn: "Thermal OL contact NC",
     desc: "過負荷時に開くb接点", linked: true, pins: [{x:0,y:0,n:"95"},{x:0,y:20,n:"96"}],
     sim: "contact_nc", bounds: [-12,-2, 15, 24],
-    body: G_NC + `<path d="M-10,7 H-7 V13 H-10" transform="translate(0,0)"/><path d="M-7,10 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NC + `<path d="M-10,7 H-7 V13 H-10" transform="translate(0,0)"/><path d="M-7,10 H-3" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "ol_no", cat: "power", letter: "F", name: "サーマル接点 (97-98)", nameEn: "Thermal OL contact NO",
     desc: "過負荷時に閉じるa接点 (警報用)", linked: true, pins: [{x:0,y:0,n:"97"},{x:0,y:20,n:"98"}],
     sim: "contact_no", bounds: [-12,-2, 15, 24],
-    body: G_NO + `<path d="M-10,7 H-7 V13 H-10"/><path d="M-7,10 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: G_NO + `<path d="M-10,7 H-7 V13 H-10"/><path d="M-7,10 H-3" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "fuse", cat: "power", letter: "F", name: "ヒューズ", nameEn: "Fuse",
@@ -268,7 +268,7 @@ const SYMBOLS = [
     desc: "AC100/200V → DC24V", typ: "S8FS-G10024CD", horizontalPins: true,
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"}],
     sim: "psu", bounds: [-17,0, 34, 30],
-    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-7" y="12.5" font-size="4.6" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">AC</text><text x="7" y="22.5" font-size="4.6" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DC</text>`,
+    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-7" y="12.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">AC</text><text x="7" y="22.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DC</text>`,
   },
   {
     id: "supply3", cat: "power", letter: "W", name: "三相電源 L1/L2/L3", nameEn: "3-phase supply",
@@ -289,21 +289,21 @@ const SYMBOLS = [
     desc: "モールドケース遮断器 2極 (単相用)", typ: "NF32-SV 2P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "breaker2", bounds: [-8,-2, 21, 24],
-    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><path d="M-3,9 L7,9" stroke-dasharray="1.6 1.6"/>`,
+    body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "main_cont2", cat: "output", letter: "Q", name: "主接点 (2極)", nameEn: "Main contacts 2P",
     desc: "電磁接触器の主接点 (単相用)", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "contact2_no", bounds: [-8,-2, 21, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><path d="M-3,9 L7,9" stroke-dasharray="1.6 1.6"/>`,
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "ol2", cat: "power", letter: "F", name: "サーマルリレー 2極", nameEn: "Thermal overload 2P",
     desc: "モータ過負荷保護 (単相用)", typ: "TH-T18 3.6A", mirror: true, maxContacts: 2,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "passthru2", bounds: [-6,0, 19, 20],
-    body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><rect x="-5" y="5" width="20" height="10" stroke-dasharray="2 1.6"/>`,
+    body: `<g>${G_OL}</g><g transform="translate(10,0)">${G_OL}</g><rect x="-5" y="5" width="20" height="10" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "trafo", cat: "power", letter: "T", name: "変圧器 (シールド付)", nameEn: "Shielded transformer",
@@ -314,7 +314,7 @@ const SYMBOLS = [
       `<path d="M-5,16 A2.5,2.5 0 0 0 0,16 A2.5,2.5 0 0 0 5,16"/>` +   // 一次巻線 (端子に直結・中央へ向くコブ)
       `<path d="M-5,24 A2.5,2.5 0 0 1 0,24 A2.5,2.5 0 0 1 5,24"/>` +   // 二次巻線
       `<path d="M-8,18.7 H8"/>` +                                       // 鉄心 (実線)
-      `<path d="M-8,21.3 H8" stroke-dasharray="2.2 1.6"/>`,             // 静電シールド (破線)
+      `<path d="M-8,21.3 H8" stroke-dasharray="3 0.75"/>`,             // 静電シールド (破線)
   },
   {
     id: "earth", cat: "power", letter: "E", name: "接地 (一般)", nameEn: "Earth",
@@ -340,13 +340,13 @@ const SYMBOLS = [
     id: "generic2", cat: "misc", letter: "U", name: "汎用機器 (2端子)", nameEn: "Generic device 2-pin",
     desc: "未登録機器用の箱。名称/型式はプロパティで設定", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
     sim: "none", bounds: [-8,0, 16, 20],
-    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-7" y="5" width="14" height="10"/><path d="M-4,10 H4" stroke-dasharray="1.4 1.4"/>`,
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-7" y="5" width="14" height="10"/><path d="M-4,10 H4" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "generic4", cat: "misc", letter: "U", name: "汎用機器 (4端子)", nameEn: "Generic device 4-pin",
     desc: "未登録機器用の箱。名称/型式はプロパティで設定", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "none", bounds: [-8,0, 26, 20],
-    body: `<path d="M0,0 V5 M0,20 V15 M10,0 V5 M10,20 V15"/><rect x="-7" y="5" width="24" height="10"/><path d="M-3,10 H13" stroke-dasharray="1.4 1.4"/>`,
+    body: `<path d="M0,0 V5 M0,20 V15 M10,0 V5 M10,20 V15"/><rect x="-7" y="5" width="24" height="10"/><path d="M-3,10 H13" stroke-dasharray="3 0.75"/>`,
   },
 ];
 

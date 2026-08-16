@@ -51,7 +51,7 @@ const DB_SYMBOLS = [
     id: "func_earth", db: true, group: "接地", jis: "03-02-01", cat: "db", letter: "E",
     name: "機能接地 (FE)", nameEn: "Functional earth", desc: "機能接地。一般接地記号+用途注記で表す",
     pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-7,0, 14, 17],
-    body: `<path d="M0,0 V5 M-6,5 H6 M-4,8 H4 M-2,11 H2"/><text x="0" y="16" font-size="3.2" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">FE</text>`,
+    body: `<path d="M0,0 V5 M-6,5 H6 M-4,8 H4 M-2,11 H2"/><text x="0" y="16" font-size="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">FE</text>`,
   },
   {
     id: "chassis_earth", db: true, group: "接地", jis: "03-02-04", cat: "db", letter: "E",
@@ -153,7 +153,7 @@ const DB_SYMBOLS = [
     id: "rectifier", db: true, group: "電源・変換", jis: "06-10-01", cat: "db", letter: "U",
     name: "整流器", nameEn: "Rectifier", desc: "箱+ダイオード記号 (AC→DC)",
     pins: [{x:-5,y:0,n:"~"},{x:5,y:0,n:"~"},{x:-5,y:30,n:"+"},{x:5,y:30,n:"-"}], sim: "none", horizontalPins: true, bounds: [-13,0, 26, 30],
-    body: `<path d="M-5,0 V5 M5,0 V5 M-5,30 V25 M5,25 V30"/><rect x="-12" y="5" width="24" height="20"/><path d="M12,5 L-12,25"/><text x="-7" y="12.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><path d="M4,20 H10"/><path d="M4,22.4 H10" stroke-dasharray="1.2 1"/>`,
+    body: `<path d="M-5,0 V5 M5,0 V5 M-5,30 V25 M5,25 V30"/><rect x="-12" y="5" width="24" height="20"/><path d="M12,5 L-12,25"/><text x="-7" y="12.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><path d="M4,20 H10"/><path d="M4,22.4 H10" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "inverter_box", db: true, group: "電源・変換", cat: "db", letter: "U",
@@ -161,7 +161,7 @@ const DB_SYMBOLS = [
     typ: "FR-D720", horizontalPins: true,
     pins: [{x:-10,y:0,n:"R"},{x:0,y:0,n:"S"},{x:10,y:0,n:"T"},{x:-10,y:30,n:"U"},{x:0,y:30,n:"V"},{x:10,y:30,n:"W"}],
     sim: "none", bounds: [-16,0, 32, 30],
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M0,25 V30 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-8" y="13" font-size="4.6" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="8" y="22.5" font-size="4.6" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="0" y="16.5" font-size="4" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">INV</text>`,
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M0,25 V30 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-8" y="13" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="8" y="22.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="0" y="16.5" font-size="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">INV</text>`,
   },
   {
     id: "ps_box", db: true, group: "電源・変換", cat: "db", letter: "G",
@@ -178,14 +178,14 @@ const DB_SYMBOLS = [
     name: "漏電遮断器 (ELB) 2P", nameEn: "Earth-leakage breaker 2P", desc: "零相変流器つき遮断器 (単相用)", typ: "NV32-SV 2P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "breaker2", bounds: [-9,-2, 24, 26],
-    body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-3,9 L7,9" stroke-dasharray="1.6 1.6"/><path d="M5,19.8 A8,2.3 0 1 0 5,15.2 A8,2.3 0 1 0 5,19.8"/>`,
+    body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75"/><path d="M5,19.8 A8,2.3 0 1 0 5,15.2 A8,2.3 0 1 0 5,19.8"/>`,
   },
   {
     id: "elb3", db: true, group: "開閉・保護", cat: "db", letter: "F",
     name: "漏電遮断器 (ELB) 3P", nameEn: "Earth-leakage breaker 3P", desc: "零相変流器つき遮断器 (三相用)", typ: "NV63-CV 3P",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "breaker3", bounds: [-9,-2, 34, 26],
-    body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(20,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-3,9 L17,9" stroke-dasharray="1.6 1.6"/><path d="M10,19.8 A13,2.3 0 1 0 10,15.2 A13,2.3 0 1 0 10,19.8"/>`,
+    body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(20,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-3,9 L17,9" stroke-dasharray="3 0.75"/><path d="M10,19.8 A13,2.3 0 1 0 10,15.2 A13,2.3 0 1 0 10,19.8"/>`,
   },
   {
     id: "disconnector", db: true, group: "開閉・保護", jis: "07-13-06", cat: "db", letter: "Q",
@@ -211,19 +211,19 @@ const DB_SYMBOLS = [
     id: "voltmeter", db: true, group: "計器・信号", jis: "08-02-01", cat: "db", letter: "P",
     name: "電圧計", nameEn: "Voltmeter",  desc: "指示計器 V",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "none", bounds: [-7,0, 14, 20],
-    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" font-size="6" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">V</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">V</text>`,
   },
   {
     id: "ammeter", db: true, group: "計器・信号", jis: "08-02-01", cat: "db", letter: "P",
     name: "電流計", nameEn: "Ammeter", desc: "指示計器 A",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "none", bounds: [-7,0, 14, 20],
-    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" font-size="6" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">A</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><circle cx="0" cy="10" r="6"/><text x="0" y="12.3" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">A</text>`,
   },
   {
     id: "hour_meter", db: true, group: "計器・信号", jis: "08-04-01", cat: "db", letter: "P",
     name: "時間計 (アワメータ)", nameEn: "Hour meter", desc: "運転時間の積算計",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "load", bounds: [-7,0, 14, 20],
-    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-6" y="4" width="12" height="12"/><text x="0" y="12.6" font-size="5.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">h</text>`,
+    body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-6" y="4" width="12" height="12"/><text x="0" y="12.6" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-style="italic">h</text>`,
   },
   {
     id: "bell", db: true, group: "計器・信号", jis: "08-10-01", cat: "db", letter: "P",
@@ -246,7 +246,7 @@ const DB_SYMBOLS = [
     pins: [{x:-15,y:0,n:"I0"},{x:-5,y:0,n:"I1"},{x:5,y:0,n:"I2"},{x:15,y:0,n:"I3"},
            {x:-15,y:30,n:"Q0"},{x:-5,y:30,n:"Q1"},{x:5,y:30,n:"Q2"},{x:15,y:30,n:"Q3"}],
     sim: "none", bounds: [-21,0, 42, 30],
-    body: `<path d="M-15,0 V5 M-5,0 V5 M5,0 V5 M15,0 V5 M-15,30 V25 M-5,25 V30 M5,25 V30 M15,25 V30"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" font-size="5.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
+    body: `<path d="M-15,0 V5 M-5,0 V5 M5,0 V5 M15,0 V5 M-15,30 V25 M-5,25 V30 M5,25 V30 M15,25 V30"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
   },
   {
     id: "fan", db: true, group: "実務機器", cat: "db", letter: "M",
@@ -259,7 +259,7 @@ const DB_SYMBOLS = [
     name: "モータブレーカ (MMS) 3P", nameEn: "Manual motor starter", desc: "手動モータスタータ (遮断器+熱動素子)", typ: "MMP-T32 2.5A",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "breaker3", mirror: true, maxContacts: 2, bounds: [-9,-2, 32, 26],
-    body: `<g><path d="M0,0 V7 M0,13 L-4.8,5 M0,13 V15.5 M0,15.5 H-3 V19 H0 M0,19 V20"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,13 L-4.8,5 M0,13 V15.5 M0,15.5 H-3 V19 H0 M0,19 V20"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(20,0)"><path d="M0,0 V7 M0,13 L-4.8,5 M0,13 V15.5 M0,15.5 H-3 V19 H0 M0,19 V20"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-3,9 L17,9" stroke-dasharray="1.6 1.6"/>`,
+    body: `<g><path d="M0,0 V7 M0,13 L-4.8,5 M0,13 V15.5 M0,15.5 H-3 V19 H0 M0,19 V20"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,13 L-4.8,5 M0,13 V15.5 M0,15.5 H-3 V19 H0 M0,19 V20"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><g transform="translate(20,0)"><path d="M0,0 V7 M0,13 L-4.8,5 M0,13 V15.5 M0,15.5 H-3 V19 H0 M0,19 V20"/><path d="M-1.8,11.2 L1.8,14.8 M-1.8,14.8 L1.8,11.2"/></g><path d="M-3,9 L17,9" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "cb_aux_no", db: true, group: "開閉・保護", cat: "db", letter: "F",
@@ -271,21 +271,21 @@ const DB_SYMBOLS = [
     id: "cb_al_no", db: true, group: "開閉・保護", cat: "db", letter: "F",
     name: "遮断器警報接点 (AL)", nameEn: "Breaker alarm contact", desc: "トリップで閉じる警報a接点。遮断器にリンクして使用",
     pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "contact_no", linked: true, bounds: [-10,-2, 13, 24],
-    body: `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-7.5,11 L-6,13.5 L-4.5,11"/><path d="M-4.2,12.2 H-1.2" stroke-dasharray="1.4 1.2"/>`,
+    body: `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-7.5,11 L-6,13.5 L-4.5,11"/><path d="M-4.2,12.2 H-1.2" stroke-dasharray="3 0.75"/>`,
   },
   {
     id: "pb_lamp", db: true, group: "実務機器", cat: "db", letter: "S",
     name: "照光押しボタン", nameEn: "Illuminated pushbutton", desc: "押しボタンa接点+表示灯の複合 (灯側 X1/X2)", typ: "XB4-BW33B1",
     pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"},{x:12,y:0,n:"X1"},{x:12,y:20,n:"X2"}],
     sim: "contact_no", momentary: true, bounds: [-18,-2, 36, 24],
-    body: `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13"/><path d="M-11,10 H-3" stroke-dasharray="1.6 1.6"/><g transform="translate(12,0)"><path d="M0,0 V4.5 M0,20 V15.5"/><circle cx="0" cy="10" r="5.5"/><path d="M-3.9,6.1 L3.9,13.9 M-3.9,13.9 L3.9,6.1"/></g>`,
+    body: `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/><path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13"/><path d="M-11,10 H-3" stroke-dasharray="3 0.75"/><g transform="translate(12,0)"><path d="M0,0 V4.5 M0,20 V15.5"/><circle cx="0" cy="10" r="5.5"/><path d="M-3.9,6.1 L3.9,13.9 M-3.9,13.9 L3.9,6.1"/></g>`,
   },
   {
     id: "sel3", db: true, group: "実務機器", cat: "db", letter: "S",
     name: "3位置セレクタ (手動-切-自動)", nameEn: "3-position selector", desc: "左=手動接点 / 右=自動接点。中央位置で両開", typ: "XB4-BD33",
     pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"},{x:10,y:0,n:"23"},{x:10,y:20,n:"24"}],
     sim: "contact2_no", bounds: [-18,-2, 30, 24],
-    body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><path d="M-3,9 L7,9" stroke-dasharray="1.6 1.6"/><path d="M-15,6 L-11,9 L-15,12"/><path d="M-11,9 H-3" stroke-dasharray="1.6 1.6"/>`,
+    body: `<g><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><g transform="translate(10,0)"><path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/></g><path d="M-3,9 L7,9" stroke-dasharray="3 0.75"/><path d="M-15,6 L-11,9 L-15,12"/><path d="M-11,9 H-3" stroke-dasharray="3 0.75"/>`,
   },
 ];
 

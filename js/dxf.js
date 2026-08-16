@@ -214,7 +214,7 @@ function pageToDXF(page) {
 
   // ── 輪郭線 (とじ代 20mm) + 中心マーク ──
   ents += dxfPoly([[ml, mg], [w - mg, mg], [w - mg, h - mg], [ml, h - mg], [ml, mg]], "FRAME");
-  const cxm = (ml + (w - mg)) / 2, cym = h / 2, cm5 = S(5);
+  const cxm = w / 2, cym = h / 2, cm5 = S(5);   // 中心マークは用紙の対称軸上
   ents += dxfLine(cxm, 0, cxm, mg + cm5, "FRAME");
   ents += dxfLine(cxm, h, cxm, h - mg - cm5, "FRAME");
   ents += dxfLine(0, cym, ml + cm5, cym, "FRAME");
@@ -276,14 +276,14 @@ function pageToDXF(page) {
     ents += dxfPoly(wr.pts, "WIRE", lt);
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr);
-      ents += dxfText(horiz ? mx : mx - 0.6, my, 3, wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx - 0.6, my, S(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec) {
       const [mx, my, horiz] = wireLabelPos(wr);
-      ents += dxfText(horiz ? mx : mx + 3.4, horiz ? my + 4.6 : my, 2.7, wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx + 3.4, horiz ? my + 4.6 : my, S(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
-  junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, 1.05, "WIRE"); });
+  junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, S(LINE_W.thick * 1.5), "WIRE"); });
 
   // ── デバイス ──
   page.devices.forEach(dev => {
@@ -307,28 +307,28 @@ function pageToDXF(page) {
       const name = effectivePinName(dev, pi);
       if (!name) return;
       const [px, py] = xf(p.x + 1, p.y + (p.y <= 0 ? 3.4 : -1.6));
-      ents += dxfText(px, py, 2.5, name, "PIN");
+      ents += dxfText(px, py, S(TEXT_H.small), name, "PIN");
     });
     // タグ / 機能テキスト / クロスリファレンス
     const b = devBounds(dev);
     const tag = displayTag(dev);
     const horizontal = (dev.rot || 0) % 180 !== 0;
     if (horizontal) {
-      if (tag) ents += dxfText(b.x + b.w - 2.5, b.y - 2, 3.6, tag, "TEXT");
-      if (dev.desc) ents += dxfText(b.x + b.w / 2, b.y + b.h + 4, 2.8, dev.desc, "TEXT", "middle");
+      if (tag) ents += dxfText(b.x + b.w - 2.5, b.y - 2, S(TEXT_H.normal), tag, "TEXT");
+      if (dev.desc) ents += dxfText(b.x + b.w / 2, b.y + b.h + 4, S(TEXT_H.normal), dev.desc, "TEXT", "middle");
     } else {
-      if (tag) ents += dxfText(b.x - 2.2, b.y + b.h / 2 - 0.6, 3.6, tag, "TEXT", "end");
-      if (dev.desc) ents += dxfText(b.x - 2.2, b.y + b.h / 2 + (tag ? 3.4 : 0.8), 2.8, dev.desc, "TEXT", "end");
+      if (tag) ents += dxfText(b.x - 2.2, b.y + b.h / 2 - 0.6, S(TEXT_H.normal), tag, "TEXT", "end");
+      if (dev.desc) ents += dxfText(b.x - 2.2, b.y + b.h / 2 + (tag ? 3.4 : 0.8), S(TEXT_H.normal), dev.desc, "TEXT", "end");
     }
     if (dev.linkTo) {
       const f = findDevice(dev.linkTo);
-      if (f) ents += dxfText(b.x + b.w + 1.6, b.y + b.h / 2 + 1.2, 3, "/" + devLocation(f.dev), "WIRENUM");
+      if (f) ents += dxfText(b.x + b.w + 1.6, b.y + b.h / 2 + 1.2, S(TEXT_H.small), "/" + devLocation(f.dev), "WIRENUM");
     }
   });
 
   // ── フリーテキスト ──
   page.texts.forEach(t => {
-    ents += dxfText(t.x, t.y, t.size || 4, t.text, "TEXT", t.anchor || "middle");
+    ents += dxfText(t.x, t.y, textHeight(t) * f, t.text, "TEXT", t.anchor || "middle");
   });
 
   // ── DXF 全体 (R12) ──
