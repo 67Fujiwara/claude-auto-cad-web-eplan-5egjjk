@@ -190,13 +190,26 @@ function dxfPoly(pts, layer, ltype) {
 function dxfCircle(cx, cy, r, layer) {
   return dxfEntity([[0, "CIRCLE"], [8, layer], [10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)]]);
 }
+/* 和文は DXF の Unicode エスケープ (\U+XXXX) で書き出す。R12 でも AutoCAD が
+   解釈でき、コードページ設定に依存せず文字化けしない。 */
+function dxfEscape(text) {
+  let out = "";
+  for (const ch of String(text)) {
+    const c = ch.codePointAt(0);
+    out += c < 128 ? ch : "\\U+" + c.toString(16).toUpperCase().padStart(4, "0");
+  }
+  return out;
+}
 function dxfText(x, y, size, text, layer, anchor = "start", angle = 0) {
   if (!text) return "";
-  let ax = x;
-  const w = String(text).length * size * 0.62;
-  if (anchor === "middle") ax = x - w / 2;
-  if (anchor === "end") ax = x - w;
-  return dxfEntity([[0, "TEXT"], [8, layer], [10, ax.toFixed(3)], [20, dxfY(y)], [40, size.toFixed(2)], [1, String(text)], [50, angle]]);
+  // 幅は CJK を全角として見積もる (画面と同じ textWidthMM を使う)
+  const w = textWidthMM(String(text), size);
+  const rad = angle * Math.PI / 180;
+  const off = anchor === "middle" ? -w / 2 : anchor === "end" ? -w : 0;
+  const ax = x + off * Math.cos(rad);       // 回転後の基線方向へ寄せる
+  const ay = y - off * Math.sin(rad);
+  return dxfEntity([[0, "TEXT"], [8, layer], [7, "JP"], [10, ax.toFixed(3)], [20, dxfY(ay)],
+    [40, size.toFixed(2)], [1, dxfEscape(text)], [50, angle]]);
 }
 
 /** デバイス座標変換 (回転 + 平行移動) */
@@ -234,6 +247,11 @@ function dxfMirrorTable(coilDev, S) {
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
+    const csym = SYMBOLS_BY_ID[c.sym];
+    // ミニ接点グリフ (b接点は横バーつき) — DXF だけ種別が分からなくならないように
+    out += dxfPoly([[x, cy + S(1.5)], [x + S(2), cy + S(1.5)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
+    out += dxfPoly([[x + S(5.2), cy + S(1.5)], [x + S(6), cy + S(1.5)]], "WIRENUM");
+    if (csym.sim === "contact_nc") out += dxfPoly([[x + S(2), cy + S(-1.3)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
     if (n0 && n1) out += dxfText(x + S(7), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
     out += dxfText(x + S(15), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
   });
@@ -314,7 +332,7 @@ function pageToDXF(page) {
     const rows = revisionRows();
     const rh = S(REV_TABLE.rowH);
     const cols = [S(REV_TABLE.cols[0]), S(REV_TABLE.cols[1]),
-      rev.w - S(REV_TABLE.cols[0]) - S(REV_TABLE.cols[1]) - S(REV_TABLE.cols[3]), S(REV_TABLE.cols[3])];
+      rev.w - S(REV_TABLE.cols[0]) - S(REV_TABLE.cols[1]) - S(REV_TABLE.cols[3]), S(REV_TABLE.cols[3])];  // 内容欄が残り
     const xs = [rev.x];
     cols.forEach(c => xs.push(xs[xs.length - 1] + c));
     ents += dxfPoly([[rev.x, rev.y], [rev.x + rev.w, rev.y], [rev.x + rev.w, rev.y + rev.h],
@@ -352,11 +370,11 @@ function pageToDXF(page) {
     ents += dxfPoly(wr.pts, "WIRE", lt);
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr);
-      ents += dxfText(horiz ? mx : mx - 0.6, my, S(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx - S(0.6), my, S(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec) {
       const [mx, my, horiz] = wireLabelPos(wr);
-      ents += dxfText(horiz ? mx : mx + 3.4, horiz ? my + 4.6 : my, S(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(horiz ? mx : mx + S(3.4), horiz ? my + S(4.6) : my, S(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
   junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, S(LINE_W.thick * 1.5), "WIRE"); });
@@ -377,28 +395,29 @@ function pageToDXF(page) {
         ents += dxfText(tx, ty, pr.size, pr.text, "SYMBOL", pr.anchor || "middle");
       }
     });
-    // ピン番号 (オフセットは用紙上一定 = 画面と同じ量)
+    // ピン番号 (画面と同じく回転後の絶対座標に水平で置く)
     sym.pins.forEach((p, pi) => {
       if (!p.n || dev.sym === "terminal") return;
       const name = effectivePinName(dev, pi);
       if (!name) return;
-      const [px, py] = xf(p.x + S(1), p.y + (p.y <= 0 ? S(3.4) : S(-1.6)));
-      ents += dxfText(px, py, S(TEXT_H.small), name, "PIN");
+      const abs = pinAbs(dev, p);
+      const rotated = (dev.rot || 0) % 360 !== 0;
+      const isTop = !rotated && (p.y <= 0 || (sym.horizontalPins && p.y <= sym.bounds[1] + 2));
+      const tx = abs.x + S(1), ty = rotated ? abs.y - S(1.6) : abs.y + (isTop ? S(3.4) : S(-1.6));
+      ents += dxfText(tx, ty, S(TEXT_H.small), name, "PIN");
     });
-    // タグ / 機能テキスト / クロスリファレンス (画面と同じオフセット・同じ文字高)
+    // タグ / 機能テキスト (配置は画面と同じ deviceLabelBoxes に従う)
     const b = devBounds(dev);
-    const tag = displayTag(dev);
-    const horizontal = (dev.rot || 0) % 180 !== 0;
-    if (horizontal) {
-      if (tag) ents += dxfText(b.x + b.w - S(2.5), b.y - S(2), S(TEXT_H.normal), tag, "TEXT");
-      if (dev.desc) ents += dxfText(b.x + b.w / 2, b.y + b.h + S(4.4), S(TEXT_H.normal), dev.desc, "TEXT", "middle");
-    } else {
-      if (tag) ents += dxfText(b.x - S(2.2), b.y + b.h / 2 - S(0.8), S(TEXT_H.normal), tag, "TEXT", "end");
-      if (dev.desc) ents += dxfText(b.x - S(2.2), b.y + b.h / 2 + S(tag ? 4 : 1), S(TEXT_H.normal), dev.desc, "TEXT", "end");
-    }
+    const lboxes = deviceLabelBoxes(page, dev);
+    lboxes.forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor); });
     if (dev.linkTo) {
       const fd = findDevice(dev.linkTo);
-      if (fd) ents += dxfText(b.x + b.w + S(1.6), b.y + b.h / 2 + S(1.2), S(TEXT_H.small), "/" + devLocation(fd.dev), "WIRENUM");
+      if (fd) {
+        const right = lboxes.side === "right";
+        const lx = right ? b.x + b.w + S(2.2) : b.x + b.w + S(1.6);
+        const ly = right ? b.y + b.h / 2 + S((lboxes.length + 1) * 4) : b.y + b.h / 2 + S(1.2);
+        ents += dxfText(lx, ly, S(TEXT_H.small), "/" + devLocation(fd.dev), "WIRENUM");
+      }
     }
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)
     if (sym.mirror) ents += dxfMirrorTable(dev, S);
@@ -419,8 +438,14 @@ function pageToDXF(page) {
     "0", "SECTION", "2", "HEADER",
     "9", "$ACADVER", "1", "AC1009",
     "9", "$INSUNITS", "70", "4",
+    "9", "$DWGCODEPAGE", "3", "ANSI_932",
+    "9", "$TEXTSTYLE", "7", "JP",
     "0", "ENDSEC",
     "0", "SECTION", "2", "TABLES",
+    "0", "TABLE", "2", "STYLE", "70", "1",
+    "0", "STYLE", "2", "JP", "70", "0", "40", "0.0", "41", "1.0", "50", "0.0",
+    "71", "0", "42", "2.5", "3", "msgothic.ttc", "4", "@msgothic",
+    "0", "ENDTAB",
     "0", "TABLE", "2", "LTYPE", "70", String(DXF_LTYPES.length),
   ].join("\n") + "\n" + dxfLtypeTable() +
     ["0", "ENDTAB", "0", "TABLE", "2", "LAYER", "70", String(DXF_LAYERS.length)].join("\n") + "\n" + layers +

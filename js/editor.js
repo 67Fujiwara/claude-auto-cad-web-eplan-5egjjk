@@ -140,11 +140,12 @@ function sheetSVG(page, opts = {}) {
   const cell = (x, y, ci, label, value, valSize = TEXT_H.normal, bold = false) => {
     const cwv = TITLE_BLOCK.cols[ci] - 3.4;              // 用紙上 mm
     const size = fitTextSize(String(value), cwv, valSize, bold);
+    const shown = truncateToWidth(String(value), cwv, size, bold);
     const id = `${clipBase}c${clipN++}`;                 // ページ間で id が衝突しないように
     return `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${cw2[ci]}" height="${S(10)}"/></clipPath>` +
       `<g clip-path="url(#${id})">` +
       `<text x="${x + S(2)}" y="${y + S(3.6)}" font-size="${S(TEXT_H.small)}" fill="${INK_SOFT}">${escXML(label)}</text>` +
-      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${S(size)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(value)}</text></g>`;
+      `<text x="${x + S(2)}" y="${y + S(8.4)}" font-size="${S(size)}" fill="${INK}"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text></g>`;
   };
   out += revisionTableSVG(tbX, tbY, tbW, S, fr, meta, clipBase + "r");
   out += `<g font-family="sans-serif" data-titleblock="1">
@@ -176,6 +177,7 @@ function revisionTableSVG(tbX, tbY, tbW, S, fr, meta, idBase = "rv") {
   if (!rows.length || !rect) return "";
   const rh = S(REV_TABLE.rowH), h = rect.h;
   const y0 = rect.y;
+  tbX = rect.x; tbW = rect.w;     // 表題欄の左隣 (または直上) に置く
   const cols = revColWidths(tbW, S);
   const xs = [tbX];
   cols.forEach(c => xs.push(xs[xs.length - 1] + c));
@@ -342,7 +344,7 @@ function devicesSVG(page, opts = {}) {
       out += `<text x="${tx}" y="${ty}" font-size="${TEXT_H.small * fr}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
-    out += devLabelsSVG(dev, sym);
+    out += devLabelsSVG(dev, sym, page);
     // コイルの接点ミラー
     if (sym.mirror) out += mirrorSVG(dev);
   });
@@ -373,32 +375,26 @@ function simDevVisual(dev, sym) {
   }
 }
 
-function devLabelsSVG(dev, sym) {
-  const b = devBounds(dev);
-  const tag = displayTag(dev);
+function devLabelsSVG(dev, sym, page) {
   const fr = sheetScale();
-  // 文字高は JIS Z 8313 の呼び (漢字は 3.5mm 以上) を用紙上で確保する
-  const hTag = TEXT_H.normal * fr, hDesc = TEXT_H.normal * fr, hRef = TEXT_H.small * fr;
+  const b = devBounds(dev);
   let out = "";
-  const horizontal = (dev.rot || 0) % 180 !== 0;
-  if (horizontal) {
-    // 横向きデバイス: タグは右肩に置く (レール・隣接ピン名との重なり防止)
-    if (tag) out += `<text x="${b.x + b.w - 2.5 * fr}" y="${b.y - 2 * fr}" font-size="${hTag}" text-anchor="start" fill="${INK}" font-weight="600" font-family="monospace">${escXML(tag)}</text>`;
-    if (dev.desc) out += `<text x="${b.x + b.w / 2}" y="${b.y + b.h + 4.4 * fr}" font-size="${hDesc}" text-anchor="middle" fill="${INK_SOFT}">${escXML(dev.desc)}</text>`;
-    return out;
-  }
-  const labelX = b.x - 2.2 * fr, labelYc = b.y + b.h / 2;
-  if (tag) {
-    out += `<text x="${labelX}" y="${labelYc - 0.8 * fr}" font-size="${hTag}" text-anchor="end" fill="${INK}" font-weight="600" font-family="monospace">${escXML(tag)}</text>`;
-  }
-  if (dev.desc) {
-    out += `<text x="${labelX}" y="${labelYc + (tag ? 4 : 1) * fr}" font-size="${hDesc}" text-anchor="end" fill="${INK_SOFT}">${escXML(dev.desc)}</text>`;
-  }
-  // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)
+  // 配置はエンジンの deviceLabelBoxes に一本化 (検図・DXF と同じ結果になる)
+  const boxes = deviceLabelBoxes(page || curPage(), dev);
+  boxes.forEach((o, i) => {
+    const isTag = o.text === displayTag(dev) && i === 0;
+    out += `<text x="${o.x}" y="${o.y}" font-size="${o.size}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
+      `${isTag ? ' font-weight="600" font-family="monospace"' : ""}>${escXML(o.text)}</text>`;
+  });
+  // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)。
+  // タグを右へ寄せた機器では、その下に置いて重ならないようにする
   if (dev.linkTo) {
     const f = findDevice(dev.linkTo);
     if (f) {
-      out += `<text x="${b.x + b.w + 1.6 * fr}" y="${labelYc + 1.2 * fr}" font-size="${hRef}" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
+      const right = boxes.side === "right";
+      const lx = right ? b.x + b.w + 2.2 * fr : b.x + b.w + 1.6 * fr;
+      const ly = right ? b.y + b.h / 2 + (boxes.length + 1) * 4 * fr : b.y + b.h / 2 + 1.2 * fr;
+      out += `<text x="${lx}" y="${ly}" font-size="${TEXT_H.small * fr}" fill="#7a4ec2" font-family="monospace">/${devLocation(f.dev)}</text>`;
     }
   }
   return out;

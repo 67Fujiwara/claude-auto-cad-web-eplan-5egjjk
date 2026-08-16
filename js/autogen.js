@@ -319,7 +319,7 @@ function aiGenerate(sel) {
     } else {
       addWire(page, [[x, bodyTop + bodyH], [x, L.botRailY]]);
     }
-    if (funcText) page.texts.push({ id: uid("t"), x, y: L.botRailY + 10, text: funcText, size: 3.5 });
+    if (funcText) page.texts.push({ id: uid("t"), x, y: L.botRailY + 5.5, text: funcText, size: 3.5 });
 
     cur.prevRightAbs = x + rightMost;
     cur.xCursor = x + Math.max(L.rungGapMin, gridUp(rightMost + 25));

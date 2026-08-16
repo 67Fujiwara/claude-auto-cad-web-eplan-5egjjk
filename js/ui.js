@@ -212,7 +212,8 @@ UI.showProps = (focusTag = false) => {
           !confirm(`線番 ${w.num} を削除し、この配線を回路から切り離します。よろしいですか？`)) return false;
       commit();
       if (aux) { w.aux = true; if (auto) w.auxAuto = true; else delete w.auxAuto; }
-      else { delete w.aux; delete w.auxAuto; }
+      else if (auto) { delete w.aux; delete w.auxAuto; }   // 実線に戻したときの自動解除
+      else { w.aux = false; delete w.auxAuto; }            // 破線のまま回路として扱う (手動指定)
       if (aux) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
       return true;
     };
@@ -1044,6 +1045,12 @@ UI.sheetSetup = () => {
     meta.proj = q("#tbProjMethod").value;
     collectRevs();
     meta.revs = revRows.filter(r => r.rev || r.date || r.desc || r.appr);
+    // 表題欄の改訂記号は履歴の最新行に合わせる (管理図面の整合)
+    const lastRev = [...meta.revs].reverse().find(r => r.rev);
+    if (lastRev && meta.rev !== lastRev.rev) meta.rev = lastRev.rev;
+    // 改訂履歴欄は表題欄の上に伸びるため、回路と重なる場合は知らせる
+    const revHits = runDRC().filter(d => /改訂履歴欄/.test(d.msg)).length;
+    if (revHits) UI.toast(`⚠ 改訂履歴欄が回路と ${revHits} 箇所で重なっています (検図に表示)`, 5000);
     const paperChanged = paperChanging;
     meta.paper = q("#tbPaper").value;
     meta.scale = q("#tbScale").value;

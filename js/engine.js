@@ -71,7 +71,7 @@ function sheetScale() { return scaleFactor(projectMeta().scale); }
 
 /* 表題欄の割付 (用紙上 mm)。画面・DXF で必ず同じものを使う */
 const TITLE_BLOCK = { w: 160, h: 30, rowH: 10, cols: [52, 44, 34, 30] };
-const REV_TABLE = { rowH: 6, maxRows: 4, cols: [16, 26, 0, 22] }; // cols[2]=残り
+const REV_TABLE = { rowH: 6, maxRows: 4, w: 120, cols: [16, 26, 0, 22] }; // cols[2]=残り
 
 /** 表題欄の矩形 (作図領域座標)。図枠描画・DXF・DRC で共有する */
 function titleBlockRect() {
@@ -79,13 +79,18 @@ function titleBlockRect() {
   const w = TITLE_BLOCK.w * f, h = TITLE_BLOCK.h * f;
   return { x: SHEET.w - SHEET.margin - w, y: SHEET.h - SHEET.margin - h, w, h };
 }
-/** 改訂履歴欄の矩形 (無ければ null)。表題欄の直上に置く */
+/** 改訂履歴欄の矩形 (無ければ null)。
+    表題欄の左隣 (同じ下段の帯) に置き、回路の作図領域を侵さないようにする。
+    左に余地が無い小さな用紙では従来どおり表題欄の直上に積む。 */
 function revisionRect() {
   const revs = revisionRows();
   if (!revs.length) return null;
   const f = sheetScale(), tb = titleBlockRect();
   const h = REV_TABLE.rowH * f * (revs.length + 1);
-  return { x: tb.x, y: tb.y - h, w: tb.w, h };
+  const space = tb.x - SHEET.marginLeft;
+  const w = Math.min(REV_TABLE.w * f, space);
+  if (w >= 60 * f) return { x: tb.x - w, y: tb.y + tb.h - h, w, h, side: true };
+  return { x: tb.x, y: tb.y - h, w: tb.w, h, side: false };
 }
 /** 表題欄と改訂履歴欄の矩形 (検図・試算で共有) */
 function titleBlocksRects() {
@@ -94,6 +99,50 @@ function titleBlocksRects() {
   if (rev) out.push(Object.assign(rev, { kind: "rev" }));
   return out;
 }
+/** 機器ラベル (タグ・機能テキスト) の配置。左に置くと隣の機器へ被る場合は
+    右側へ寄せる。画面描画と検図で同じ結果を使うためエンジンに置く。 */
+function deviceLabelBoxes(page, dev) {
+  const sym = SYMBOLS_BY_ID[dev.sym];
+  const f = sheetScale();
+  const b = devBounds(dev);
+  const tag = displayTag(dev), desc = dev.desc;
+  const horizontal = (dev.rot || 0) % 180 !== 0;
+  const H = TEXT_H.normal * f;
+  const mk = (text, x, y, anchor) => ({ text, x, y, w: textWidthMM(text, H), h: H, anchor, size: H });
+  if (horizontal) {
+    const out = [];
+    if (tag) out.push(mk(tag, b.x + b.w - 2.5 * f, b.y - 2 * f, "start"));
+    if (desc) out.push(mk(desc, b.x + b.w / 2, b.y + b.h + 4.4 * f, "middle"));
+    return out.map(o => ({ ...o, box: labelBox(o) }));
+  }
+  const build = (side) => {
+    const out = [];
+    const x = side === "left" ? b.x - 2.2 * f : b.x + b.w + 2.2 * f;
+    const anchor = side === "left" ? "end" : "start";
+    if (tag) out.push(mk(tag, x, b.y + b.h / 2 - 0.8 * f, anchor));
+    if (desc) out.push(mk(desc, x, b.y + b.h / 2 + (tag ? 4 : 1) * f, anchor));
+    return out.map(o => ({ ...o, box: labelBox(o) }));
+  };
+  const left = build("left");
+  // 左側が隣の機器に被るなら右へ (接点ミラーを持つコイルは右を空けておく)
+  const clash = !sym.mirror && left.some(o => page.devices.some(d2 =>
+    d2 !== dev && rectsOverlap(o.box, devBounds(d2), 0.3)));
+  const boxes = clash ? build("right") : left;
+  boxes.side = clash ? "right" : "left";
+  return boxes;
+}
+function labelBox(o) {
+  const x = o.anchor === "middle" ? o.x - o.w / 2 : o.anchor === "end" ? o.x - o.w : o.x;
+  return { x, y: o.y - o.h, w: o.w, h: o.h };
+}
+/** 面積比 ratio 以上で重なっているか */
+function rectsOverlap(a, b, ratio = 0) {
+  const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (ox <= 0 || oy <= 0) return false;
+  return !ratio || (ox * oy) > a.w * a.h * ratio;
+}
+
 /** 注記テキストの概算 bbox */
 function textBounds(t) {
   const h = (t.size || TEXT_H.normal) * sheetScale();
@@ -737,7 +786,7 @@ function simStop() {
 const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
-  "自動生成時の警告", "図枠外・表題欄との重なり",
+  "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり",
 ];
 
 function drcSources(page, pinNet) {
@@ -824,6 +873,27 @@ function runDRC() {
         }
       }
     });
+    // ラベル同士・ラベルと図記号の重なり (縮尺で図記号が小さくなる影響も検出)
+    const labels = [];
+    page.devices.forEach(dev => deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev })));
+    let overlapCount = 0;
+    for (let i = 0; i < labels.length && overlapCount < 5; i++) {
+      const a = labels[i];
+      const other = labels.find((b2, j) => j !== i && b2.dev !== a.dev && rectsOverlap(a, b2, 0.3));
+      const onSym = other ? null : page.devices.find(d => d !== a.dev && rectsOverlap(a, devBounds(d), 0.3));
+      if (other || onSym) {
+        overlapCount++;
+        const target = other ? (displayTag(other.dev) || "機器") : (displayTag(onSym) || "機器");
+        issues.push({ sev: "warn", msg: `${displayTag(a.dev) || "機器"} の文字が ${target} と重なっています${sheetScale() !== 1 ? " (縮尺では図記号が小さくなります)" : ""}`, page: page.no, target: a.dev.id, loc: `${page.no}.${sheetCol(a.dev.x)}` });
+      }
+    }
+
+    // 縮小尺度では図記号だけが用紙上小さくなるため、回路図ページでは必ず知らせる
+    if (sheetScale() > 1 && page.devices.length) {
+      const f3 = sheetScale();
+      issues.push({ sev: "warn", msg: `尺度 ${projectMeta().scale} では図記号が用紙上 1/${f3} の大きさになります (回路図は NS または 1:1 を推奨)`, page: page.no, target: null, loc: `${page.no}.-` });
+    }
+
     // 注記テキスト・破線枠も同じ検査にかける
     page.texts.forEach(t => {
       // 文字幅は概算のため 0.5mm の余裕を見る (誤検出を避ける)
