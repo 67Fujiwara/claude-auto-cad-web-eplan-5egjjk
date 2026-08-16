@@ -60,6 +60,7 @@ function requestRender() {
 }
 
 function renderAll() {
+  applySheet(curPage());   // ページごとの用紙・尺度
   const svg = Editor.svg;
   if (!svg) return;
   const page = curPage();
@@ -230,7 +231,7 @@ function projSymbolSVG(x, y, u, proj) {
 function zonesSVG(page, opts = {}) {
   let out = "";
   const print = !!opts.print;
-  const fr = sheetScale();
+  const fr = contentScale();
   const dash = WIRE_STYLES.dash.dash.split(" ").map(v => v * fr).join(" ");
   pageZones(page).forEach(z => {
     const selected = !print && App.selection.has(z.id);
@@ -248,7 +249,7 @@ function wiresSVG(page, opts = {}) {
   let out = "";
   const print = !!opts.print;
   const sim = App.sim.running ? App.sim.energized : null;
-  const fr = sheetScale();
+  const fr = contentScale();
   page.wires.forEach(w => {
     const d = "M" + w.pts.map(p => p[0] + "," + p[1]).join(" L");
     const cond = isWireConductive(w);
@@ -292,7 +293,7 @@ function devicesSVG(page, opts = {}) {
   let out = "";
   const print = !!opts.print;
   const simOn = App.sim.running;
-  const fr = sheetScale();
+  const fr = contentScale();
   page.devices.forEach(dev => {
     const sym = SYMBOLS_BY_ID[dev.sym];
     if (!sym) return;
@@ -305,7 +306,7 @@ function devicesSVG(page, opts = {}) {
       if (st.color) color = st.color;
       extra = st.extra || "";
     }
-    out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0}) scale(${fr})" data-id="${dev.id}" class="device" style="color:${color}">`;
+    out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})" data-id="${dev.id}" class="device" style="color:${color}">`;
     if (selected || hovered) {
       const [bx, by, bw, bh] = sym.bounds;
       out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${selected ? 0.5 : 0.3}" stroke-dasharray="${selected ? "none" : "1.5 1.2"}" rx="1"/>`;
@@ -360,7 +361,7 @@ function simDevVisual(dev, sym) {
 }
 
 function devLabelsSVG(dev, sym, page) {
-  const fr = sheetScale();
+  const fr = contentScale();
   const b = devBounds(dev);
   let out = "";
   // 配置はエンジンの deviceLabelBoxes に一本化 (検図・DXF と同じ結果になる)
@@ -389,7 +390,7 @@ function devLabelsSVG(dev, sym, page) {
 function mirrorSVG(coilDev) {
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
-  const mfr = sheetScale();           // 表の寸法は用紙上一定 (文字と同じ空間)
+  const mfr = contentScale();           // 表の寸法は用紙上一定 (文字と同じ空間)
   const csym0 = SYMBOLS_BY_ID[coilDev.sym];
   // 多極デバイス (サーマル等) は極間の配線を避けて左下に表示
   const wide = csym0.bounds[2] > 20;
@@ -425,7 +426,7 @@ function mirrorSVG(coilDev) {
 function textsSVG(page, opts = {}) {
   let out = "";
   const print = !!opts.print;
-  const fr = sheetScale();
+  const fr = contentScale();
   page.texts.forEach(t => {
     const h = textHeight(t) * fr;   // 用紙上の文字高 × 尺度
     const selected = !print && App.selection.has(t.id);
@@ -479,7 +480,7 @@ function overlaySVG(page) {
   if (Editor.ghost) {
     const g = Editor.ghost;
     const sym = SYMBOLS_BY_ID[g.symId];
-    out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0}) scale(${sheetScale()})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 })}</g>`;
+    out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1 })}</g>`;
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
   // ラバーバンド (右→左ドラッグは交差選択: 緑破線)
@@ -513,7 +514,7 @@ function hitTest(wx, wy) {
   // テキスト
   for (let i = page.texts.length - 1; i >= 0; i--) {
     const t = page.texts[i];
-    const fr = sheetScale();
+    const fr = contentScale();
     const th = textHeight(t) * fr;
     const w = t.text.length * th * 0.62 + 2 * fr, h = th + 2 * fr;
     if (wx > t.x - w / 2 && wx < t.x + w / 2 && wy > t.y - h && wy < t.y + 1.5) return { type: "text", obj: t };
@@ -1254,6 +1255,7 @@ function updateStatusCount() {
 /* ══════════════ SVG エクスポート ══════════════ */
 function exportSheetSVG(page = null) {
   page = page || curPage();
+  applySheet(page);          // ページごとの用紙・尺度で図枠を張る
   const body =
     `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page, { print: true })}</g>` +
     `<g>${wiresSVG(page, { print: true })}</g><g>${devicesSVG(page, { print: true })}</g><g>${textsSVG(page, { print: true })}</g>`;

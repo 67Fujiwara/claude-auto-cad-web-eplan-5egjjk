@@ -265,6 +265,7 @@ function dxfMirrorTable(coilDev, S) {
 
 /** 1ページ → DXF 文字列 */
 function pageToDXF(page) {
+  applySheet(page);          // ページごとの用紙・尺度
   let ents = "";
   const { w, h, margin: mg, marginLeft: ml, cols, rows } = SHEET;
   const meta = projectMeta();
@@ -453,4 +454,116 @@ function pageToDXF(page) {
     ["0", "ENDTAB", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"].join("\n") + "\n" +
     ents +
     ["0", "ENDSEC", "0", "EOF"].join("\n") + "\n";
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DXF 取り込み (R12〜。LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC /
+   TEXT / MTEXT / SOLID を読み、図面へ作図するか、シンボルとして登録する)
+   ═══════════════════════════════════════════════════════════════ */
+
+/** DXF 文字列 → エンティティ配列 (単位 mm・Y は画面座標へ反転済み) */
+function parseDXF(text) {
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  const pairs = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const code = parseInt(lines[i].trim(), 10);
+    if (Number.isNaN(code)) continue;
+    pairs.push([code, lines[i + 1]]);
+  }
+  const ents = [];
+  let i = 0;
+  // ENTITIES セクションまで進む (無ければ全体を走査する)
+  const secIdx = pairs.findIndex(([c, v], k) => c === 2 && v.trim() === "ENTITIES" && pairs[k - 1] && pairs[k - 1][0] === 0);
+  if (secIdx >= 0) i = secIdx + 1;
+  const unesc = s => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\[A-Za-z][^;]*;/g, "").replace(/[{}]/g, "");
+  let cur = null, curType = null, verts = null;
+  const push = () => {
+    if (!cur || !curType) return;
+    if (curType === "POLYLINE") { cur.pts = verts || []; }
+    ents.push({ type: curType, ...cur });
+    cur = null; curType = null; verts = null;
+  };
+  for (; i < pairs.length; i++) {
+    const [c, raw] = pairs[i];
+    const v = raw.trim();
+    if (c === 0) {
+      if (v === "VERTEX" && curType === "POLYLINE") { cur.__vx = {}; continue; }
+      if (v === "SEQEND") continue;
+      push();
+      if (v === "ENDSEC" || v === "EOF") break;
+      curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID"].includes(v) ? v : null;
+      cur = curType ? { layer: "0", pts: [] } : null;
+      if (curType === "POLYLINE") verts = [];
+      continue;
+    }
+    if (!cur) continue;
+    const num = parseFloat(v);
+    switch (c) {
+      case 8: cur.layer = v; break;
+      case 1: cur.text = unesc(raw); break;
+      case 10: cur.x1 = num; if (curType === "LWPOLYLINE") cur.pts.push([num, null]); if (curType === "POLYLINE") cur.__vxx = num; break;
+      case 20: cur.y1 = num;
+        if (curType === "LWPOLYLINE" && cur.pts.length) cur.pts[cur.pts.length - 1][1] = num;
+        if (curType === "POLYLINE" && cur.__vxx !== undefined) { verts.push([cur.__vxx, num]); cur.__vxx = undefined; }
+        break;
+      case 11: cur.x2 = num; break;
+      case 21: cur.y2 = num; break;
+      case 40: cur.r = num; cur.size = num; break;
+      case 50: cur.a1 = num; break;
+      case 51: cur.a2 = num; break;
+      case 70: cur.flags = num; break;
+      default: break;
+    }
+  }
+  push();
+  return ents;
+}
+
+/** 取り込んだエンティティ群の外接矩形 (DXF 座標系) */
+function dxfEntsBounds(ents) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x, y) => { if (isFinite(x) && isFinite(y)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); } };
+  ents.forEach(e => {
+    if (e.type === "LINE") { add(e.x1, e.y1); add(e.x2, e.y2); }
+    else if (e.type === "CIRCLE" || e.type === "ARC") { add(e.x1 - e.r, e.y1 - e.r); add(e.x1 + e.r, e.y1 + e.r); }
+    else if (e.type === "TEXT" || e.type === "MTEXT") { add(e.x1, e.y1); add(e.x1 + (e.text || "").length * (e.size || 3) * 0.6, e.y1 + (e.size || 3)); }
+    else (e.pts || []).forEach(p => add(p[0], p[1]));
+  });
+  if (!isFinite(x0)) return null;
+  return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+}
+
+/** エンティティ群 → SVG ボディ (ローカル座標。Y反転・原点合わせ・尺度指定) */
+function dxfEntsToSVG(ents, opt = {}) {
+  const b = dxfEntsBounds(ents);
+  if (!b) return { body: "", w: 0, h: 0 };
+  const k = opt.scale || 1;
+  const ox = opt.originX !== undefined ? opt.originX : b.x0;
+  const oy = opt.originY !== undefined ? opt.originY : b.y1;   // 上端を基準に Y 反転
+  const X = x => +(((x - ox) * k).toFixed(3));
+  const Y = y => +(((oy - y) * k).toFixed(3));
+  let out = "";
+  ents.forEach(e => {
+    if (e.type === "LINE") out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}"/>`;
+    else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
+      const pts = (e.pts || []).filter(p => isFinite(p[0]) && isFinite(p[1]));
+      if (pts.length >= 2) {
+        const d = "M" + pts.map(p => `${X(p[0])},${Y(p[1])}`).join(" L") + ((e.flags & 1) ? " Z" : "");
+        out += `<path d="${d}"/>`;
+      }
+    } else if (e.type === "CIRCLE") out += `<circle cx="${X(e.x1)}" cy="${Y(e.y1)}" r="${+(e.r * k).toFixed(3)}"/>`;
+    else if (e.type === "ARC") {
+      const r = e.r * k, a1 = (e.a1 || 0) * Math.PI / 180, a2 = (e.a2 || 0) * Math.PI / 180;
+      const cx = X(e.x1), cy = Y(e.y1);
+      const p1 = [cx + r * Math.cos(a1), cy - r * Math.sin(a1)];
+      const p2 = [cx + r * Math.cos(a2), cy - r * Math.sin(a2)];
+      let sweepAng = (e.a2 - e.a1 + 360) % 360;
+      out += `<path d="M${p1[0].toFixed(3)},${p1[1].toFixed(3)} A${r.toFixed(3)},${r.toFixed(3)} 0 ${sweepAng > 180 ? 1 : 0} 0 ${p2[0].toFixed(3)},${p2[1].toFixed(3)}"/>`;
+    } else if (e.type === "TEXT" || e.type === "MTEXT") {
+      const sz = Math.max(2.5, (e.size || 3.5) * k);
+      out += `<text x="${X(e.x1)}" y="${Y(e.y1)}" font-size="${+sz.toFixed(2)}" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;
+    }
+  });
+  return { body: out, w: b.w * k, h: b.h * k, bounds: b };
 }

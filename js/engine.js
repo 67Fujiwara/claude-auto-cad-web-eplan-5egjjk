@@ -6,7 +6,7 @@
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 作図領域。margin = 輪郭線の幅 c (JIS Z 8311)、marginLeft = とじ代側 (20mm) */
-const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6 };
+const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f: 1, paper: "A3", scale: "1:1" };
 
 /* 線の太さ (JIS Z 8312 の太さ系列。細線:太線 = 1:2) — 用紙上の mm */
 const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
@@ -40,14 +40,21 @@ function projectMeta() {
   if (!m.scale) m.scale = "1:1";
   return m;
 }
+/** ページに適用される用紙・尺度 (ページ固有の設定があればそれを優先) */
+function pageSheetMeta(page) {
+  const m = projectMeta();
+  const pg = page || (App.project.pages && App.project.pages[App.pageIdx]) || {};
+  return { paper: pg.paper || m.paper, scale: pg.scale || m.scale };
+}
 /** meta (用紙・尺度) から作図領域 SHEET を再計算する (JIS Z 8311)。
     輪郭線の幅 c は A0・A1 = 20mm / A2〜A4 = 10mm、とじ代側 (左) は 20mm。
     格子参照の区分数は偶数とし、1区分が 25〜75mm に収まるようにする。 */
-function applySheet() {
-  const m = projectMeta();
+function applySheet(page) {
+  const m = pageSheetMeta(page);
   const [pw, ph] = PAPERS[m.paper] || PAPERS.A3;
   const f = scaleFactor(m.scale);
   const c = (m.paper === "A0" || m.paper === "A1") ? 20 : 10;
+  SHEET.paper = m.paper; SHEET.scale = m.scale; SHEET.f = f;
   SHEET.w = pw * f;
   SHEET.h = ph * f;
   SHEET.margin = c * f;
@@ -78,8 +85,10 @@ function scaleProjectGeometry(k) {
   });
 }
 
-/** 尺度倍率。線幅・文字高はこれを掛けて用紙上で一定の大きさに見せる */
-function sheetScale() { return scaleFactor(projectMeta().scale); }
+/** いま張られている図枠の尺度倍率 (図枠・表題欄のみに掛ける) */
+function sheetScale() { return SHEET.f || 1; }
+/** 図記号・文字・線幅の倍率。ユーザー指定によりシンボルは常に 1:1 */
+function contentScale() { return 1; }
 
 /* 表題欄の割付 (用紙上 mm)。画面・DXF で必ず同じものを使う */
 const TITLE_BLOCK = { w: 160, h: 30, rowH: 10, cols: [52, 44, 34, 30] };
@@ -114,7 +123,7 @@ function titleBlocksRects() {
 /** 線番ラベルの位置。最長区間の中点を基本とし、機器の図記号に重なる場合は
     同じ区間内で空いている位置へずらす (画面・DXF・検図で共有)。 */
 function wireLabelPos(w, page) {
-  const f = sheetScale();
+  const f = contentScale();
   const segs = [];
   for (let i = 0; i < w.pts.length - 1; i++) {
     const a = w.pts[i], b = w.pts[i + 1];
@@ -171,7 +180,7 @@ function pinLabelVisible(page, dev, pinIdx) {
     右側へ寄せる。画面描画と検図で同じ結果を使うためエンジンに置く。 */
 function deviceLabelBoxes(page, dev) {
   const sym = SYMBOLS_BY_ID[dev.sym];
-  const f = sheetScale();
+  const f = contentScale();
   const b = devBounds(dev);
   const tag = displayTag(dev), desc = dev.desc;
   const horizontal = (dev.rot || 0) % 180 !== 0;
@@ -218,7 +227,7 @@ function rectsOverlap(a, b, ratio = 0) {
 
 /** 注記テキストの概算 bbox */
 function textBounds(t) {
-  const h = (t.size || TEXT_H.normal) * sheetScale();
+  const h = (t.size || TEXT_H.normal) * contentScale();
   const w = textWidthMM(t.text || "", h);
   const anchor = t.anchor || "middle";
   const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;
@@ -316,13 +325,13 @@ function pageZones(page) {
 function curPage() { return App.project.pages[App.pageIdx]; }
 
 /* ══════════════ デバイス ══════════════ */
-/* 図記号は用紙上で常に同じ大きさになるよう尺度倍で描く (回路図記号は実物では
-   ないため、線幅・文字と同じ扱いにする)。ピン位置・当たり判定も同じ倍率。 */
+/* 図記号・文字・線の太さは尺度によらず常に 1:1 で描く (シンボルの大きさは
+   変えない)。尺度を変えると図枠 (用紙) だけが広くなり、1枚に収められる
+   回路が増える。 */
 function pinAbs(dev, pin) {
   const r = (dev.rot || 0) * Math.PI / 180;
-  const c = Math.cos(r), s = Math.sin(r), k = sheetScale();
-  const px = pin.x * k, py = pin.y * k;
-  return { x: dev.x + px * c - py * s, y: dev.y + px * s + py * c };
+  const c = Math.cos(r), s = Math.sin(r);
+  return { x: dev.x + pin.x * c - pin.y * s, y: dev.y + pin.x * s + pin.y * c };
 }
 function devPins(dev) {
   const sym = SYMBOLS_BY_ID[dev.sym];
@@ -332,7 +341,7 @@ function devBounds(dev) {
   const sym = SYMBOLS_BY_ID[dev.sym];
   const [bx, by, bw, bh] = sym.bounds;
   const corners = [[bx, by], [bx + bw, by], [bx, by + bh], [bx + bw, by + bh]]
-    .map(([x, y]) => pinAbs(dev, { x, y }));   // pinAbs が尺度倍を含む
+    .map(([x, y]) => pinAbs(dev, { x, y }));
   const xs = corners.map(p => p.x), ys = corners.map(p => p.y);
   return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
@@ -896,6 +905,7 @@ function runDRC() {
   const openData = App.project.pages.map(p => drcCollect(p, "open"));
   propagateLinkGroups(openData);
   App.project.pages.forEach((page, pageIdx) => {
+    applySheet(page);        // 図枠まわりの検査はページごとの用紙・尺度で行う
     const closed = closedData[pageIdx];
     const open = openData[pageIdx];
     const srcClosed = { pNets: closed.pNets, nNets: closed.nNets };
@@ -950,7 +960,7 @@ function runDRC() {
       }
     });
     // 用紙に出る文字要素どうし・文字と図記号の重なり (検図の要)
-    const f4 = sheetScale();
+    const f4 = contentScale();
     const labels = [];
     page.devices.forEach(dev => {
       deviceLabelBoxes(page, dev).forEach(o => labels.push({ ...o.box, dev, what: `${displayTag(dev) || "機器"} の文字` }));
@@ -1104,6 +1114,7 @@ function runDRC() {
       }
     });
   });
+  applySheet(curPage());   // 現在ページの図枠に戻す
   return issues;
 }
 

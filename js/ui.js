@@ -456,6 +456,7 @@ const MENUS = {
     { sep: true },
     { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
     { sep: true },
+    { label: "DXF取り込み (作図 / シンボル登録)…", key: "", fn: () => UI.importDXF() },
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
     { label: "PDF出力 (全ページ印刷)…", key: "", fn: () => UI.printAll() },
     { label: "印刷 (現在ページ)…", key: "Ctrl+P", fn: () => UI.print() },
@@ -719,6 +720,168 @@ UI.printAll = () => {
 };
 
 /** 全ページを DXF (AutoCAD互換) でダウンロード */
+
+/* ══════════════ DXF 取り込み ══════════════ */
+/** DXF を読み込み、図面に作図するか、シンボルとして登録する */
+UI.importDXF = () => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中は取り込みできません"); return; }
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = ".dxf,.DXF";
+  inp.addEventListener("change", () => {
+    const file = inp.files[0];
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      let ents;
+      try { ents = parseDXF(rd.result); } catch (e) { alert("DXF の解析に失敗しました: " + e.message); return; }
+      if (!ents.length) { alert("作図要素が見つかりませんでした (対応: LINE / POLYLINE / CIRCLE / ARC / TEXT / SOLID)"); return; }
+      UI.dxfImportDialog(ents, file.name);
+    };
+    rd.readAsText(file, "utf-8");
+  });
+  inp.click();
+};
+
+/** 取り込みプレビューと配置方法の選択 */
+UI.dxfImportDialog = (ents, fileName) => {
+  const b = dxfEntsBounds(ents);
+  const counts = {};
+  ents.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">
+      <b>${escAttr(fileName)}</b> から ${ents.length} 要素を読み込みました<br>
+      ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(" ・ ")}<br>
+      原寸 ${b ? `${b.w.toFixed(1)} × ${b.h.toFixed(1)} mm` : "—"}
+    </div>
+    <div class="prop-row"><label>拡大縮小</label>
+      <select id="dxScale">
+        <option value="1">原寸 (1:1)</option>
+        <option value="fit20">高さ 20mm に合わせる (シンボル向き)</option>
+        <option value="0.5">1/2</option><option value="2">2倍</option>
+      </select></div>
+    <div class="prop-row"><label>取り込み方法</label>
+      <select id="dxMode">
+        <option value="draw">このページに作図線として配置する</option>
+        <option value="symbol">シンボルとして登録する (データベースに追加)</option>
+      </select></div>
+    <div id="dxSymOpts" style="display:none">
+      <div class="prop-grid2">
+        <div class="prop-row"><label>シンボル名</label><input id="dxName" value="${escAttr(fileName.replace(/\.dxf$/i, ""))}"/></div>
+        <div class="prop-row"><label>デバイス文字 (letter)</label><input id="dxLetter" class="mono" value="E" maxlength="2"/></div>
+      </div>
+      <div class="prop-row"><label>端子 (ピン)</label><select id="dxPins">
+        <option value="2v">上下2端子 (縦方向・既定)</option>
+        <option value="2h">左右2端子 (横方向)</option>
+        <option value="0">端子なし (作図用)</option>
+      </select></div>
+    </div>
+    <div class="prop-sect">プレビュー</div>
+    <div id="dxPrev" style="background:#f7f8f5;border-radius:8px;padding:10px;text-align:center;min-height:120px"></div>
+  </div>`);
+  const q = id => body.querySelector(id);
+  const scaleOf = () => {
+    const v = q("#dxScale").value;
+    if (v === "fit20") return b && b.h > 0 ? 20 / b.h : 1;
+    return parseFloat(v) || 1;
+  };
+  const preview = () => {
+    const r = dxfEntsToSVG(ents, { scale: scaleOf() });
+    const pad = 4;
+    q("#dxPrev").innerHTML = r.w > 0
+      ? `<svg viewBox="${-pad} ${-pad} ${r.w + pad * 2} ${r.h + pad * 2}" style="max-width:100%;max-height:220px;color:#1b2334">
+           <g fill="none" stroke="currentColor" stroke-width="0.5" stroke-linecap="round" stroke-linejoin="round">${r.body}</g></svg>`
+      : "（表示できる要素がありません）";
+  };
+  q("#dxScale").addEventListener("change", preview);
+  q("#dxMode").addEventListener("change", () => {
+    q("#dxSymOpts").style.display = q("#dxMode").value === "symbol" ? "" : "none";
+  });
+  preview();
+
+  const foot = h(`<div style="display:flex;gap:10px;justify-content:flex-end">
+    <button class="btn-solid" id="dxCancel">キャンセル</button>
+    <button class="btn-solid primary" id="dxOk">取り込む</button>
+  </div>`);
+  const m = UI.openModal({ title: "DXF を取り込む", sub: "AutoCAD 図面を作図線として配置、またはシンボルに登録します", body, foot });
+  foot.querySelector("#dxCancel").addEventListener("click", m.close);
+  foot.querySelector("#dxOk").addEventListener("click", () => {
+    const k = scaleOf();
+    const mode = q("#dxMode").value;
+    commit();
+    if (mode === "symbol") {
+      const name = q("#dxName").value.trim() || "取り込みシンボル";
+      const letter = (q("#dxLetter").value.trim() || "E").toUpperCase();
+      const r = dxfEntsToSVG(ents, { scale: k });
+      const pinMode = q("#dxPins").value;
+      const pins = pinMode === "2v" ? [{ x: r.w / 2, y: 0, n: "1" }, { x: r.w / 2, y: r.h, n: "2" }]
+        : pinMode === "2h" ? [{ x: 0, y: r.h / 2, n: "1" }, { x: r.w, y: r.h / 2, n: "2" }] : [];
+      const sym = {
+        id: "imp_" + uid("s"), db: true, group: "取り込み", cat: "db", letter,
+        name, nameEn: name, desc: `DXF 取り込み (${fileName})`,
+        pins, sim: pins.length === 2 ? "passthru" : "none",
+        bounds: [-2, -2, r.w + 4, r.h + 4], body: r.body, imported: true,
+      };
+      DB_SYMBOLS.push(sym);
+      SYMBOLS_BY_ID[sym.id] = sym;
+      saveImportedSymbols();
+      dbSetPinned([...new Set([...dbPinnedList(), sym.id])]);
+      UI.buildPalette();
+      m.close();
+      UI.setMsg(`シンボル「${name}」を登録しました (左のライブラリ「データベース」に追加)`);
+      return;
+    }
+    // 作図線として配置: 画面中央に置く
+    const rect = Editor.svg.getBoundingClientRect();
+    const c = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const r = dxfEntsToSVG(ents, { scale: k });
+    const page = curPage();
+    const ox = snap(c.x - r.w / 2), oy = snap(c.y - r.h / 2);
+    let nWire = 0, nText = 0;
+    const bb = dxfEntsBounds(ents);
+    const X = x => ox + (x - bb.x0) * k, Y = y => oy + (bb.y1 - y) * k;
+    ents.forEach(e => {
+      if (e.type === "LINE") {
+        const w = addWire(page, [[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]], { style: "dash" });
+        if (w) { w.aux = true; nWire++; }
+      } else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
+        const pts = (e.pts || []).filter(p => isFinite(p[0]) && isFinite(p[1])).map(p => [X(p[0]), Y(p[1])]);
+        if (pts.length >= 2) {
+          if (e.flags & 1) pts.push(pts[0]);
+          const w = addWire(page, pts, { style: "dash" });
+          if (w) { w.aux = true; nWire++; }
+        }
+      } else if (e.type === "TEXT" || e.type === "MTEXT") {
+        page.texts.push({ id: uid("t"), x: X(e.x1), y: Y(e.y1), text: e.text || "", size: Math.max(2.5, (e.size || 3.5) * k), anchor: "start" });
+        nText++;
+      }
+      // CIRCLE / ARC は作図線としては近似できないため、図形はシンボル登録を案内する
+    });
+    m.close();
+    UI.refresh();
+    UI.setMsg(`DXF を作図しました (線 ${nWire} 本・文字 ${nText} 点)。円弧を含む図形はシンボル登録をご利用ください`);
+  });
+};
+
+/* 取り込みシンボルの保存 (localStorage) */
+function saveImportedSymbols() {
+  try {
+    const imported = DB_SYMBOLS.filter(s => s.imported);
+    localStorage.setItem("electracad.importedSyms", JSON.stringify(imported));
+  } catch (e) { /* 容量超過は無視 */ }
+}
+function loadImportedSymbols() {
+  try {
+    const raw = localStorage.getItem("electracad.importedSyms");
+    if (!raw) return;
+    JSON.parse(raw).forEach(sym => {
+      if (SYMBOLS_BY_ID[sym.id]) return;
+      DB_SYMBOLS.push(sym);
+      SYMBOLS_BY_ID[sym.id] = sym;
+    });
+  } catch (e) { /* 破損時は読み飛ばす */ }
+}
+
 UI.exportDXF = () => {
   const base = App.project.name.replace(/[\\/:*?"<>|]/g, "_");
   App.project.pages.forEach((pg, i) => {
@@ -922,6 +1085,7 @@ UI.sheetSetup = () => {
   if (App.sim.running) { UI.setMsg("シミュレーション中は図枠を変更できません"); return; }
   const meta = projectMeta();
   const page = curPage();
+  const cur = pageSheetMeta(page);        // このページに効いている用紙・尺度
   const opt = (v, cur, label) => `<option value="${v}"${v === cur ? " selected" : ""}>${label || v}</option>`;
   const body = h(`<div>
     <div class="prop-sect">表題欄</div>
@@ -941,10 +1105,14 @@ UI.sheetSetup = () => {
     <div class="prop-sect">用紙と尺度</div>
     <div class="prop-grid2">
       <div class="prop-row"><label>用紙 (横置き)</label><select id="tbPaper">
-        ${Object.entries(PAPERS).map(([k, [pw, ph]]) => opt(k, meta.paper, `${k} (${pw}×${ph} mm)`)).join("")}
+        ${Object.entries(PAPERS).map(([k, [pw, ph]]) => opt(k, cur.paper, `${k} (${pw}×${ph} mm)`)).join("")}
       </select></div>
       <div class="prop-row"><label>尺度</label><select id="tbScale">
-        ${SCALES.map(s => opt(s, meta.scale)).join("")}
+        ${SCALES.map(s => opt(s, cur.scale)).join("")}
+      </select></div>
+      <div class="prop-row"><label>適用範囲</label><select id="tbScope">
+        <option value="page"${page.paper || page.scale ? " selected" : ""}>このページのみ (${page.no}. ${escAttr(page.name)})</option>
+        <option value="all"${page.paper || page.scale ? "" : " selected"}>全ページ (既定)</option>
       </select></div>
     </div>
     <div class="prop-note" id="tbInfo"></div>
@@ -997,7 +1165,7 @@ UI.sheetSetup = () => {
   /** 指定の用紙・尺度に切り替えた場合のはみ出し数を試算する (SHEET は元に戻す) */
   function countOverflow(paper, scale) {
     const save = { paper: meta.paper, scale: meta.scale };
-    meta.paper = paper; meta.scale = scale; applySheet();
+    meta.paper = paper; meta.scale = scale; applySheet({});
     const fr2 = frameRect(), blocks = titleBlocksRects();
     const hit = (b) => b.x < fr2.x || b.y < fr2.y || b.x + b.w > fr2.x + fr2.w || b.y + b.h > fr2.y + fr2.h ||
       blocks.some(r => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y);
@@ -1012,7 +1180,7 @@ UI.sheetSetup = () => {
         if (outside || onBlk) wires++;
       });
     });
-    meta.paper = save.paper; meta.scale = save.scale; applySheet();
+    meta.paper = save.paper; meta.scale = save.scale; applySheet(page);
     return { devs, wires, total: devs + wires };
   }
   q("#tbPaper").addEventListener("change", info);
@@ -1026,7 +1194,7 @@ UI.sheetSetup = () => {
   const m = UI.openModal({ title: "図枠・表題欄の設定", sub: "表題欄の記入項目と用紙サイズ・尺度", body, foot });
   foot.querySelector("#tbCancel").addEventListener("click", m.close);
   foot.querySelector("#tbOk").addEventListener("click", () => {
-    const paperChanging = meta.paper !== q("#tbPaper").value || meta.scale !== q("#tbScale").value;
+    const paperChanging = cur.paper !== q("#tbPaper").value || cur.scale !== q("#tbScale").value;
     if (paperChanging) {
       const over = countOverflow(q("#tbPaper").value, q("#tbScale").value);
       if (over.total && !confirm(
@@ -1049,14 +1217,17 @@ UI.sheetSetup = () => {
     const lastRev = [...meta.revs].reverse().find(r => r.rev);
     if (lastRev && meta.rev !== lastRev.rev) meta.rev = lastRev.rev;
 
-    const oldK = sheetScale();
     const paperChanged = paperChanging;
-    meta.paper = q("#tbPaper").value;
-    meta.scale = q("#tbScale").value;
-    applySheet();
-    // 尺度が変わったら図形も同じ倍率で拡大縮小し、図面の見た目と接続を保つ
-    const newK = sheetScale();
-    if (newK !== oldK) scaleProjectGeometry(newK / oldK);
+    const scope = q("#tbScope").value;
+    if (scope === "page") {                       // このページだけ差し替える
+      page.paper = q("#tbPaper").value;
+      page.scale = q("#tbScale").value;
+    } else {                                      // 全ページ共通の既定に戻す
+      meta.paper = q("#tbPaper").value;
+      meta.scale = q("#tbScale").value;
+      App.project.pages.forEach(pg => { delete pg.paper; delete pg.scale; });
+    }
+    applySheet(page);
     const nameInput = document.getElementById("projectName");
     if (nameInput) nameInput.value = App.project.name;
     m.close();
@@ -1476,6 +1647,7 @@ function boot() {
   });
   pn.addEventListener("keydown", e => { if (e.key === "Enter") pn.blur(); });
 
+  loadImportedSymbols();
   restoreFileHandle();
   window.addEventListener("beforeunload", e => {
     if (!App.dirty) return;

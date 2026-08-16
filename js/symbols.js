@@ -62,9 +62,10 @@ const SYMBOLS = [
   },
   {
     id: "limit_sw", cat: "input", letter: "B", name: "リミットスイッチ", nameEn: "Limit switch",
-    desc: "ローラレバー・a接点", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
-    sim: "contact_no", momentary: false, bounds: [-19,-2, 22, 24],
-    body: G_NO + `<path d="M-10,14 L-15,6"/><circle cx="-15.8" cy="4.6" r="1.7"/><path d="M-12.5,10 L-3,10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    desc: "メーク接点 (JIS 07-08-01)", typ: "D4V-8104Z", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
+    sim: "contact_no", momentary: false, bounds: [-12,-2, 15, 24],
+    // 07-08-01: メーク接点 + 可動接点側の三角形 (カム等で操作されることを示す)
+    body: G_NO + `<path d="M-4.8,5 L-9.6,10 L-4.8,15" fill="none"/>`,
   },
   {
     id: "prox", cat: "input", letter: "B", name: "近接センサ", nameEn: "Proximity sensor",
@@ -186,9 +187,10 @@ const SYMBOLS = [
   },
   {
     id: "buzzer", cat: "output", letter: "P", name: "ブザー", nameEn: "Buzzer",
-    desc: "警報音響機器", typ: "M2BJ-B24", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
-    sim: "load", bounds: [-8,0, 16, 20],
-    body: `<path d="M0,0 V8 M-6,8 H6"/><path d="M-6,8 A6,6 0 0 0 6,8"/><path d="M0,20 V14"/>`,
+    desc: "警報音響機器 (JIS 08-10-10)", typ: "M2BJ-B24", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
+    sim: "load", bounds: [-8,-1, 16, 22],
+    // 08-10-10: 上辺が直線・下側が半円のお椀形。引出線は両端から下へ
+    body: `<path d="M0,0 V6"/><path d="M-6,6 H6"/><path d="M-6,6 A6,6 0 0 0 6,6"/><path d="M0,12 V20"/>`,
   },
   {
     id: "sol_valve", cat: "output", letter: "Y", name: "電磁弁", nameEn: "Solenoid valve",
@@ -308,13 +310,15 @@ const SYMBOLS = [
   {
     id: "trafo", cat: "power", letter: "T", name: "変圧器 (シールド付)", nameEn: "Shielded transformer",
     desc: "制御トランス 2巻線+静電シールド (JIS C 0617)", typ: "PT-100E", horizontalPins: true,
-    pins: [{x:-5,y:0,n:"1"},{x:5,y:0,n:"2"},{x:-5,y:40,n:"3"},{x:5,y:40,n:"4"}],
-    sim: "trafo", bounds: [-11,0, 22, 40],
-    body: `<path d="M-5,0 V16 M5,0 V16 M-5,40 V24 M5,24 V40"/>` +
-      `<path d="M-5,16 A2.5,2.5 0 0 0 0,16 A2.5,2.5 0 0 0 5,16"/>` +   // 一次巻線 (端子に直結・中央へ向くコブ)
-      `<path d="M-5,24 A2.5,2.5 0 0 1 0,24 A2.5,2.5 0 0 1 5,24"/>` +   // 二次巻線
-      `<path d="M-8,18.7 H8"/>` +                                       // 鉄心 (実線)
-      `<path d="M-8,21.3 H8" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,             // 静電シールド (破線)
+    pins: [{x:-10,y:0,n:"1"},{x:10,y:0,n:"2"},{x:-10,y:40,n:"3"},{x:10,y:40,n:"4"}],
+    sim: "trafo", bounds: [-15,0, 30, 40],
+    body: `<path d="M-10,0 V16 M10,0 V16 M-10,40 V24 M10,24 V40"/>` +
+      // 一次巻線: 4コブ (凸側を遮蔽側へ向ける)
+      `<path d="M-10,16 A2.5,2.5 0 0 0 -5,16 A2.5,2.5 0 0 0 0,16 A2.5,2.5 0 0 0 5,16 A2.5,2.5 0 0 0 10,16"/>` +
+      // 二次巻線: 4コブ
+      `<path d="M-10,24 A2.5,2.5 0 0 1 -5,24 A2.5,2.5 0 0 1 0,24 A2.5,2.5 0 0 1 5,24 A2.5,2.5 0 0 1 10,24"/>` +
+      // 静電遮蔽 (破線) — 06-10-02 は遮蔽のみを描く
+      `<path d="M-13,20 H13" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
   {
     id: "earth", cat: "power", letter: "E", name: "接地 (一般)", nameEn: "Earth",

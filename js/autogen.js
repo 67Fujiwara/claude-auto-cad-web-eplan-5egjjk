@@ -617,12 +617,6 @@ function aiGenerate(sel) {
   }
   const totalDevs = pageIdxs.reduce((n, i) => n + project.pages[i].devices.length, 0);
   const totalWires = pageIdxs.reduce((n, i) => n + project.pages[i].wires.length, 0);
-  // 生成は 1:1 のレイアウト定数で行うため、縮尺図面では全体を尺度倍して
-  // 図記号 (尺度倍で描かれる) と配置の縮尺を揃える
-  if (sheetScale() !== 1) {
-    scaleProjectGeometry(sheetScale());
-    report.push(`尺度 ${projectMeta().scale} に合わせて配置を ${sheetScale()} 倍しました`);
-  }
   report.push(`生成完了: ${pageIdxs.length} ページ / デバイス ${totalDevs} 点 / 配線 ${totalWires} 本`);
   return { report, pageIdxs };
 }
