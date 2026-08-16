@@ -72,22 +72,24 @@ UI.buildPalette = (filter = "") => {
 UI.renumberPages = () => {
   const meta = projectMeta();
   const base = (meta.dwgNo || "").trim();
+  const auto = meta.dwgNoAuto !== false;
   App.project.pages.forEach((p, k) => {
     p.no = k + 1;
     // 図番はページ順に自動採番。書式は「接頭辞-連番」(既定 E-001)
-    if (meta.dwgNoAuto !== false) {
-      const m = /^(.*?)(\d+)\s*$/.exec(base);
-      p.dwgNo = m ? m[1] + String(parseInt(m[2], 10) + k).padStart(m[2].length, "0")
-                  : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : "E-" + String(k + 1).padStart(3, "0"));
-    }
+    // 手入力した図番 (dwgNoManual) と、自動採番を切った場合は書き換えない
+    if (!auto || p.dwgNoManual) return;
+    const m = /^(.*?)(\d+)\s*$/.exec(base);
+    p.dwgNo = m ? m[1] + String(parseInt(m[2], 10) + k).padStart(m[2].length, "0")
+                : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : "E-" + String(k + 1).padStart(3, "0"));
   });
 };
+UI.dwgNoOf = pageDwgNo;
 
 /** 指定位置にページを挿入する (idx 番目の直前) */
 UI.insertPageAt = (idx, name) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はページを追加できません"); return; }
   commit();
-  const pg = newPage(name || `ページ ${App.project.pages.length + 1}`, idx + 1);
+  const pg = newPage(name || `ページ ${idx + 1}`, idx + 1);
   App.project.pages.splice(idx, 0, pg);
   UI.renumberPages();
   App.pageIdx = idx;
@@ -666,6 +668,7 @@ UI.openFile = async () => {
       rememberFileHandle(handle);
       App.pageIdx = 0;
       App.selection.clear();
+      UI.renumberPages();      // 読み込んだ図面の図番を現在の設定に同期
       applySheet();
       document.getElementById("projectName").value = p.name;
       UI.updateSaveButton();
@@ -697,6 +700,7 @@ UI.openFile = async () => {
         App.fileHandle = null; // input[type=file] 経由は上書き先を持てない
         App.pageIdx = 0;
         App.selection.clear();
+        UI.renumberPages();      // 読み込んだ図面の図番を現在の設定に同期
         applySheet();
         UI.updateSaveButton();
         document.getElementById("projectName").value = p.name;
@@ -783,9 +787,10 @@ UI.editWireNumbers = () => {
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">
       ページ ${page.no}「${escAttr(page.name)}」の線番 ${rows.length} 本。<br>
-      手動で入力した線番は自動採番から保護されます (空欄にすると自動採番に戻ります)。
+      「手動」に✓の付いた線番だけが自動採番から保護されます。<br>
+      線番を書き換えると自動で✓が付き、空欄にすると自動採番に戻ります。
     </div>
-    <div class="wnum-head"><span>線番</span><span>電線仕様</span><span>接続先</span></div>
+    <div class="wnum-head"><span>線番</span><span>手動</span><span>電線仕様</span><span>接続先</span></div>
     <div id="wnRows" style="max-height:52vh;overflow:auto"></div>
   </div>`);
   const netLabel = (e) => {
@@ -798,12 +803,21 @@ UI.editWireNumbers = () => {
     }));
     return pins.slice(0, 3).join(" ⇔ ") + (pins.length > 3 ? ` ほか${pins.length - 3}` : "");
   };
+  rows.forEach(([, e]) => { e.num0 = e.num; });   // 表示時の値 (自動採番値) を控えておく
   body.querySelector("#wnRows").innerHTML = rows.map(([net, e], i) => `
     <div class="wnum-row">
       <input id="wn${i}" class="mono" value="${escAttr(e.num)}" placeholder="自動"/>
+      <label class="chk wnum-fix"><input type="checkbox" id="wf${i}" ${e.fixed ? "checked" : ""}/><span></span></label>
       <input id="ws${i}" class="mono" value="${escAttr(e.spec)}" placeholder="例: KIV(BL)-1.25sq"/>
       <span class="wnum-conn">${escAttr(netLabel(e)) || "—"}</span>
     </div>`).join("");
+  // 線番を書き換えたら自動的に「手動」扱いにする (無変更の行は自動のまま)
+  rows.forEach(([, e], i) => {
+    body.querySelector(`#wn${i}`).addEventListener("input", ev => {
+      const v = ev.target.value.trim();
+      body.querySelector(`#wf${i}`).checked = !!v && (v !== e.num0 || e.fixed);
+    });
+  });
   const foot = h(`<div style="display:flex;gap:10px;justify-content:space-between;align-items:center;width:100%">
     <button class="btn-solid" id="wnAuto">すべて自動採番に戻す</button>
     <span style="flex:1"></span>
@@ -822,22 +836,26 @@ UI.editWireNumbers = () => {
   });
   foot.querySelector("#wnOk").addEventListener("click", () => {
     const vals = rows.map((_, i) => body.querySelector(`#wn${i}`).value.trim());
-    const dup = vals.filter((v, i) => v && vals.indexOf(v) !== i);
+    const fixes = rows.map(([, e], i) => body.querySelector(`#wf${i}`).checked && !!vals[i]);
+    // 手動で保護する線番どうしの重複を先に警告する (自動側は採番時に衝突回避される)
+    const fixedVals = vals.filter((v, i) => v && fixes[i]);
+    const dup = fixedVals.filter((v, i) => fixedVals.indexOf(v) !== i);
     if (dup.length && !confirm(`線番 ${[...new Set(dup)].join(", ")} が重複しています。このまま適用しますか？`)) return;
     commit();
     rows.forEach(([, e], i) => {
-      const v = vals[i];
+      const v = vals[i], fixed = fixes[i];
       const spec = body.querySelector(`#ws${i}`).value.trim();
-      e.wires.forEach((w, k) => {
-        w.num = v || null;
-        w.fixed = !!v;                     // 手動線番は自動採番から保護
-        w.numShow = !!v && k === 0;        // ネットの代表1本にだけ表示
+      e.wires.forEach(w => {
+        w.num = fixed ? v : null;          // 自動の行は採番しなおす
+        w.fixed = fixed;                   // 手動線番だけを自動採番から保護
+        w.numShow = false;                 // 表示位置は autoNumberWires が最長区間で決める
         if (spec) w.spec = spec; else delete w.spec;
       });
     });
-    if (vals.some(v => !v)) autoNumberWires();   // 空欄は自動採番で埋める
+    autoNumberWires();   // 自動の行を採番し、ネットごとの表示位置を決める
     m.close(); UI.refresh(false);
-    UI.setMsg("線番を更新しました");
+    const nf = fixes.filter(Boolean).length;
+    UI.setMsg(`線番を更新しました (手動 ${nf} 本 / 自動 ${rows.length - nf} 本)`);
   });
 };
 
@@ -1237,7 +1255,8 @@ UI.sheetSetup = () => {
     <div class="prop-grid2">
       <div class="prop-row"><label>プロジェクト</label><input id="tbProj" value="${escAttr(App.project.name)}"/></div>
       <div class="prop-row"><label>ページ名</label><input id="tbPage" value="${escAttr(page.name)}"/></div>
-      <div class="prop-row"><label>図番</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="E-${String(page.no).padStart(3, "0")}"/></div>
+      <div class="prop-row"><label>図番 (先頭ページ)</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="E-001"/></div>
+      <div class="prop-row"><label>このページの図番</label><input id="tbDwgPage" class="mono" value="${escAttr(page.dwgNo || "")}" placeholder="${escAttr(UI.dwgNoOf(page))}"/></div>
       <div class="prop-row"><label>改訂</label><input id="tbRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
       <div class="prop-row"><label>設計</label><input id="tbDes" value="${escAttr(meta.designer || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
@@ -1247,6 +1266,11 @@ UI.sheetSetup = () => {
         ${["第三角法", "第一角法", "該当なし (回路図)"].map(v => opt(v, meta.proj || "第三角法")).join("")}
       </select></div>
     </div>
+    <div class="prop-note">
+      図番はページ順に自動採番されます (例 <span class="mono">TK-2026-010</span> → 010, 011, 012…)。<br>
+      「このページの図番」に直接入力すると、そのページだけ自動採番から保護されます (空欄で自動に戻る)。
+    </div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="tbDwgAuto" ${meta.dwgNoAuto === false ? "" : "checked"}/><span>図番をページ順に自動採番する</span></label></div>
     <div class="prop-sect">用紙と尺度</div>
     <div class="prop-grid2">
       <div class="prop-row"><label>用紙 (横置き)</label><select id="tbPaper">
@@ -1354,6 +1378,12 @@ UI.sheetSetup = () => {
     App.project.name = q("#tbProj").value.trim() || App.project.name;
     page.name = q("#tbPage").value.trim() || page.name;
     meta.dwgNo = q("#tbDwg").value.trim();
+    meta.dwgNoAuto = q("#tbDwgAuto").checked;
+    {   // ページ固有の図番: 入力があればそのページを手動扱いにする
+      const pv = q("#tbDwgPage").value.trim();
+      if (pv) { page.dwgNo = pv; page.dwgNoManual = true; }
+      else { delete page.dwgNoManual; }
+    }
     meta.rev = q("#tbRev").value.trim() || "0";
     meta.designer = q("#tbDes").value.trim();
     meta.checker = q("#tbChk").value.trim();
@@ -1381,6 +1411,7 @@ UI.sheetSetup = () => {
         App.project.pages.forEach(pg => { delete pg.paper; delete pg.scale; });
       }
     }
+    UI.renumberPages();          // 図番の接頭辞・自動採番設定を全ページへ即反映
     applySheet(page);
     const nameInput = document.getElementById("projectName");
     if (nameInput) nameInput.value = App.project.name;
@@ -1784,6 +1815,7 @@ UI.setupKeys = () => {
 
 /* ══════════════ リフレッシュ / ブート ══════════════ */
 UI.refresh = (rebuildTabs = true) => {
+  App.labelRev++;          // ラベル配置キャッシュを無効化
   if (rebuildTabs !== false) UI.buildPageTabs();
   UI.showProps();
   requestRender();
@@ -1792,6 +1824,7 @@ UI.refresh = (rebuildTabs = true) => {
 function boot() {
   App.project = loadLocal() || demoProject();
   mergeProjectSymbols();
+  UI.renumberPages();   // ページ番号と図番を現在の設定に同期
   applySheet(); // 保存された用紙・尺度で作図領域を張る
   document.getElementById("projectName").value = App.project.name;
   const pn = document.getElementById("projectName");

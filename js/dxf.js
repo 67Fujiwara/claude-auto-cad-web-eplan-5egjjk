@@ -319,7 +319,7 @@ function pageToDXF(page) {
   const R = TITLE_BLOCK.rowH;
   tbCell(0, 0, "図名 (プロジェクト)", App.project.name);
   tbCell(1, 0, "ページ名", page.name);
-  tbCell(2, 0, "図面番号", page.dwgNo || meta.dwgNo || "E-" + String(page.no).padStart(3, "0"));
+  tbCell(2, 0, "図面番号", pageDwgNo(page));
   tbCell(3, 0, "改訂", meta.rev || "0");
   tbCell(0, R, "設計 (署名)", meta.designer || "—");
   tbCell(1, R, "検図 (署名)", meta.checker || "—");

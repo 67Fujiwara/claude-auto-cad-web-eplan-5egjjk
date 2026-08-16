@@ -301,7 +301,8 @@ input, select, textarea { font-family: inherit; }
   display: flex; align-items: center; gap: 8px;
 }
 .prop-sect::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
-.wnum-head, .wnum-row { display: grid; grid-template-columns: 130px 190px 1fr; gap: 8px; align-items: center; }
+.wnum-head, .wnum-row { display: grid; grid-template-columns: 130px 42px 190px 1fr; gap: 8px; align-items: center; }
+.wnum-fix { justify-content: center; margin: 0; }
 .wnum-head { font-size: 10.5px; color: var(--text-faint); margin-bottom: 6px; letter-spacing: .06em; }
 .wnum-row { margin-bottom: 6px; }
 .wnum-row input {

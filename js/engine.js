@@ -132,34 +132,51 @@ function wireLabelPos(w, page) {
   segs.sort((x, y) => y.len - x.len);
   const devs = page ? page.devices : [];
   const notes = page ? page.texts : [];
-  const hit = (bx, db) => bx.x < db.x + db.w && bx.x + bx.w > db.x && bx.y < db.y + db.h && bx.y + bx.h > db.y;
-  const boxAt = (pt, horiz) => {
+  // 障害物: 機器の図記号・注記・デバイスタグ/機能テキスト (線番が図記号に被らないように)
+  const obst = [];
+  devs.forEach(d => {
+    obst.push(insetRect(devBounds(d), 1.5 * f));
+    if (page) deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
+  });
+  (notes || []).forEach(t => obst.push(textBounds(t)));
+  // 実際に印字される位置 → その文字の外接矩形 (検図・DXF と同じ式にそろえる)
+  const posOf = (pt, horiz) => [pt[0] + (horiz ? 0 : -1.8 * f), pt[1] - 1.4 * f, horiz];
+  const boxOf = (mx, my, horiz) => {
     const h = TEXT_H.small * f, wd = textWidthMM(String(w.num || ""), h);
-    return horiz ? { x: pt[0] - wd / 2, y: pt[1] - 1.4 * f - h, w: wd, h }
-                 : { x: pt[0] - 1.8 * f - h, y: pt[1] - wd / 2, w: h, h: wd };
+    return horiz ? { x: mx - wd / 2, y: my - h, w: wd, h }
+                 : { x: mx - h, y: my - wd / 2, w: h, h: wd };
   };
-  const free = (pt, horiz) => {
-    const bx = boxAt(pt, horiz);
-    return !devs.some(d => hit(bx, insetRect(devBounds(d), 1.5 * f))) && !notes.some(t => hit(bx, textBounds(t)));
+  let best = null;
+  const consider = (pt, horiz) => {
+    const res = posOf(pt, horiz);
+    const bx = boxOf(res[0], res[1], horiz);
+    let sc = 0;
+    for (const r of obst) sc += overlapArea(bx, r);
+    if (sc === 0) return res;
+    if (!best || sc < best.sc) best = { sc, res };
+    return null;
   };
-  // 長い区間から順に、機器・注記に当たらない位置を探す
+  // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す
   for (const sg of segs) {
     const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
     const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
     for (const t of [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85]) {
       const pt = at(t);
-      if (free(pt, horiz)) return [pt[0] + (horiz ? 0 : -1.8 * f), pt[1] - 1.4 * f, horiz];
+      const ok = consider(pt, horiz);
+      if (ok) return ok;
     }
   }
   // どの区間にも空きが無い場合は、配線から法線方向へ離して逃がす
   const sg = segs[0] || { a: w.pts[0], b: w.pts[w.pts.length - 1] };
   const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
   const pt = [(sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2];
-  for (const off of [1.8, 4.5, 7, -4.5, -7]) {
-    const cand = horiz ? [pt[0], pt[1] - (off - 1.8) * f] : [pt[0] - off * f, pt[1]];
-    if (free(cand, horiz)) return [cand[0], cand[1] - 1.4 * f, horiz];
+  for (const off of [1.8, 4.5, 7, 9.5, -4.5, -7, -9.5]) {
+    const cand = horiz ? [pt[0], pt[1] - (off - 1.8) * f] : [pt[0] - (off - 1.8) * f, pt[1]];
+    const ok = consider(cand, horiz);
+    if (ok) return ok;
   }
-  return [pt[0] + (horiz ? 0 : -1.8 * f), pt[1] - 1.4 * f, horiz];
+  // 全滅時は重なり面積が最小の候補 (無条件フォールバックはしない)
+  return best ? best.res : posOf(pt, horiz);
 }
 
 /** ピン番号を表示するか (隣接配線の線番と同名なら二重表示を避ける)。
@@ -178,37 +195,19 @@ function pinLabelVisible(page, dev, pinIdx) {
 
 /** 機器ラベル (タグ・機能テキスト) の配置。左に置くと隣の機器へ被る場合は
     右側へ寄せる。画面描画と検図で同じ結果を使うためエンジンに置く。 */
-function deviceLabelBoxes(page, dev) {
-  const sym = symOf(dev.sym);
+/* デバイスタグ・機能テキストの配置
+   ─ 他機器・端子番号・配線・確定済みの他ラベルを障害物として、
+     機器の左→右→上→下の順に「干渉しなくなるまで機器側へ寄せて」置く。
+     どこにも空きがない場合は重なり面積が最小の候補を採る (無条件フォールバック禁止)。
+   ─ 配置はページ内で左→上の順に貪欲決定し、確定したラベルを順次障害物へ積む。 */
+const _labelCache = new WeakMap();   // page → { rev, map }
+
+/** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
+function labelObstacles(page) {
   const f = contentScale();
-  const b = devBounds(dev);
-  const tag = displayTag(dev), desc = dev.desc;
-  const horizontal = (dev.rot || 0) % 180 !== 0;
-  const H = TEXT_H.normal * f;
-  const mk = (text, x, y, anchor) => ({ text, x, y, w: textWidthMM(text, H), h: H, anchor, size: H });
-  const wrap = (arr, side) => { const o = arr.map(x => ({ ...x, box: labelBox(x) })); o.side = side; return o; };
-  if (horizontal) {
-    const out = [];
-    if (tag) out.push(mk(tag, b.x + b.w - 2.5 * f, b.y - 2 * f, "start"));
-    if (desc) out.push(mk(desc, b.x + b.w / 2, b.y + b.h + 4.4 * f, "middle"));
-    return wrap(out, "top");
-  }
-  /* 縦向き機器: 左に置くのが基本。他の機器・端子番号・他機器のラベルに当たる場合は
-     間隔を詰めて機器側へ寄せ、それでも当たるなら反対側を試す。 */
-  const build = (side, gap) => {
-    const out = [];
-    const x = side === "left" ? b.x - gap * f : b.x + b.w + gap * f;
-    const anchor = side === "left" ? "end" : "start";
-    if (tag) out.push(mk(tag, x, b.y + b.h / 2 - 0.8 * f, anchor));
-    if (desc) out.push(mk(desc, x, b.y + b.h / 2 + (tag ? 4 : 1) * f, anchor));
-    return wrap(out, side);
-  };
-  if (!tag && !desc) return wrap([], "left");
-  // 干渉相手: 他機器の図記号・その端子番号 (自分の端子番号は避けない)
-  const obstacles = [];
+  const out = [];
   page.devices.forEach(d2 => {
-    if (d2 === dev) return;
-    obstacles.push(insetRect(devBounds(d2), 1.2 * f));
+    out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
     const s2 = symOf(d2.sym);
     (s2.pins || []).forEach((p, pi) => {
       const vis = pinLabelVisible(page, d2, pi);
@@ -217,19 +216,115 @@ function deviceLabelBoxes(page, dev) {
       const rotated = (d2.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (s2.horizontalPins && p.y <= s2.bounds[1] + 2));
       const ty = rotated ? vis.abs.y - 1.6 * f : vis.abs.y + (isTop ? 3.4 : -1.6) * f;
-      obstacles.push({ x: vis.abs.x + 1 * f, y: ty - h, w: w2, h });
+      out.push({ owner: d2.id, x: vis.abs.x + 1 * f, y: ty - h, w: w2, h });
     });
   });
-  const free = boxes => !boxes.some(o => obstacles.some(r => rectsOverlap(o.box, r, 0.05)));
-  // 機器側へ順に寄せる → 収まらなければ反対側 (ミラー表を持つコイルは右を空ける)
-  const sides = sym.mirror ? ["left"] : ["left", "right"];
-  for (const side of sides) {
-    for (const gap of [2.2, 1.4, 0.8, 0.3]) {
-      const cand = build(side, gap);
-      if (free(cand)) return cand;
+  // 配線 (実線=導体のみ)。作図線はラベルを避ける対象にしない
+  const wt = 0.6 * f;
+  condWires(page).forEach(w => {
+    for (let i = 0; i < w.pts.length - 1; i++) {
+      const [x1, y1] = w.pts[i], [x2, y2] = w.pts[i + 1];
+      out.push({
+        owner: null,
+        x: Math.min(x1, x2) - wt, y: Math.min(y1, y2) - wt,
+        w: Math.abs(x2 - x1) + wt * 2, h: Math.abs(y2 - y1) + wt * 2,
+      });
+    }
+  });
+  (page.texts || []).forEach(t => {
+    const h = (t.size || TEXT_H.normal) * f;
+    out.push({ owner: null, x: t.x, y: t.y - h, w: textWidthMM(t.text || "", h), h });
+  });
+  return out;
+}
+
+function overlapArea(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0.05 && h > 0.05 ? w * h : 0;
+}
+
+/** 1機器ぶんのラベル配置を決める。obstacles は {x,y,w,h,owner} の配列 */
+function placeDeviceLabels(page, dev, obstacles) {
+  const sym = symOf(dev.sym);
+  const f = contentScale();
+  const b = devBounds(dev);
+  const tag = displayTag(dev), desc = dev.desc;
+  const horizontal = (dev.rot || 0) % 180 !== 0;
+  const H = TEXT_H.normal * f;
+  const mk = (text, x, y, anchor, isTag) => {
+    const o = { text, x, y, w: textWidthMM(text, H), h: H, anchor, size: H, isTag: !!isTag };
+    o.box = labelBox(o);
+    return o;
+  };
+  const wrap = (arr, side) => { arr.side = side; return arr; };
+  if (!tag && !desc) return wrap([], "left");
+
+  // 候補の生成 ─ side ごとに機器へ寄せる段階を持つ
+  const sideCand = (side, d) => {
+    const out = [];
+    if (side === "left" || side === "right") {
+      const x = side === "left" ? b.x - d * f : b.x + b.w + d * f;
+      const anchor = side === "left" ? "end" : "start";
+      if (tag) out.push(mk(tag, x, b.y + b.h / 2 - 0.8 * f, anchor, true));
+      if (desc) out.push(mk(desc, x, b.y + b.h / 2 + (tag ? 4 : 1) * f, anchor));
+    } else if (side === "top") {
+      const cx = b.x + b.w / 2, y = b.y - d * f;
+      if (desc) out.push(mk(desc, cx, y - (tag ? 4 * f : 0), "middle"));
+      if (tag) out.push(mk(tag, cx, y, "middle", true));
+    } else {   // bottom
+      const cx = b.x + b.w / 2, y = b.y + b.h + d * f;
+      if (tag) out.push(mk(tag, cx, y, "middle", true));
+      if (desc) out.push(mk(desc, cx, y + (tag ? 4 * f : 0), "middle"));
+    }
+    return wrap(out, side);
+  };
+  // 探索順: 横向き機器は上下優先、縦向き機器は左右優先。
+  // ミラー表を持つコイルは右側を接点ミラーのために空けておき、最後に回す。
+  const order = horizontal
+    ? [["top", [2.0, 3.4, 5.4]], ["bottom", [4.4, 6.4, 8.4]], ["left", [2.2, 1.4, 0.8]], ["right", [2.2, 1.4, 0.8]]]
+    : sym.mirror
+      ? [["left", [2.2, 1.4, 0.8, 0.3]], ["top", [1.6, 5.0, 8.4]], ["bottom", [4.4, 7.8, 11.2]], ["right", [2.2, 1.4]]]
+      : [["left", [2.2, 1.4, 0.8, 0.3]], ["right", [2.2, 1.4, 0.8, 0.3]], ["top", [1.6, 5.0, 8.4]], ["bottom", [4.4, 7.8, 11.2]]];
+
+  const relevant = obstacles.filter(o => o.owner !== dev.id);
+  let best = null;
+  for (const [side, gaps] of order) {
+    for (const d of gaps) {
+      const cand = sideCand(side, d);
+      let score = 0;
+      for (const o of cand) for (const r of relevant) score += overlapArea(o.box, r);
+      if (score === 0) return cand;
+      if (!best || score < best.score) best = { cand, score };
     }
   }
-  return build("left", 0.8);
+  return best ? best.cand : sideCand("left", 2.2);   // 全滅時は重なり最小の候補
+}
+
+/** ページ内の全ラベルを左→上の順に貪欲配置し、確定ぶんを障害物へ積む */
+function computePageLabels(page) {
+  const base = labelObstacles(page);
+  const placed = [];
+  const map = new Map();
+  const order = [...page.devices].sort((a, b) =>
+    (a.x - b.x) || (a.y - b.y) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  order.forEach(dev => {
+    const boxes = placeDeviceLabels(page, dev, base.concat(placed));
+    map.set(dev.id, boxes);
+    boxes.forEach(o => placed.push({ owner: dev.id, ...o.box }));
+  });
+  return map;
+}
+
+function deviceLabelBoxes(page, dev) {
+  const c = _labelCache.get(page);
+  if (c && c.rev === App.labelRev) {
+    const hit = c.map.get(dev.id);
+    if (hit) return hit;
+  }
+  const map = computePageLabels(page);
+  _labelCache.set(page, { rev: App.labelRev, map });
+  return map.get(dev.id) || placeDeviceLabels(page, dev, labelObstacles(page));
 }
 function labelBox(o) {
   const x = o.anchor === "middle" ? o.x - o.w / 2 : o.anchor === "end" ? o.x - o.w : o.x;
@@ -313,6 +408,7 @@ const App = {
   redoStack: [],
   sim: { running: false, states: {}, energized: null, timers: {} },
   clipboard: null,
+  labelRev: 0,               // ラベル配置キャッシュの世代 (commit / refresh で更新)
 };
 
 /* ══════════════ ユーティリティ ══════════════ */
@@ -454,6 +550,10 @@ function sheetRow(y) {
   const inner = SHEET.h - SHEET.margin * 2;
   const i = Math.max(0, Math.min(SHEET.rows - 1, Math.floor((y - SHEET.margin) / (inner / SHEET.rows))));
   return SHEET_ROW_LETTERS[i] || "Z";
+}
+/** このページに印字される図番 (表題欄・DXF・印刷で共通) */
+function pageDwgNo(page) {
+  return page.dwgNo || projectMeta().dwgNo || "E-" + String(page.no).padStart(3, "0");
 }
 function devLocation(dev) {
   const f = findDevice(dev.id);
@@ -756,7 +856,19 @@ function junctionDots(page) {
 
 /* ══════════════ 配線番号の自動付与 ══════════════ */
 function autoNumberWires() {
+  // 全ページの予約語 (電位名・電位リンク名・手動固定線番) を先に集めておき、
+  // 連番がそれらと衝突して同じ線番が2箇所に印字されるのを防ぐ
+  const reserved = new Set();
+  App.project.pages.forEach(page => {
+    page.devices.forEach(dev => {
+      const sym = symOf(dev.sym);
+      if (sym.sim === "psu") { reserved.add("+24V"); reserved.add("0V"); }
+      if (sym.sim === "link" && dev.tag) reserved.add(dev.tag.replace(/^-/, ""));
+    });
+    condWires(page).forEach(w => { if (w.fixed && w.num) reserved.add(String(w.num)); });
+  });
   let n = 10;
+  const nextNum = () => { while (reserved.has(String(n))) n++; reserved.add(String(n)); return String(n++); };
   App.project.pages.forEach(page => {
     // "open" モード: 接点・コイルを跨いで番号が伝播しない (実務どおり区間ごとに採番)
     const { pinNet, wireNet } = computeNets(page, "open");
@@ -783,7 +895,7 @@ function autoNumberWires() {
     const bestOfNet = new Map();
     wires.forEach(w => {
       const net = wireNet.get(w.id);
-      if (!netNum.has(net)) netNum.set(net, String(n++));
+      if (!netNum.has(net)) netNum.set(net, nextNum());
       w.num = netNum.get(net);
       w.numShow = false;
       let maxSeg = 0;
@@ -932,6 +1044,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
+  "線番の重複",
 ];
 
 function drcSources(page, pinNet) {
@@ -1183,6 +1296,51 @@ function runDRC() {
       }
     });
   });
+
+  // 線番の重複 — 電気的につながっていない別ネットに同じ線番が印字されると誤結線になる。
+  // 電位名 (+24V/0V) と電位リンク名はページをまたいで同一で正しいので除外する。
+  const potentialNames = new Set();
+  App.project.pages.forEach(page => page.devices.forEach(dev => {
+    const sym = symOf(dev.sym);
+    if (sym.sim === "psu") { potentialNames.add("+24V"); potentialNames.add("0V"); }
+    if (sym.sim === "link" && dev.tag) potentialNames.add(dev.tag.replace(/^-/, ""));
+  }));
+  const numUse = new Map();               // 線番 → ネット代表の配列
+  App.project.pages.forEach((page, pageIdx) => {
+    const wn = openData[pageIdx].wireNet;
+    const seenNet = new Set();
+    condWires(page).forEach(w => {
+      if (w.num == null || w.num === "") return;
+      const num = String(w.num);
+      const netKey = `${page.no}#${wn.get(w.id)}`;
+      if (seenNet.has(num + "|" + netKey)) return;
+      seenNet.add(num + "|" + netKey);
+      if (!numUse.has(num)) numUse.set(num, []);
+      numUse.get(num).push({ page, w, netKey });
+    });
+  });
+  numUse.forEach((list, num) => {
+    if (list.length < 2) return;
+    const samePage = new Map();
+    list.forEach(e => { samePage.set(e.page.no, (samePage.get(e.page.no) || 0) + 1); });
+    const dupInPage = [...samePage.entries()].filter(([, c]) => c >= 2);
+    if (dupInPage.length) {
+      const e = list.find(v => v.page.no === dupInPage[0][0]);
+      issues.push({
+        sev: "err",
+        msg: `線番 ${num} が同一ページ内の異なる ${dupInPage[0][1]} 本のネットに重複しています`,
+        page: e.page.no, target: e.w.id, loc: `${e.page.no}.${sheetCol(e.w.pts[0][0])}`,
+      });
+    } else if (!potentialNames.has(num)) {
+      const pages = [...new Set(list.map(v => v.page.no))];
+      issues.push({
+        sev: "warn",
+        msg: `線番 ${num} が複数ページ (${pages.join(", ")}) の別ネットに使われています`,
+        page: list[0].page.no, target: list[0].w.id, loc: `${list[0].page.no}.${sheetCol(list[0].w.pts[0][0])}`,
+      });
+    }
+  });
+
   applySheet(curPage());   // 現在ページの図枠に戻す
   return issues;
 }
@@ -1302,6 +1460,7 @@ function terminalCSV() {
 
 /* ══════════════ 元に戻す / やり直し ══════════════ */
 function commit() {
+  App.labelRev++;          // ラベル配置キャッシュを無効化
   App.undoStack.push(JSON.stringify(App.project));
   if (App.undoStack.length > 100) App.undoStack.shift();
   App.redoStack.length = 0;
