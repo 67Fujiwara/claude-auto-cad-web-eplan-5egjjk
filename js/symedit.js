@@ -18,6 +18,7 @@ const SymEdit = {
   svg: null,
   editingId: null,     // 既存シンボルを編集中ならその id
   style: "solid",      // solid | dash
+  fill: false,         // 図形を黒く塗りつぶす
   lw: LINE_W.thick,    // シンボル全体の線の太さ (mm)
   W: 60, H: 60,        // 作画領域 (mm)
   snap: 1,             // 図形のスナップ (mm)
@@ -27,6 +28,8 @@ const SYMEDIT_TOOLS = [
   ["line", "線", "折れ線 (クリックで頂点・ダブルクリック/Enter で確定)"],
   ["rect", "長方形", "対角の2点をクリック (ドラッグでも可)"],
   ["circle", "円", "中心 → 半径 をクリック (ドラッグでも可)"],
+  ["rectf", "塗り長方形", "黒く塗りつぶした長方形 (対角の2点)"],
+  ["half", "半円", "円の縦半分。中心 → 半径 をクリックし、残す側へ動かす"],
   ["arc", "円弧", "中心 → 開始 → 終了 の3クリック"],
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
@@ -70,6 +73,16 @@ function symShapeSVG(sh, opts = {}) {
   }
   if (sh.k === "circle") {
     return `<circle cx="${+sh.x.toFixed(2)}" cy="${+sh.y.toFixed(2)}" r="${+sh.r.toFixed(2)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
+  }
+  if (sh.k === "half") {
+    // 円の半分 (弦は直線)。dir = 残す側 (right/left/up/down)
+    const r = sh.r, cx = sh.x, cy = sh.y;
+    const d = sh.dir || "right";
+    const p0 = d === "right" || d === "left" ? [cx, cy - r] : [cx - r, cy];
+    const p1 = d === "right" || d === "left" ? [cx, cy + r] : [cx + r, cy];
+    const sweep = (d === "right" || d === "down") ? 1 : 0;
+    const fill = sh.fill ? ' fill="currentColor" stroke="none"' : "";
+    return `<path d="M${+p0[0].toFixed(2)},${+p0[1].toFixed(2)} A${+r.toFixed(2)},${+r.toFixed(2)} 0 0 ${sweep} ${+p1[0].toFixed(2)},${+p1[1].toFixed(2)} Z"${fill}${dash}${extra}/>`;
   }
   if (sh.k === "arc") {
     const a0 = sh.a0 * Math.PI / 180, a1 = sh.a1 * Math.PI / 180;
@@ -117,12 +130,42 @@ function symShapesBounds(shapes, pins) {
   return [r(x0 - M), r(y0 - M), r(x1 - x0 + M * 2), r(y1 - y0 + M * 2)];
 }
 
+/** DXF のエンティティを作画図形に変換する (原点中央・mm)。
+    そのまま編集・削除できるので、取り込んだ後に端子を足してシンボル化できる。 */
+function dxfEntsToShapes(ents, opt = {}) {
+  const k = opt.scale || 1;
+  const b = dxfEntsBounds(ents);
+  const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+  const X = x => +(((x - cx) * k)).toFixed(2);
+  const Y = y => +((-(y - cy) * k)).toFixed(2);      // DXF は上向きが +Y
+  const out = [];
+  ents.forEach(e => {
+    if (e.type === "INSERT") return;
+    if (e.type === "LINE" || e.type === "SOLID") {
+      if (isFinite(e.x1) && isFinite(e.x2)) out.push({ k: "line", pts: [[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]], style: "solid" });
+    } else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
+      const pts = (e.pts || []).filter(p => isFinite(p[0]) && isFinite(p[1])).map(p => [X(p[0]), Y(p[1])]);
+      if (pts.length >= 2) { if (e.flags & 1) pts.push(pts[0]); out.push({ k: "line", pts, style: "solid" }); }
+    } else if (e.type === "CIRCLE") {
+      out.push({ k: "circle", x: X(e.x1), y: Y(e.y1), r: +(e.r * k).toFixed(2), style: "solid" });
+    } else if (e.type === "ARC") {
+      // DXF の角度は反時計回り・Y上向き。画面座標 (Y下向き) では符号が反転する
+      out.push({ k: "arc", x: X(e.x1), y: Y(e.y1), r: +(e.r * k).toFixed(2),
+        a0: -(e.a2 || 0), a1: -(e.a1 || 0), style: "solid" });
+    } else if (e.type === "TEXT" || e.type === "MTEXT") {
+      out.push({ k: "text", x: X(e.x1), y: Y(e.y1), text: e.text || "",
+        h: Math.max(TEXT_H.small, +((e.size || 3.5) * k).toFixed(2)), mono: true });
+    }
+  });
+  return out;
+}
+
 /* ══════════════ 画面 ══════════════ */
 UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
   const S = SymEdit;
   S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null;
-  S.tool = "line"; S.style = "solid"; S.editingId = null; S.lw = LINE_W.thick;
+  S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
   if (symId && SYMBOLS_BY_ID[symId]) {
@@ -153,6 +196,7 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-sect">線種</div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="solid" checked/><span>実線 (導体・図記号)</span></label></div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="dash"/><span>破線 (機械リンク・囲い)</span></label></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="seFill"/><span>塗りつぶす (黒)</span></label></div>
       <div class="prop-sect">線の太さ</div>
       <div class="prop-row"><select id="seLw">
         <option value="0.5">0.5 mm 太線 (図記号の標準)</option>
@@ -202,6 +246,7 @@ UI.openSymbolEditor = (symId = null) => {
   </div>`);
 
   const foot = h(`<div style="display:flex;gap:10px;align-items:center;width:100%">
+    <button class="btn-solid" id="seDxf">DXF を読み込む…</button>
     <button class="btn-solid" id="seUndo">元に戻す</button>
     <button class="btn-solid" id="seClear">全消去</button>
     <span style="flex:1"></span>
@@ -211,8 +256,8 @@ UI.openSymbolEditor = (symId = null) => {
 
   const m = UI.openModal({
     title: S.editingId ? "シンボルの編集" : "シンボルの作成",
-    sub: "図形を描いて端子を置くと、自作の機器としてライブラリに登録できます",
-    body, foot, wide: true,
+    sub: "図形を描いて端子を置くと、自作の機器としてライブラリに登録できます (Esc = 作画のキャンセル)",
+    body, foot, wide: true, noEsc: true,
     onclose: () => { document.removeEventListener("keydown", onKey, true); },
   });
 
@@ -235,6 +280,7 @@ UI.openSymbolEditor = (symId = null) => {
   });
   body.querySelectorAll('input[name="seStyle"]').forEach(r =>
     r.addEventListener("change", e => { S.style = e.target.value; }));
+  body.querySelector("#seFill").addEventListener("change", e => { S.fill = e.target.checked; });
   body.querySelector("#seLw").value = String(S.lw);
   body.querySelector("#seLw").addEventListener("change", e => { S.lw = parseFloat(e.target.value) || LINE_W.thick; draw(); });
   body.querySelector("#seSize").addEventListener("change", e => {
@@ -339,7 +385,7 @@ UI.openSymbolEditor = (symId = null) => {
       const sh = S.shapes[i];
       if (sh.k === "line" && sh.pts.some(p => Math.hypot(p[0] - x, p[1] - y) < 2)) return i;
       if (sh.k === "rect" && x > sh.x - 1 && x < sh.x + sh.w + 1 && y > sh.y - 1 && y < sh.y + sh.h + 1) return i;
-      if ((sh.k === "circle" || sh.k === "arc") && Math.abs(Math.hypot(x - sh.x, y - sh.y) - sh.r) < 2) return i;
+      if ((sh.k === "circle" || sh.k === "arc" || sh.k === "half") && Math.abs(Math.hypot(x - sh.x, y - sh.y) - sh.r) < 2) return i;
       if (sh.k === "text" && Math.abs(x - sh.x) < 6 && Math.abs(y - sh.y) < 3) return i;
       if (sh.k === "raw" && i === S.shapes.length - 1) return i;
     }
@@ -355,6 +401,11 @@ UI.openSymbolEditor = (symId = null) => {
     if (d.k === "line") { d.pts = [...d.fixed, [x, y]]; }
     else if (d.k === "rect") { d.x = Math.min(d.ax, x); d.y = Math.min(d.ay, y); d.w = Math.abs(x - d.ax); d.h = Math.abs(y - d.ay); }
     else if (d.k === "circle") { d.r = Math.max(0.5, Math.hypot(x - d.x, y - d.y)); }
+    else if (d.k === "half") {
+      d.r = Math.max(0.5, Math.hypot(x - d.x, y - d.y));
+      const dx = x - d.x, dy = y - d.y;                 // 動かした向きの側を残す
+      d.dir = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "right" : "left") : (dy >= 0 ? "down" : "up");
+    }
     else if (d.k === "arc") {
       if (d.step === 1) d.r = Math.max(0.5, Math.hypot(x - d.x, y - d.y));
       else { d.a1 = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI; }
@@ -366,12 +417,14 @@ UI.openSymbolEditor = (symId = null) => {
   S.svg.addEventListener("mousedown", e => {
     S.downAt = { x: e.clientX, y: e.clientY };
     if (S.draft) return;
-    if (S.tool !== "rect" && S.tool !== "circle") return;
+    if (!["rect", "rectf", "circle", "half"].includes(S.tool)) return;
     const p = symEditXY(e);
     const x = symSnap(p.x, S.snap), y = symSnap(p.y, S.snap);
-    S.draft = S.tool === "rect"
-      ? { k: "rect", ax: x, ay: y, x, y, w: 0, h: 0, style: S.style }
-      : { k: "circle", x, y, r: 0.5, style: S.style };
+    S.draft = (S.tool === "rect" || S.tool === "rectf")
+      ? { k: "rect", ax: x, ay: y, x, y, w: 0, h: 0, style: S.style, fill: S.tool === "rectf" || S.fill }
+      : S.tool === "half"
+        ? { k: "half", x, y, r: 0.5, dir: "right", style: S.style, fill: S.fill }
+        : { k: "circle", x, y, r: 0.5, style: S.style, fill: S.fill };
     S.draftFromDown = true;      // この直後の click は1点目なので読み飛ばす
     // ここで再描画すると mousedown と mouseup の対象要素が変わり click が出なくなる。
     // 作画中の図形は次の mousemove で描かれるので、ここでは描き直さない。
@@ -385,8 +438,9 @@ UI.openSymbolEditor = (symId = null) => {
     S.suppressClick = true;
     const d = S.draft;
     push();
-    if (d.k === "rect") { if (d.w > 0.2 && d.h > 0.2) S.shapes.push({ k: "rect", x: d.x, y: d.y, w: d.w, h: d.h, style: d.style }); }
-    else if (d.k === "circle") { if (d.r > 0.2) S.shapes.push({ k: "circle", x: d.x, y: d.y, r: d.r, style: d.style }); }
+    if (d.k === "rect") { if (d.w > 0.2 && d.h > 0.2) S.shapes.push({ k: "rect", x: d.x, y: d.y, w: d.w, h: d.h, style: d.style, fill: d.fill }); }
+    else if (d.k === "circle") { if (d.r > 0.2) S.shapes.push({ k: "circle", x: d.x, y: d.y, r: d.r, style: d.style, fill: d.fill }); }
+    else if (d.k === "half") { if (d.r > 0.2) S.shapes.push({ k: "half", x: d.x, y: d.y, r: d.r, dir: d.dir, style: d.style, fill: d.fill }); }
     S.draft = null; draw();
   });
   S.svg.addEventListener("click", e => {
@@ -414,8 +468,9 @@ UI.openSymbolEditor = (symId = null) => {
     }
     if (!S.draft) {
       if (S.tool === "line") S.draft = { k: "line", fixed: [[x, y]], pts: [[x, y]], style: S.style };
-      else if (S.tool === "rect") S.draft = { k: "rect", ax: x, ay: y, x, y, w: 0, h: 0, style: S.style };
-      else if (S.tool === "circle") S.draft = { k: "circle", x, y, r: 0.5, style: S.style };
+      else if (S.tool === "rect" || S.tool === "rectf") S.draft = { k: "rect", ax: x, ay: y, x, y, w: 0, h: 0, style: S.style, fill: S.tool === "rectf" || S.fill };
+      else if (S.tool === "circle") S.draft = { k: "circle", x, y, r: 0.5, style: S.style, fill: S.fill };
+      else if (S.tool === "half") S.draft = { k: "half", x, y, r: 0.5, dir: "right", style: S.style, fill: S.fill };
       else if (S.tool === "arc") S.draft = { k: "arc", x, y, r: 0.5, a0: 0, a1: 90, step: 1, style: S.style };
       draw(); return;
     }
@@ -429,8 +484,9 @@ UI.openSymbolEditor = (symId = null) => {
     }
     // rect / circle は2点目で確定
     push();
-    if (d.k === "rect") { if (d.w > 0.2 && d.h > 0.2) S.shapes.push({ k: "rect", x: d.x, y: d.y, w: d.w, h: d.h, style: d.style }); }
-    else if (d.k === "circle") { if (d.r > 0.2) S.shapes.push({ k: "circle", x: d.x, y: d.y, r: d.r, style: d.style }); }
+    if (d.k === "rect") { if (d.w > 0.2 && d.h > 0.2) S.shapes.push({ k: "rect", x: d.x, y: d.y, w: d.w, h: d.h, style: d.style, fill: d.fill }); }
+    else if (d.k === "circle") { if (d.r > 0.2) S.shapes.push({ k: "circle", x: d.x, y: d.y, r: d.r, style: d.style, fill: d.fill }); }
+    else if (d.k === "half") { if (d.r > 0.2) S.shapes.push({ k: "half", x: d.x, y: d.y, r: d.r, dir: d.dir, style: d.style, fill: d.fill }); }
     S.draft = null; draw();
   });
   S.svg.addEventListener("dblclick", () => { finishLine(); });
@@ -533,7 +589,10 @@ UI.openSymbolEditor = (symId = null) => {
     if (typing) return;
     if (e.key === "Enter") { finishLine(); e.stopPropagation(); e.preventDefault(); return; }
     if (e.key === "Escape") {
-      if (S.draft) { S.draft = null; draw(); e.stopPropagation(); e.preventDefault(); }
+      // Esc は作画中の図形のキャンセルに使う (画面は閉じない)
+      e.stopPropagation(); e.preventDefault();
+      if (S.draft) { S.draft = null; S.draftFromDown = false; draw(); UI.setMsg("作画をキャンセルしました"); }
+      else if (S.sel !== -1) { S.sel = -1; draw(); }
       return;
     }
     if ((e.key === "Delete" || e.key === "Backspace") && S.sel !== -1) {
@@ -543,6 +602,93 @@ UI.openSymbolEditor = (symId = null) => {
     }
   };
   document.addEventListener("keydown", onKey, true);
+
+  // ── DXF の取り込み (作画図形として読み込み、そのまま編集できる) ──
+  foot.querySelector("#seDxf").addEventListener("click", () => {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = ".dxf,.DXF";
+    inp.addEventListener("change", () => {
+      const file = inp.files[0];
+      if (!file) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        let ents = [];
+        try { ents = parseDXF(String(rd.result)); }
+        catch (err) { alert("DXF の解析に失敗しました"); return; }
+        if (!ents.length) { alert("図形が見つかりませんでした (対応: LINE / POLYLINE / CIRCLE / ARC / TEXT)"); return; }
+        openDxfDialog(ents, file.name);
+      };
+      rd.readAsText(file, "utf-8");
+    });
+    inp.click();
+  });
+  /** 取り込みの倍率・線の太さを決めて図形に変換する */
+  const openDxfDialog = (ents, fileName) => {
+    const bb = dxfEntsBounds(ents);
+    const w0 = Math.max(0.01, bb.x1 - bb.x0), h0 = Math.max(0.01, bb.y1 - bb.y0);
+    const counts = {};
+    ents.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+    const unresolved = ents.filter(e => e.unresolved).length;
+    const db = h(`<div>
+      <div class="prop-note" style="margin-top:0">
+        <b>${escAttr(fileName)}</b> — 図形 ${ents.length} 個
+        (${Object.entries(counts).map(([k2, v]) => `${k2} ${v}`).join(" / ")})<br>
+        元の大きさ: ${w0.toFixed(1)} × ${h0.toFixed(1)} (図面単位)
+        ${unresolved ? `<br><span style="color:var(--warn)">定義の無いブロック参照が ${unresolved} 個あります (省略します)</span>` : ""}
+      </div>
+      <div class="prop-grid2">
+        <div class="prop-row"><label>倍率</label><select id="dsScale">
+          <option value="1">1 : 1 (図面単位 = mm)</option>
+          <option value="0.5">1 : 2 に縮小</option>
+          <option value="0.25">1 : 4 に縮小</option>
+          <option value="2">2 : 1 に拡大</option>
+          <option value="fit">作画範囲に合わせる</option>
+        </select></div>
+        <div class="prop-row"><label>線の太さ</label><select id="dsLw">
+          <option value="0.25">0.25 mm 細線 (DXF 取り込みの標準)</option>
+          <option value="0.35">0.35 mm 中線</option>
+          <option value="0.5">0.5 mm 太線</option>
+        </select></div>
+      </div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="dsClear"/><span>いま描いてある図形を消してから読み込む</span></label></div>
+      <div class="prop-note">読み込んだ図形はそのまま編集できます。端子を置いて「ライブラリに登録」でシンボルになります。</div>
+    </div>`);
+    const df = h(`<div style="display:flex;gap:10px;width:100%">
+      <span style="flex:1"></span>
+      <button class="btn-solid" id="dsCancel">キャンセル</button>
+      <button class="btn-solid primary" id="dsOk">読み込む</button>
+    </div>`);
+    const dm = UI.openModal({ title: "DXF の取り込み", sub: "作画図形として読み込みます", body: db, foot: df });
+    df.querySelector("#dsCancel").addEventListener("click", dm.close);
+    df.querySelector("#dsOk").addEventListener("click", () => {
+      const sv = db.querySelector("#dsScale").value;
+      const k = sv === "fit" ? Math.min((S.W - 10) / w0, (S.H - 10) / h0) : parseFloat(sv);
+      const lw = parseFloat(db.querySelector("#dsLw").value) || LINE_W.thin;
+      const clear = db.querySelector("#dsClear").checked;
+      dm.close();
+      push();
+      if (clear) { S.shapes = []; S.pins = []; S.funcs = []; }
+      const add = dxfEntsToShapes(ents, { scale: k });
+      S.shapes.push(...add);
+      S.lw = lw;
+      const lwSel = body.querySelector("#seLw");
+      if (lwSel) lwSel.value = String(lw);
+      // 収まる作画範囲へ広げる
+      const bd = symShapesBounds(S.shapes, S.pins);
+      const need = Math.max(Math.abs(bd[0]), Math.abs(bd[1]), Math.abs(bd[0] + bd[2]), Math.abs(bd[1] + bd[3])) * 2 + 8;
+      const want = [40, 60, 100, 160].find(v => v >= need) || 160;
+      if (want > S.W) {
+        S.W = S.H = want;
+        S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);
+        const sz = body.querySelector("#seSize");
+        if (sz) sz.value = String(want);
+      }
+      S.tool = "select"; S.draft = null;
+      toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === "select"));
+      draw();
+      UI.setMsg(`DXF を読み込みました (図形 ${add.length} 個・線の太さ ${lw}mm)`);
+    });
+  };
 
   body.querySelector("#seFnAdd").addEventListener("click", () => {
     if (S.pins.length < 2) { alert("先に端子を2点以上置いてください (端子ツール / コネクタツール)"); return; }

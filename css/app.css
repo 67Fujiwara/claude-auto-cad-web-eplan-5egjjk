@@ -209,10 +209,7 @@ input, select, textarea { font-family: inherit; }
 .ptab .ptab-close { opacity: 0; font-size: 13px; line-height: 1; padding: 1px 3px; border-radius: 4px; color: var(--text-faint); }
 .ptab:hover .ptab-close { opacity: 1; }
 .ptab .ptab-close:hover { background: rgba(255,107,107,.15); color: var(--err); }
-.ptab .ptab-ins { opacity: 0; font-size: 12px; line-height: 1; padding: 1px 3px; border-radius: 4px; color: var(--text-faint); }
-.ptab:hover .ptab-ins, .ptab .ptab-ins:focus-visible { opacity: 1; }
-.ptab .ptab-ins:focus-visible, .ptab .ptab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ptab .ptab-ins:hover { background: var(--accent-dim, rgba(77,163,255,.18)); color: var(--accent); }
+.ptab .ptab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #btnAddPage {
   width: 24px; height: 24px; border-radius: var(--r-sm); color: var(--text-dim);
   font-size: 15px; flex-shrink: 0;

@@ -208,19 +208,17 @@ UI.buildPageTabs = () => {
   wrap.innerHTML = "";
   App.project.pages.forEach((pg, i) => {
     const el = h(`<div class="ptab ${i === App.pageIdx ? "active" : ""}" draggable="true" title="図番 ${escAttr(pageDwgNo(pg))}&#10;ドラッグして順番を入れ替えられます">
-      <span class="ptab-ins" role="button" tabindex="0" aria-label="${escAttr(pg.name)} の前にページを挿入" title="このページの前に挿入">⊕</span>
       <span class="ptab-no">${pg.no}</span><span>${pg.name}</span>
       ${App.project.pages.length > 1 ? `<span class="ptab-close" role="button" tabindex="0" aria-label="${escAttr(pg.name)} を削除" title="ページを削除">×</span>` : ""}
     </div>`);
-    // ⊕ / × はキーボード (Enter / Space) でも操作できるようにする
-    el.querySelectorAll(".ptab-ins, .ptab-close").forEach(btn => {
+    // × はキーボード (Enter / Space) でも操作できるようにする
+    el.querySelectorAll(".ptab-close").forEach(btn => {
       btn.addEventListener("keydown", e => {
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault(); e.stopPropagation(); btn.click();
       });
     });
     el.addEventListener("click", e => {
-      if (e.target.classList.contains("ptab-ins")) { UI.insertPageAt(i); return; }
       if (e.target.classList.contains("ptab-close")) {
         if (App.sim.running) { UI.setMsg("シミュレーション中はページを削除できません"); return; }
         if (!confirm(`ページ「${pg.name}」を削除しますか？`)) return;
@@ -628,7 +626,7 @@ const MENUS = {
     { sep: true },
     { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
     { sep: true },
-    { label: "DXF取り込み (作図 / シンボル登録)…", key: "", fn: () => UI.importDXF() },
+    { label: "DXF取り込み (図面に作図)…", key: "", fn: () => UI.importDXF() },
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
     { label: "PDF出力 (全ページ印刷)…", key: "", fn: () => UI.printAll() },
     { label: "印刷 (現在ページ)…", key: "Ctrl+P", fn: () => UI.print() },
@@ -1086,8 +1084,11 @@ UI.dxfImportDialog = (ents, fileName) => {
     <div class="prop-row"><label>取り込み方法</label>
       <select id="dxMode">
         <option value="draw">このページに作図線として配置する</option>
-        <option value="symbol">シンボルとして登録する (データベースに追加)</option>
       </select></div>
+    <div class="prop-note">
+      シンボルとして登録する場合は「編集 &gt; シンボルを作成…」を開き、その中の
+      「DXF を読み込む…」を使ってください (図形を編集して端子を置けます)。
+    </div>
     <div id="dxSymOpts" style="display:none">
       <div class="prop-grid2">
         <div class="prop-row"><label>シンボル名</label><input id="dxName" value="${escAttr(fileName.replace(/\.dxf$/i, ""))}"/></div>
@@ -1267,7 +1268,7 @@ UI.openTextInput = (clientX, clientY, wx, wy, existing = null) => {
 };
 
 /* ══════════════ モーダル ══════════════ */
-UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false }) => {
+UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false, noEsc = false }) => {
   const root = document.getElementById("overlay-root");
   const bk = h(`<div class="modal-backdrop">
     <div class="modal" style="${wide ? "width:min(1020px,96vw)" : ""}">
@@ -1287,6 +1288,7 @@ UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false
     if (e.defaultPrevented || e.isComposing) return;
     // 重ねて開いているときは一番手前のものだけ閉じる
     if (root.lastElementChild !== bk) return;
+    if (noEsc) return;                      // 画面内で Esc を使うダイアログ
     e.stopPropagation();
     close();
   };
