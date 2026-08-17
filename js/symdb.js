@@ -197,11 +197,13 @@ const DB_SYMBOLS = [
   },
   {
     id: "inverter_box", nonstd: true, db: true, group: "電源・変換", cat: "db", letter: "U",
-    name: "インバータ (INV)", nameEn: "Inverter / VFD", desc: "可変周波数駆動装置 R/S/T→U/V/W",
+    name: "インバータ (INV)", nameEn: "Inverter / VFD", desc: "可変周波数駆動装置 R/S/T→U/V/W (一次側に PE)",
     typ: "FR-D720", horizontalPins: true,
-    pins: [{x:-10,y:0,n:"R"},{x:0,y:0,n:"S"},{x:10,y:0,n:"T"},{x:-10,y:30,n:"U"},{x:0,y:30,n:"V"},{x:10,y:30,n:"W"}],
-    sim: "none", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M0,25 V30 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-8" y="13" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="8" y="22.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">~</text><text x="0" y="16.5" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">INV</text>`,
+    // PE は末尾に追加 (R/S/T/U/V/W の index と既存図面の配線座標を保持)。
+    // 端子脇は保護接地 IEC 60617 02-15-03 (丸囲み)。対角線と干渉しないよう PE は R の左 (x=-15) に置く
+    pins: [{x:-10,y:0,n:"R"},{x:0,y:0,n:"S"},{x:10,y:0,n:"T"},{x:-10,y:30,n:"U"},{x:0,y:30,n:"V"},{x:10,y:30,n:"W"},{x:-15,y:0,n:"PE"}],
+    sim: "none", bounds: [-22,-2, 39, 34],
+    body: `<path d="M-15,0 V5 M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M0,25 V30 M10,25 V30"/><rect x="-20" y="5" width="35" height="20"/><path d="M15,5 L-20,25"/><circle cx="-15" cy="8.8" r="3"/><path d="M-15,6.7 V8.7 M-16.6,8.7 H-13.4 M-16.05,9.8 H-13.95 M-15.5,10.9 H-14.5"/><text x="-6" y="13" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">~</text><text x="8" y="22.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">~</text><text x="2" y="17.5" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">INV</text>`,
   },
   {
     id: "ps_box", nonstd: true, db: true, group: "電源・変換", cat: "db", letter: "G",

@@ -30,11 +30,11 @@ const SYMEDIT_TOOLS = [
   ["circle", "円", "中心 → 半径 をクリック (ドラッグでも可)"],
   ["rectf", "塗り長方形", "黒く塗りつぶした長方形 (対角の2点)"],
   ["half", "半円", "円の縦半分。中心 → 半径 をクリックし、残す側へ動かす"],
-  ["arc", "円弧", "中心 → 開始 → 終了 の3クリック"],
+  ["arc", "円弧", "中心 → 開始 → 終了 (円・半円と同じくドラッグでも可。回した向きに弧が付く)"],
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
   ["conn", "コネクタ", "多極コネクタ (CN3 など) をまとめて置く。クリックした位置が1番ピン"],
-  ["select", "選択", "クリックで選択、Del で削除"],
+  ["select", "選択", "クリックで選択、つまんでドラッグで移動、Del で削除"],
 ];
 
 /** 画面座標 → 作画座標 (mm)。viewBox は preserveAspectRatio で余白が付くので、
@@ -164,7 +164,7 @@ function dxfEntsToShapes(ents, opt = {}) {
 UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
   const S = SymEdit;
-  S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null;
+  S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null; S.moving = null;
   S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
@@ -272,7 +272,7 @@ UI.openSymbolEditor = (symId = null) => {
   toolsEl.addEventListener("click", e => {
     const b = e.target.closest(".se-tool");
     if (!b) return;
-    S.tool = b.dataset.t; S.draft = null; S.sel = -1;
+    S.tool = b.dataset.t; S.draft = null; S.sel = -1; S.moving = null;
     toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === S.tool));
     const t = SYMEDIT_TOOLS.find(x => x[0] === S.tool);
     hintEl.textContent = t ? t[2] : "";
@@ -396,6 +396,21 @@ UI.openSymbolEditor = (symId = null) => {
     const g = S.tool === "pin" ? GRID : S.snap;
     const x = symSnap(p.x, g), y = symSnap(p.y, g);
     statusEl.textContent = `X: ${x.toFixed(1)}  Y: ${y.toFixed(1)}`;
+    if (S.moving) {
+      if (!(e.buttons & 1)) { S.moving = null; }        // svg 外でボタンを離した後の迷子ドラッグを防ぐ
+      else {
+        const m = S.moving, mg = m.pi >= 0 ? GRID : S.snap;
+        const dx = symSnap(p.x - m.px, mg), dy = symSnap(p.y - m.py, mg);
+        if (dx || dy || m.pushed) {
+          if (!m.pushed) { push(); m.pushed = true; }   // 最初に動いた時点で1回だけ undo を積む
+          const t = m.pi >= 0 ? S.pins[m.pi] : S.shapes[m.i], o = m.orig;
+          if (o.k === "line") t.pts = o.pts.map(q => [q[0] + dx, q[1] + dy]);
+          else { t.x = o.x + dx; t.y = o.y + dy; }      // rect/circle/half/arc/text/端子は x,y 起点
+          draw();
+        }
+        return;
+      }
+    }
     if (!S.draft) return;
     const d = S.draft;
     if (d.k === "line") { d.pts = [...d.fixed, [x, y]]; }
@@ -408,33 +423,78 @@ UI.openSymbolEditor = (symId = null) => {
     }
     else if (d.k === "arc") {
       if (d.step === 1) d.r = Math.max(0.5, Math.hypot(x - d.x, y - d.y));
-      else { d.a1 = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI; }
+      else {
+        // カーソルを回した向き・量に弧を追従させる (円・半円と同じ手応えで短い側から伸びる)
+        const a = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI;
+        let del = a - (d.prevA != null ? d.prevA : d.baseA);
+        del = ((del % 360) + 540) % 360 - 180;          // 最短方向の角度差
+        d.acc = Math.max(-359.9, Math.min(359.9, (d.acc || 0) + del));
+        d.prevA = a;
+        d.a0 = d.baseA + Math.min(0, d.acc);            // 描画・確定は a0→a1 の時計回りに正規化
+        d.a1 = d.baseA + Math.max(0, d.acc);
+      }
     }
     draw();
   });
   // ドラッグ (押しながら動かして離す) でも図形を確定できるようにする。
   // クリック2回で描く従来の操作もそのまま使える。
   S.svg.addEventListener("mousedown", e => {
+    // ドラッグ中の再描画で要素が入れ替わると click が発火せず suppressClick が残るため、
+    // 新しい押下の時点で必ずリセットする (前の操作の click はこの mousedown より先に来ている)
+    S.suppressClick = false;
     S.downAt = { x: e.clientX, y: e.clientY };
     if (S.draft) return;
-    if (!["rect", "rectf", "circle", "half"].includes(S.tool)) return;
+    if (S.tool === "select") {
+      // 図形/端子をつまむ → そのままドラッグで移動 (mousemove 側で追従)
+      const p = symEditXY(e);
+      const pi = S.pins.findIndex(q => Math.hypot(q.x - p.x, q.y - p.y) < 2);
+      const i = pi >= 0 ? -1 : hitShape(p.x, p.y);
+      if (pi >= 0 || i >= 0) {
+        S.sel = pi >= 0 ? -2 - pi : i;
+        const t = pi >= 0 ? S.pins[pi] : S.shapes[i];
+        if (t.k !== "raw") S.moving = { pi, i, px: p.x, py: p.y, orig: deepCopy(t), pushed: false };
+        draw();
+      }
+      return;
+    }
+    if (!["rect", "rectf", "circle", "half", "arc"].includes(S.tool)) return;
     const p = symEditXY(e);
     const x = symSnap(p.x, S.snap), y = symSnap(p.y, S.snap);
     S.draft = (S.tool === "rect" || S.tool === "rectf")
       ? { k: "rect", ax: x, ay: y, x, y, w: 0, h: 0, style: S.style, fill: S.tool === "rectf" || S.fill }
       : S.tool === "half"
         ? { k: "half", x, y, r: 0.5, dir: "right", style: S.style, fill: S.fill }
-        : { k: "circle", x, y, r: 0.5, style: S.style, fill: S.fill };
+        : S.tool === "arc"
+          ? { k: "arc", x, y, r: 0.5, a0: 0, a1: 90, step: 1, style: S.style }
+          : { k: "circle", x, y, r: 0.5, style: S.style, fill: S.fill };
     S.draftFromDown = true;      // この直後の click は1点目なので読み飛ばす
     // ここで再描画すると mousedown と mouseup の対象要素が変わり click が出なくなる。
     // 作画中の図形は次の mousemove で描かれるので、ここでは描き直さない。
   });
   S.svg.addEventListener("mouseup", e => {
+    if (S.moving) {
+      if (S.moving.pushed) S.suppressClick = true;      // 動かした後の click で選択を奪い直さない
+      S.moving = null; S.downAt = null;
+      return;
+    }
     const d0 = S.downAt; S.downAt = null;
     if (!d0 || !S.draft) return;
     if (Math.hypot(e.clientX - d0.x, e.clientY - d0.y) < 4) return;   // ドラッグしていない (クリック操作に任せる)
     S.draftFromDown = false;
-    if (S.draft.k === "line" || S.draft.k === "arc") return;          // 折れ線・円弧は多点なのでクリック操作
+    if (S.draft.k === "arc") {
+      // ドラッグで中心→半径を決めた場合: 離した点を弧の開始として角度指定へ進む
+      const d = S.draft;
+      if (d.step === 1) {
+        const p = symEditXY(e);
+        const x = symSnap(p.x, S.snap), y = symSnap(p.y, S.snap);
+        d.r = Math.max(0.5, Math.hypot(x - d.x, y - d.y));
+        d.baseA = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI;
+        d.a0 = d.a1 = d.baseA; d.acc = 0; d.prevA = d.baseA; d.step = 2; draw();
+        // suppressClick は立てない: 直後の click は step2 の「角度ゼロは確定しない」ガードが無害化する
+      }
+      return;
+    }
+    if (S.draft.k === "line") return;                  // 折れ線は多点なのでクリック操作
     S.suppressClick = true;
     const d = S.draft;
     push();
@@ -450,8 +510,9 @@ UI.openSymbolEditor = (symId = null) => {
     const g = S.tool === "pin" ? GRID : S.snap;
     const x = symSnap(p.x, g), y = symSnap(p.y, g);
     if (S.tool === "select") {
-      const i = hitShape(x, y);
-      const pi = S.pins.findIndex(q => Math.hypot(q.x - x, q.y - y) < 2);
+      // スナップ前の座標で当たり判定する (mousedown のつまみ判定と一致させる)
+      const i = hitShape(p.x, p.y);
+      const pi = S.pins.findIndex(q => Math.hypot(q.x - p.x, q.y - p.y) < 2);
       S.sel = pi >= 0 ? -2 - pi : i;
       draw(); return;
     }
@@ -477,8 +538,12 @@ UI.openSymbolEditor = (symId = null) => {
     const d = S.draft;
     if (d.k === "line") { d.fixed.push([x, y]); d.pts = [...d.fixed]; draw(); return; }
     if (d.k === "arc") {
-      if (d.step === 1) { d.a0 = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI; d.a1 = d.a0 + 90; d.step = 2; draw(); return; }
-      d.a1 = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI;
+      if (d.step === 1) {
+        d.r = Math.max(0.5, Math.hypot(x - d.x, y - d.y));
+        d.baseA = Math.atan2(y - d.y, x - d.x) * 180 / Math.PI;
+        d.a0 = d.a1 = d.baseA; d.acc = 0; d.prevA = d.baseA; d.step = 2; draw(); return;
+      }
+      if (Math.abs(d.acc || 0) < 1) return;            // 角度が付くまで確定しない (ドラッグ直後の空クリックも無視)
       push(); S.shapes.push({ k: "arc", x: d.x, y: d.y, r: d.r, a0: d.a0, a1: d.a1, style: d.style });
       S.draft = null; draw(); return;
     }
@@ -591,8 +656,8 @@ UI.openSymbolEditor = (symId = null) => {
     if (e.key === "Escape") {
       // Esc は作画中の図形のキャンセルに使う (画面は閉じない)
       e.stopPropagation(); e.preventDefault();
-      if (S.draft) { S.draft = null; S.draftFromDown = false; draw(); UI.setMsg("作画をキャンセルしました"); }
-      else if (S.sel !== -1) { S.sel = -1; draw(); }
+      if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; draw(); UI.setMsg("作画をキャンセルしました"); }
+      else if (S.sel !== -1) { S.sel = -1; S.moving = null; draw(); }
       return;
     }
     if ((e.key === "Delete" || e.key === "Backspace") && S.sel !== -1) {
@@ -700,7 +765,7 @@ UI.openSymbolEditor = (symId = null) => {
   foot.querySelector("#seUndo").addEventListener("click", () => {
     const st = S.undo.pop();
     if (!st) return;
-    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.draft = null; S.sel = -1; draw();
+    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.draft = null; S.sel = -1; S.moving = null; draw();
   });
   foot.querySelector("#seClear").addEventListener("click", () => {
     if (!confirm("作画した図形と端子をすべて消しますか？")) return;
