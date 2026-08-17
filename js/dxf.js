@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
-const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "TEXT", "WIRENUM", "PIN"];
+const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "SYMBOL_THIN", "TEXT", "WIRENUM", "PIN"];
 /* R12 は線幅を持たないため、太さの区分はレイヤと色 (ペン) で伝える。
    FRAME=輪郭 0.7 / FRAME_THIN=区分線・仕切り 0.25 / WIRE=0.5 / AUXLINE=0.25 */
 
@@ -415,8 +415,10 @@ function pageToDXF(page) {
     const sym = symOf(dev.sym);
     if (!sym) return;
     const xf = dxfDevXform(dev);
+    // 細線 (0.25mm) で登録したシンボルは細線レイヤへ (AutoCAD 側でペンを分けられる)
+    const symLyr = symStrokeWidth(sym) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
     dxfSymPrimitives(sym).forEach(pr => {
-      const lyr = "SYMBOL";      // 破線も記号レイヤに置き、線種で区別する
+      const lyr = symLyr;        // 破線も記号レイヤに置き、線種で区別する
       if (pr.type === "poly") {
         ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), lyr, pr.lt);
       } else if (pr.type === "circle") {
@@ -430,7 +432,7 @@ function pageToDXF(page) {
         const [rcx, rcy] = xf(scx, scy);
         const k = contentScale();
         ents += dxfText(rcx + (pr.x - scx) * k, rcy + (pr.y - scy) * k,
-          pr.size * k, pr.text, "SYMBOL", pr.anchor || "middle", 0, { mono: pr.mono });
+          pr.size * k, pr.text, symLyr, pr.anchor || "middle", 0, { mono: pr.mono });
       }
     });
     // ピン番号 (画面と同じく回転後の絶対座標に水平で置く)
@@ -459,7 +461,7 @@ function pageToDXF(page) {
   // ── DXF 全体 (R12) ──
   /* R12 は線幅を持たないため、太さの区分は色番号 (ペン) で伝える。
      7=太線 0.5mm / 6=中間 / 8=細線 0.25mm / 5=輪郭 0.7mm */
-  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, TEXT: 7, WIRENUM: 6, PIN: 8 };
+  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, PIN: 8 };
   const layers = DXF_LAYERS.map(l =>
     dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, LAYER_COLOR[l] || 7], [6, "CONTINUOUS"]])).join("");
   return [

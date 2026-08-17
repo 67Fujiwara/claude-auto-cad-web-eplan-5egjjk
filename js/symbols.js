@@ -374,9 +374,18 @@ const SYMBOLS = [
 const SYMBOLS_BY_ID = {};
 SYMBOLS.forEach(s => SYMBOLS_BY_ID[s.id] = s);
 
+/** シンボルに使う線の太さ (mm)。sym.lw があればそれを使う (JIS Z 8312 の系列) */
+function symStrokeWidth(sym, fallback) {
+  const v = sym && sym.lw;
+  if (v > 0) return v;
+  return fallback || SYM_STROKE;
+}
+
 /** シンボルの描画SVG文字列 (ローカル座標系) */
 function symBodySVG(sym, opts = {}) {
-  const sw = opts.strokeWidth || SYM_STROKE;
+  // シンボルごとの線の太さ (lw) を優先する。取り込んだ DXF や自作シンボルは
+  // 細線 0.25mm で登録できるようにして、DXF 側の線幅設定に依存させない。
+  const sw = symStrokeWidth(sym, opts.strokeWidth);
   let body = symResolveTextSize(sym.body, opts.textScale || 1);
   body = opts.textScale ? scaleSymbolGeom(body, opts.textScale) : body;
   // 機器を回転しても記号内の文字は図面の下辺から読める向きに保つ (JIS Z 8313-0)。
@@ -521,7 +530,7 @@ function symThumbSVG(sym, size = 46) {
   // 個別指定の線幅・破線もサムネイル倍率で拡大する (連結破線が消えないように)。
   // 破線は図面と同じ scaleSymbolGeom で「線素で始まり線素で終わる」よう補正する。
   // 文字はそのままにして、はみ出しを防ぐ。
-  const k = 1.1 / 0.5;
+  const k = 1.1 / symStrokeWidth(sym);
   // 破線は「線素で始まり線素で終わる」補正を最後に掛ける (倍率は先に反映させる)
   const scaled = symResolveTextSize(sym.body, 1)
     .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${(parseFloat(v) * k).toFixed(3)}"`)

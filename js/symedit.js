@@ -18,14 +18,15 @@ const SymEdit = {
   svg: null,
   editingId: null,     // 既存シンボルを編集中ならその id
   style: "solid",      // solid | dash
+  lw: LINE_W.thick,    // シンボル全体の線の太さ (mm)
   W: 60, H: 60,        // 作画領域 (mm)
   snap: 1,             // 図形のスナップ (mm)
 };
 
 const SYMEDIT_TOOLS = [
   ["line", "線", "折れ線 (クリックで頂点・ダブルクリック/Enter で確定)"],
-  ["rect", "長方形", "対角の2点をドラッグ"],
-  ["circle", "円", "中心から半径をドラッグ"],
+  ["rect", "長方形", "対角の2点をクリック (ドラッグでも可)"],
+  ["circle", "円", "中心 → 半径 をクリック (ドラッグでも可)"],
   ["arc", "円弧", "中心 → 開始 → 終了 の3クリック"],
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
@@ -33,13 +34,24 @@ const SYMEDIT_TOOLS = [
   ["select", "選択", "クリックで選択、Del で削除"],
 ];
 
-/** 作画領域の座標 → mm (原点は領域の中央) */
+/** 画面座標 → 作画座標 (mm)。viewBox は preserveAspectRatio で余白が付くので、
+    SVG 自身の変換行列から求める (自前の計算だとカーソルと図形がずれる)。 */
 function symEditXY(ev) {
-  const r = SymEdit.svg.getBoundingClientRect();
-  const s = r.width / SymEdit.W;
+  const svg = SymEdit.svg;
+  const ctm = svg.getScreenCTM();
+  if (ctm) {
+    const pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    const q = pt.matrixTransform(ctm.inverse());
+    return { x: q.x, y: q.y };
+  }
+  // 行列が取れない環境のフォールバック (中央合わせ・等倍維持)
+  const r = svg.getBoundingClientRect();
+  const s = Math.min(r.width / SymEdit.W, r.height / SymEdit.H) || 1;
+  const ox = (r.width - SymEdit.W * s) / 2, oy = (r.height - SymEdit.H * s) / 2;
   return {
-    x: (ev.clientX - r.left) / s - SymEdit.W / 2,
-    y: (ev.clientY - r.top) / s - SymEdit.H / 2,
+    x: (ev.clientX - r.left - ox) / s - SymEdit.W / 2,
+    y: (ev.clientY - r.top - oy) / s - SymEdit.H / 2,
   };
 }
 function symSnap(v, g) { return Math.round(v / g) * g; }
@@ -110,7 +122,7 @@ UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
   const S = SymEdit;
   S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null;
-  S.tool = "line"; S.style = "solid"; S.editingId = null;
+  S.tool = "line"; S.style = "solid"; S.editingId = null; S.lw = LINE_W.thick;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
   if (symId && SYMBOLS_BY_ID[symId]) {
@@ -141,6 +153,12 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-sect">線種</div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="solid" checked/><span>実線 (導体・図記号)</span></label></div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="dash"/><span>破線 (機械リンク・囲い)</span></label></div>
+      <div class="prop-sect">線の太さ</div>
+      <div class="prop-row"><select id="seLw">
+        <option value="0.5">0.5 mm 太線 (図記号の標準)</option>
+        <option value="0.25">0.25 mm 細線 (取り込み図形・補助)</option>
+        <option value="0.35">0.35 mm 中線</option>
+      </select></div>
       <div class="prop-sect">作画範囲</div>
       <div class="prop-row"><select id="seSize">
         ${[40, 60, 100, 160].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
@@ -217,6 +235,8 @@ UI.openSymbolEditor = (symId = null) => {
   });
   body.querySelectorAll('input[name="seStyle"]').forEach(r =>
     r.addEventListener("change", e => { S.style = e.target.value; }));
+  body.querySelector("#seLw").value = String(S.lw);
+  body.querySelector("#seLw").addEventListener("change", e => { S.lw = parseFloat(e.target.value) || LINE_W.thick; draw(); });
   body.querySelector("#seSize").addEventListener("change", e => {
     S.W = S.H = +e.target.value;
     S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);
@@ -237,7 +257,7 @@ UI.openSymbolEditor = (symId = null) => {
     // 原点の十字
     out += `<path d="M-3,0 H3 M0,-3 V3" stroke="rgba(255,120,120,.55)" stroke-width="0.2" fill="none"/>`;
     // 図形
-    out += `<g fill="none" stroke="#e6edf7" stroke-width="${LINE_W.thick}" stroke-linecap="round" stroke-linejoin="round" color="#e6edf7">`;
+    out += `<g fill="none" stroke="#e6edf7" stroke-width="${S.lw}" stroke-linecap="round" stroke-linejoin="round" color="#e6edf7">`;
     S.shapes.forEach((sh, i) => { out += sh.k === "raw" ? sh.body : symShapeSVG(sh, { hl: i === S.sel }); });
     out += `</g>`;
     // 作画中
@@ -256,7 +276,7 @@ UI.openSymbolEditor = (symId = null) => {
     const bd = symShapesBounds(S.shapes, S.pins);
     body.querySelector("#seBounds").textContent =
       `外接矩形: X ${bd[0]} / Y ${bd[1]} / 幅 ${bd[2]} / 高さ ${bd[3]} mm`;
-    const prevSym = { bounds: bd, body: symShapesToBody(S.shapes.filter(s => s.k !== "raw")) + S.shapes.filter(s => s.k === "raw").map(s => s.body).join("") };
+    const prevSym = { bounds: bd, lw: S.lw, body: symShapesToBody(S.shapes.filter(s => s.k !== "raw")) + S.shapes.filter(s => s.k === "raw").map(s => s.body).join("") };
     body.querySelector("#sePrev").innerHTML = prevSym.body ? symThumbSVG(prevSym, 90) : '<span class="se-empty">図形がありません</span>';
     const ph = body.querySelector("#sePinHead");
     if (ph) ph.textContent = S.pins.length ? `端子 (${S.pins.length} 点)` : "端子 (未設定)";
@@ -341,7 +361,37 @@ UI.openSymbolEditor = (symId = null) => {
     }
     draw();
   });
+  // ドラッグ (押しながら動かして離す) でも図形を確定できるようにする。
+  // クリック2回で描く従来の操作もそのまま使える。
+  S.svg.addEventListener("mousedown", e => {
+    S.downAt = { x: e.clientX, y: e.clientY };
+    if (S.draft) return;
+    if (S.tool !== "rect" && S.tool !== "circle") return;
+    const p = symEditXY(e);
+    const x = symSnap(p.x, S.snap), y = symSnap(p.y, S.snap);
+    S.draft = S.tool === "rect"
+      ? { k: "rect", ax: x, ay: y, x, y, w: 0, h: 0, style: S.style }
+      : { k: "circle", x, y, r: 0.5, style: S.style };
+    S.draftFromDown = true;      // この直後の click は1点目なので読み飛ばす
+    // ここで再描画すると mousedown と mouseup の対象要素が変わり click が出なくなる。
+    // 作画中の図形は次の mousemove で描かれるので、ここでは描き直さない。
+  });
+  S.svg.addEventListener("mouseup", e => {
+    const d0 = S.downAt; S.downAt = null;
+    if (!d0 || !S.draft) return;
+    if (Math.hypot(e.clientX - d0.x, e.clientY - d0.y) < 4) return;   // ドラッグしていない (クリック操作に任せる)
+    S.draftFromDown = false;
+    if (S.draft.k === "line" || S.draft.k === "arc") return;          // 折れ線・円弧は多点なのでクリック操作
+    S.suppressClick = true;
+    const d = S.draft;
+    push();
+    if (d.k === "rect") { if (d.w > 0.2 && d.h > 0.2) S.shapes.push({ k: "rect", x: d.x, y: d.y, w: d.w, h: d.h, style: d.style }); }
+    else if (d.k === "circle") { if (d.r > 0.2) S.shapes.push({ k: "circle", x: d.x, y: d.y, r: d.r, style: d.style }); }
+    S.draft = null; draw();
+  });
   S.svg.addEventListener("click", e => {
+    if (S.suppressClick) { S.suppressClick = false; return; }
+    if (S.draftFromDown) { S.draftFromDown = false; return; }   // 押した時点で1点目を取っている
     const p = symEditXY(e);
     const g = S.tool === "pin" ? GRID : S.snap;
     const x = symSnap(p.x, g), y = symSnap(p.y, g);
@@ -476,12 +526,17 @@ UI.openSymbolEditor = (symId = null) => {
 
   const onKey = (e) => {
     if (!document.body.contains(body)) return;
+    // 入力欄で打っているときはショートカットを横取りしない (改行・削除が効かなくなる)
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" ||
+      ae.tagName === "SELECT" || ae.isContentEditable);
+    if (typing) return;
     if (e.key === "Enter") { finishLine(); e.stopPropagation(); e.preventDefault(); return; }
     if (e.key === "Escape") {
       if (S.draft) { S.draft = null; draw(); e.stopPropagation(); e.preventDefault(); }
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && S.sel !== -1 && document.activeElement.tagName !== "INPUT") {
+    if ((e.key === "Delete" || e.key === "Backspace") && S.sel !== -1) {
       push();
       if (S.sel <= -2) S.pins.splice(-2 - S.sel, 1); else S.shapes.splice(S.sel, 1);
       S.sel = -1; draw(); e.stopPropagation(); e.preventDefault();
@@ -530,6 +585,7 @@ UI.openSymbolEditor = (symId = null) => {
       typ: q("#seTyp").value.trim(),
       pins: S.pins.map((p, i) => ({ x: p.x, y: p.y, n: p.n || String(i + 1) })),
       sim: S.funcs.length ? "multi" : sim,
+      lw: S.lw,
       funcs: S.funcs.length ? deepCopy(S.funcs) : undefined,
       bounds: symShapesBounds(S.shapes, S.pins),
       body: bodySVG,

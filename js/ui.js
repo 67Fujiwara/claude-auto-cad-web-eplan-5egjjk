@@ -1147,6 +1147,7 @@ UI.dxfImportDialog = (ents, fileName) => {
         name, nameEn: name, desc: `DXF 取り込み (${fileName})`, typ: (q("#dxType") ? q("#dxType").value.trim() : ""),
         pins, sim: pins.length === 2 ? "passthru" : "none",
         bounds: [-2, -2, r.w + 4, r.h + 4], body: r.body, imported: true,
+        lw: LINE_W.thin,      // 取り込み図形は細線 0.25mm (DXF 側の線幅設定に依存させない)
       };
       DB_SYMBOLS.push(sym);
       SYMBOLS_BY_ID[sym.id] = sym;
@@ -1284,6 +1285,8 @@ UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false
     if (e.key !== "Escape") return;
     // 入力欄の変換中や、内側で Esc を使うダイアログを邪魔しない
     if (e.defaultPrevented || e.isComposing) return;
+    // 重ねて開いているときは一番手前のものだけ閉じる
+    if (root.lastElementChild !== bk) return;
     e.stopPropagation();
     close();
   };
