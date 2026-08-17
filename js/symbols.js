@@ -286,7 +286,7 @@ const SYMBOLS = [
     desc: "AC100/200V → DC24V", typ: "S8FS-G10024CD", horizontalPins: true,
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-7" y="12.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">AC</text><text x="7" y="22.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">DC</text>`,
+    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M15,5 L-15,25"/><text x="-7" y="12.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">AC</text><text x="7" y="22.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">DC</text>`,
   },
   {
     id: "supply3", jis: "02-01-01", cat: "power", letter: "W", name: "三相電源 L1/L2/L3", nameEn: "3-phase supply",

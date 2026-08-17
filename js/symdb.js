@@ -210,7 +210,8 @@ const DB_SYMBOLS = [
     // PE は末尾 index=4 に追加 (sim "psu" が +V/-V を pinNet(dev,2)/(dev,3) で参照するため順序を保持)
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"},{x:0,y:0,n:"PE"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M0,5 V8 M-1.8,8 H1.8 M-1.2,9.2 H1.2 M-0.6,10.4 H0.6"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
+    // PE 端子脇は保護接地 IEC 60617 02-15-03 (IEC 60417-5019: 円囲みの接地記号)
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><circle cx="0" cy="8.8" r="3"/><path d="M0,6.3 V8.3 M-1.6,8.3 H1.6 M-1.05,9.4 H1.05 M-0.5,10.5 H0.5"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
   },
 
   /* ── 開閉・保護 (JIS C 0617-7) ── */
@@ -286,6 +287,8 @@ const DB_SYMBOLS = [
     horizontalPins: true,
     pins: [{x:-15,y:0,n:"AC_L"},{x:0,y:0,n:"AC_N"},{x:15,y:0,n:"FG"}],
     sim: "none", bounds: [-22,-2, 44, 29],
+    // FG 端子脇は接地(一般) IEC 60617 02-15-01 (FG=機能接地なので保護接地記号は用いない)。
+    // 旧版 (ピン ±10/I0〜Q3) で保存した図面は自動追従しない — DRC の未接続ピン警告で検出し手動で再配線する運用
     body: `<path d="M-15,0 V5 M0,0 V5 M15,0 V5"/><rect x="-20" y="5" width="40" height="20"/><path d="M15,5 V8 M13.2,8 H16.8 M13.8,9.2 H16.2 M14.4,10.4 H15.6"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PLC</text>`,
   },
   {

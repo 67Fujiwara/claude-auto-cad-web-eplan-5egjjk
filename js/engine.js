@@ -1266,6 +1266,7 @@ function junctionDots(page) {
 /* ══════════════ 配線番号の自動付与 ══════════════ */
 // 接地系のピン名 (PE/FG 等)。接地ネットには制御線の連番を振らず、ピン名を電位名として印字する
 const RE_EARTH = /^(PE|PEN|FE|FG|⏚)$/i;
+const EARTH_RANK = ["PE", "PEN", "FE", "FG", "⏚"];
 function autoNumberWires() {
   // 全ページの予約語 (電位名・電位リンク名・手動固定線番) を先に集めておき、
   // 連番がそれらと衝突して同じ線番が2箇所に印字されるのを防ぐ
@@ -1297,11 +1298,15 @@ function autoNumberWires() {
         const net = pinNet(dev, 0);
         if (net) netNum.set(net, dev.tag.replace(/^-/, ""));
       }
-      // 接地端子 (PE/FG) につながるネットは連番でなく端子名を電位名として付ける
+      // 接地端子 (PE/FG) につながるネットは連番でなく端子名を電位名として付ける。
+      // PE と FG が接地母線で同一ネットになった場合は PE > PEN > FE > FG の優先順で表記を安定させる
       devPins(dev).forEach((pin, i) => {
         if (pin.name && RE_EARTH.test(pin.name)) {
           const net = pinNet(dev, i);
-          if (net && !netNum.has(net)) netNum.set(net, pin.name.toUpperCase());
+          if (!net) return;
+          const nm = pin.name.toUpperCase(), cur = netNum.get(net);
+          if (cur == null) netNum.set(net, nm);
+          else if (RE_EARTH.test(cur) && EARTH_RANK.indexOf(nm) < EARTH_RANK.indexOf(cur)) netNum.set(net, nm);
         }
       });
     });
