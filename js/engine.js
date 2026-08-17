@@ -1264,6 +1264,8 @@ function junctionDots(page) {
 }
 
 /* ══════════════ 配線番号の自動付与 ══════════════ */
+// 接地系のピン名 (PE/FG 等)。接地ネットには制御線の連番を振らず、ピン名を電位名として印字する
+const RE_EARTH = /^(PE|PEN|FE|FG|⏚)$/i;
 function autoNumberWires() {
   // 全ページの予約語 (電位名・電位リンク名・手動固定線番) を先に集めておき、
   // 連番がそれらと衝突して同じ線番が2箇所に印字されるのを防ぐ
@@ -1295,6 +1297,13 @@ function autoNumberWires() {
         const net = pinNet(dev, 0);
         if (net) netNum.set(net, dev.tag.replace(/^-/, ""));
       }
+      // 接地端子 (PE/FG) につながるネットは連番でなく端子名を電位名として付ける
+      devPins(dev).forEach((pin, i) => {
+        if (pin.name && RE_EARTH.test(pin.name)) {
+          const net = pinNet(dev, i);
+          if (net && !netNum.has(net)) netNum.set(net, pin.name.toUpperCase());
+        }
+      });
     });
     // 2) 固定番号 (主回路の相名 L1/U1 等、手動で付けた線番) を尊重
     const wires = condWires(page); // 作図線には線番を付けない
@@ -1830,7 +1839,7 @@ function runDRC() {
     if (list.length < 2) return;
     // 電位名 (+24V/0V) と電位リンク名は、同一ページでも複数ネットに現れて正しい。
     // シミュレータも同電位として扱うので、検図でも同じ解釈にそろえる。
-    if (potentialNames.has(num) || RE_PHASE.test(num)) return;
+    if (potentialNames.has(num) || RE_PHASE.test(num) || RE_EARTH.test(num)) return;
     const samePage = new Map();
     list.forEach(e => { if (!samePage.has(e.page.no)) samePage.set(e.page.no, []); samePage.get(e.page.no).push(e); });
     const dupPages = [...samePage.entries()].filter(([, v]) => v.length >= 2);

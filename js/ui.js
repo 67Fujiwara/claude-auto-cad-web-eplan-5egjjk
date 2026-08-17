@@ -944,6 +944,7 @@ UI.editWireNumbers = () => {
     const sym = symOf(d.sym);
     if (sym.sim === "psu") { potentials.add("+24V"); potentials.add("0V"); }
     if (sym.sim === "link" && d.tag) potentials.add(d.tag.replace(/^-/, ""));
+    devPins(d).forEach(pn => { if (pn.name && RE_EARTH.test(pn.name)) potentials.add(pn.name.toUpperCase()); });
   }));
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">

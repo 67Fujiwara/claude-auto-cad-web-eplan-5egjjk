@@ -207,9 +207,10 @@ const DB_SYMBOLS = [
     id: "ps_box", nonstd: true, db: true, group: "電源・変換", cat: "db", letter: "G",
     name: "電源装置 (PS)", nameEn: "Power supply unit", desc: "汎用電源ボックス (入力 L/PE/N)。出力電圧は機能テキストに",
     typ: "", horizontalPins: true,
+    // PE は末尾 index=4 に追加 (sim "psu" が +V/-V を pinNet(dev,2)/(dev,3) で参照するため順序を保持)
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"},{x:0,y:0,n:"PE"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><path d="M0,5 V8 M-1.8,8 H1.8 M-1.2,9.2 H1.2 M-0.6,10.4 H0.6"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
   },
 
   /* ── 開閉・保護 (JIS C 0617-7) ── */
@@ -283,9 +284,9 @@ const DB_SYMBOLS = [
     id: "plc_box", nonstd: true, db: true, group: "実務機器", cat: "db", letter: "A",
     name: "PLC 本体", nameEn: "PLC unit", desc: "PLC本体 (電源のみ接続: 上側 AC_L / AC_N / FG の3端子)", typ: "FX5U",
     horizontalPins: true,
-    pins: [{x:-10,y:0,n:"AC_L"},{x:0,y:0,n:"AC_N"},{x:10,y:0,n:"FG"}],
+    pins: [{x:-15,y:0,n:"AC_L"},{x:0,y:0,n:"AC_N"},{x:15,y:0,n:"FG"}],
     sim: "none", bounds: [-22,-2, 44, 29],
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
+    body: `<path d="M-15,0 V5 M0,0 V5 M15,0 V5"/><rect x="-20" y="5" width="40" height="20"/><path d="M15,5 V8 M13.2,8 H16.8 M13.8,9.2 H16.2 M14.4,10.4 H15.6"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PLC</text>`,
   },
   {
     id: "fan", stdNote: "送風機 (電動機 06-04-01 に羽根を付した実務記号)", db: true, group: "実務機器", cat: "db", letter: "M",
