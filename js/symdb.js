@@ -205,11 +205,11 @@ const DB_SYMBOLS = [
   },
   {
     id: "ps_box", nonstd: true, db: true, group: "電源・変換", cat: "db", letter: "G",
-    name: "電源装置 (PS)", nameEn: "Power supply unit", desc: "汎用電源ボックス。出力電圧は機能テキストに",
+    name: "電源装置 (PS)", nameEn: "Power supply unit", desc: "汎用電源ボックス (入力 L/PE/N)。出力電圧は機能テキストに",
     typ: "", horizontalPins: true,
-    pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"}],
+    pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"},{x:0,y:0,n:"PE"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
-    body: `<path d="M-10,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
   },
 
   /* ── 開閉・保護 (JIS C 0617-7) ── */
@@ -281,12 +281,11 @@ const DB_SYMBOLS = [
   /* ── 実務機器 (盤設計でよく使う非規格ボックス) ── */
   {
     id: "plc_box", nonstd: true, db: true, group: "実務機器", cat: "db", letter: "A",
-    name: "PLC 本体", nameEn: "PLC unit", desc: "入力 I0〜I3 / 出力 Q0〜Q3 の小型PLCボックス", typ: "FX5U",
+    name: "PLC 本体", nameEn: "PLC unit", desc: "PLC本体 (電源のみ接続: 上側 AC_L / AC_N / FG の3端子)", typ: "FX5U",
     horizontalPins: true,
-    pins: [{x:-15,y:0,n:"I0"},{x:-5,y:0,n:"I1"},{x:5,y:0,n:"I2"},{x:15,y:0,n:"I3"},
-           {x:-15,y:30,n:"Q0"},{x:-5,y:30,n:"Q1"},{x:5,y:30,n:"Q2"},{x:15,y:30,n:"Q3"}],
-    sim: "none", bounds: [-22,-2, 44, 34],
-    body: `<path d="M-15,0 V5 M-5,0 V5 M5,0 V5 M15,0 V5 M-15,30 V25 M-5,25 V30 M5,25 V30 M15,25 V30"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
+    pins: [{x:-10,y:0,n:"AC_L"},{x:0,y:0,n:"AC_N"},{x:10,y:0,n:"FG"}],
+    sim: "none", bounds: [-22,-2, 44, 29],
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5"/><rect x="-20" y="5" width="40" height="20"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">PLC</text>`,
   },
   {
     id: "fan", stdNote: "送風機 (電動機 06-04-01 に羽根を付した実務記号)", db: true, group: "実務機器", cat: "db", letter: "M",
