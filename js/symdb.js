@@ -211,7 +211,7 @@ const DB_SYMBOLS = [
     pins: [{x:-10,y:0,n:"L"},{x:10,y:0,n:"N"},{x:-10,y:30,n:"+V"},{x:10,y:30,n:"-V"},{x:0,y:0,n:"PE"}],
     sim: "psu", bounds: [-17,-2, 34, 34],
     // PE 端子脇は保護接地 IEC 60617 02-15-03 (IEC 60417-5019: 円囲みの接地記号)
-    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><circle cx="0" cy="8.8" r="3"/><path d="M0,6.3 V8.3 M-1.6,8.3 H1.6 M-1.05,9.4 H1.05 M-0.5,10.5 H0.5"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
+    body: `<path d="M-10,0 V5 M0,0 V5 M10,0 V5 M-10,30 V25 M10,25 V30"/><rect x="-15" y="5" width="30" height="20"/><circle cx="0" cy="8.8" r="3"/><path d="M0,6.7 V8.7 M-1.6,8.7 H1.6 M-1.05,9.8 H1.05 M-0.5,10.9 H0.5"/><text x="0" y="17.5" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">PS</text>`,
   },
 
   /* ── 開閉・保護 (JIS C 0617-7) ── */

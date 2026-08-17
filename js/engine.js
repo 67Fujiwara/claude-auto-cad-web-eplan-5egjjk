@@ -1299,7 +1299,7 @@ function autoNumberWires() {
         if (net) netNum.set(net, dev.tag.replace(/^-/, ""));
       }
       // 接地端子 (PE/FG) につながるネットは連番でなく端子名を電位名として付ける。
-      // PE と FG が接地母線で同一ネットになった場合は PE > PEN > FE > FG の優先順で表記を安定させる
+      // PE と FG が接地母線で同一ネットになった場合は PE > PEN > FE > FG > ⏚ の優先順で表記を安定させる
       devPins(dev).forEach((pin, i) => {
         if (pin.name && RE_EARTH.test(pin.name)) {
           const net = pinNet(dev, i);
