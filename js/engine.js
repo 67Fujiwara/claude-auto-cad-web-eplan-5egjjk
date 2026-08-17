@@ -253,6 +253,8 @@ function wireLabelPosCalc(w, page, placed) {
 }
 
 /** ピン番号を表示するか (隣接配線の線番と同名なら二重表示を避ける)。
+    PE/FG 等の接地端子も、接地ネットの電位名印字 (RE_EARTH) と同名になった時は
+    端子名を意図的に抑止する — 記号脇の接地グリフ+電位名「PE」で機能は一義に読める。
     画面・DXF で同じ判定を使う。 */
 function pinLabelVisible(page, dev, pinIdx) {
   const sym = symOf(dev.sym);
