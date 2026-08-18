@@ -34,7 +34,7 @@ const SYMEDIT_TOOLS = [
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
   ["conn", "コネクタ", "多極コネクタ (CN3 など) をまとめて置く。クリックした位置が1番ピン"],
-  ["select", "選択", "クリックで選択、空白からドラッグで範囲選択 (まとめて移動/Del)。青いシンボル枠は角をドラッグでサイズ変更"],
+  ["select", "選択", "クリックで選択、空白からドラッグで範囲選択 (まとめて移動/Del)。矢印キーで微調整 0.5mm (Shift=5mm)。青いシンボル枠は角をドラッグでサイズ変更"],
 ];
 
 /** 画面座標 → 作画座標 (mm)。viewBox は preserveAspectRatio で余白が付くので、
@@ -524,6 +524,7 @@ UI.openSymbolEditor = (symId = null) => {
     // ドラッグ中の再描画で要素が入れ替わると click が発火せず suppressClick が残るため、
     // 新しい押下の時点で必ずリセットする (前の操作の click はこの mousedown より先に来ている)
     S.suppressClick = false;
+    S.lastNudgeAt = 0;   // マウス操作で微調整の連打まとめを打ち切る (undo の粒度を守る)
     S.downAt = { x: e.clientX, y: e.clientY };
     if (S.draft) return;
     if (S.tool === "select") {
@@ -786,6 +787,28 @@ UI.openSymbolEditor = (symId = null) => {
       ae.tagName === "SELECT" || ae.isContentEditable);
     if (typing) return;
     if (e.key === "Enter") { finishLine(); e.stopPropagation(); e.preventDefault(); return; }
+    // 矢印キーで選択中の図形・端子を微調整移動する
+    // 図形のみ: 0.5mm (Shift で 5mm)。端子を含むときは 5mm グリッドを保つ
+    const ARROWS = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+    if (ARROWS[e.key] && !S.draft && (S.sel !== -1 || S.msel.shapes.length || S.msel.pins.length)) {
+      const hasPin = S.sel <= -2 || S.msel.pins.length > 0;
+      const step = hasPin ? GRID : (e.shiftKey ? 5 : 0.5);
+      const dx = ARROWS[e.key][0] * step, dy = ARROWS[e.key][1] * step;
+      const now = Date.now();
+      if (!S.lastNudgeAt || now - S.lastNudgeAt > 800) push();  // 連打・長押しは1回の undo にまとめる
+      S.lastNudgeAt = now;
+      const mv = (t) => {
+        if (!t || t.k === "raw") return;
+        if (t.k === "line") t.pts = t.pts.map(q => [q[0] + dx, q[1] + dy]);
+        else { t.x += dx; t.y += dy; }             // rect/circle/half/arc/text/端子は x,y 起点
+      };
+      if (S.msel.shapes.length || S.msel.pins.length) {
+        S.msel.shapes.forEach(i => mv(S.shapes[i]));
+        S.msel.pins.forEach(i => mv(S.pins[i]));
+      } else if (S.sel <= -2) mv(S.pins[-2 - S.sel]);
+      else mv(S.shapes[S.sel]);
+      draw(); e.stopPropagation(); e.preventDefault(); return;
+    }
     if (e.key === "Escape") {
       // Esc は作画中の図形のキャンセルに使う (画面は閉じない)
       e.stopPropagation(); e.preventDefault();
