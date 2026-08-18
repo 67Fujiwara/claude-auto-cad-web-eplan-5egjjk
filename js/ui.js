@@ -780,6 +780,7 @@ UI.addPage = () => {
   App.pageIdx = App.project.pages.length - 1;
   App.selection.clear();
   UI.refresh();
+  zoomFit(); // 追加したページに切り替わるので全体表示にする
 };
 UI.newProject = () => {
   if (!confirm("現在のプロジェクトを破棄して新規作成しますか？\n(ブラウザ保存済みデータも上書きされます)")) return;

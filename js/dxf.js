@@ -495,9 +495,58 @@ function pageToDXF(page) {
    TEXT / MTEXT / SOLID を読み、図面へ作図するか、シンボルとして登録する)
    ═══════════════════════════════════════════════════════════════ */
 
+/** SPLINE (NURBS) を折れ線に展開する。
+    制御点+ノット (+重み) から de Boor 法で評価する。ノットが欠けたファイルは
+    クランプ一様ノットで代用し、制御点が足りなければフィット点をそのまま結ぶ。 */
+function dxfSplineToPolyline(sp) {
+  const cps = (sp.cps || []).filter(p => isFinite(p[0]) && isFinite(p[1]));
+  if (cps.length < 2) {
+    return (sp.fit || []).filter(q => isFinite(q[0]) && isFinite(q[1]));
+  }
+  const p = Math.max(1, Math.min(sp.degree || 3, cps.length - 1));
+  let knots = (sp.knots || []).slice();
+  const need = cps.length + p + 1;
+  if (knots.length !== need) {
+    knots = [];
+    for (let i = 0; i < need; i++) knots.push(Math.min(Math.max(i - p, 0), cps.length - p));
+  }
+  const w = (sp.wts && sp.wts.length === cps.length) ? sp.wts : cps.map(() => 1);
+  const t0 = knots[p], t1 = knots[knots.length - 1 - p];
+  if (!(t1 > t0)) return cps.slice();
+  const deBoor = (t) => {
+    let k = knots.length - p - 2;
+    for (let i = p; i < knots.length - p - 1; i++) { if (t < knots[i + 1]) { k = i; break; } }
+    const d = [];
+    for (let j = 0; j <= p; j++) {
+      const i = k - p + j, cp = cps[Math.max(0, Math.min(cps.length - 1, i))];
+      const wi = w[Math.max(0, Math.min(w.length - 1, i))] || 1;
+      d.push([cp[0] * wi, cp[1] * wi, wi]);          // 同次座標で評価 (重みつき NURBS 対応)
+    }
+    for (let r = 1; r <= p; r++) {
+      for (let j = p; j >= r; j--) {
+        const i = k - p + j;
+        const den = knots[i + p - r + 1] - knots[i];
+        const a = den ? (t - knots[i]) / den : 0;
+        d[j] = [d[j - 1][0] * (1 - a) + d[j][0] * a, d[j - 1][1] * (1 - a) + d[j][1] * a, d[j - 1][2] * (1 - a) + d[j][2] * a];
+      }
+    }
+    const wz = d[p][2] || 1;
+    return [d[p][0] / wz, d[p][1] / wz];
+  };
+  // 分割数は曲線の大きさに合わせる (小さな曲線を無駄に細かくして重くしない)
+  let chord = 0;
+  for (let i = 1; i < cps.length; i++) chord += Math.hypot(cps[i][0] - cps[i - 1][0], cps[i][1] - cps[i - 1][1]);
+  const cap = Math.min(48, (cps.length - 1) * 6);
+  const n = Math.max(4, Math.min(cap, Math.round(chord * 2)));
+  const pts = [];
+  for (let s = 0; s <= n; s++) pts.push(deBoor(t0 + (t1 - t0) * s / n));
+  if (sp.flags & 1) pts.push([pts[0][0], pts[0][1]]);  // 閉じたスプラインは始点へ戻す
+  return pts;
+}
+
 /** DXF 文字列 → エンティティ配列 (単位 mm)。
-    LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC / TEXT / MTEXT / SOLID に対応し、
-    BLOCKS と INSERT (挿入点・尺度・回転) も展開する。 */
+    LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC / TEXT / MTEXT / SOLID /
+    SPLINE (折れ線へ展開) に対応し、BLOCKS と INSERT (挿入点・尺度・回転) も展開する。 */
 function parseDXF(text) {
   const src = String(text).replace(/\r\n?/g, "\n").split("\n");
   const pairs = [];
@@ -521,7 +570,13 @@ function parseDXF(text) {
       if (!cur || !curType) return;
       if (curType === "POLYLINE") cur.pts = verts || [];
       if (curType === "MTEXT" && mtext) cur.text = unesc(mtext);
-      sink.push({ type: curType, ...cur });
+      if (curType === "SPLINE") {
+        // NURBS は折れ線へ展開し、以後は LWPOLYLINE として扱う (作図・シンボル化・寸法計算を共通化)
+        const pts = dxfSplineToPolyline(cur);
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: (cur.flags & 1) ? 1 : 0, spl: true });
+      } else {
+        sink.push({ type: curType, ...cur });
+      }
       cur = null; curType = null; verts = null; inVertex = false; mtext = "";
     };
     for (let i = from; i < to; i++) {
@@ -531,8 +586,9 @@ function parseDXF(text) {
         if (v === "VERTEX" && curType === "POLYLINE") { inVertex = true; cur.__vx = null; cur.__vy = null; continue; }
         if (v === "SEQEND") { inVertex = false; continue; }
         push();
-        curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID", "INSERT"].includes(v) ? v : null;
+        curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID", "INSERT", "SPLINE"].includes(v) ? v : null;
         cur = curType ? { layer: "0", pts: [] } : null;
+        if (curType === "SPLINE") { cur.cps = []; cur.knots = []; cur.wts = []; cur.fit = []; }
         if (curType === "POLYLINE") verts = [];
         continue;
       }
@@ -546,21 +602,27 @@ function parseDXF(text) {
         case 10:
           if (curType === "POLYLINE" && inVertex) { cur.__vx = num; }
           else if (curType === "LWPOLYLINE") cur.pts.push([num, null]);
+          else if (curType === "SPLINE") cur.cps.push([num, null]);
           else cur.x1 = num;                      // POLYLINE ヘッダの 10/20 は常に 0 なので使わない
           break;
         case 20:
           if (curType === "POLYLINE" && inVertex) { cur.__vy = num; if (cur.__vx !== null) verts.push([cur.__vx, num]); }
           else if (curType === "LWPOLYLINE" && cur.pts.length) cur.pts[cur.pts.length - 1][1] = num;
+          else if (curType === "SPLINE" && cur.cps.length) cur.cps[cur.cps.length - 1][1] = num;
           else cur.y1 = num;
           break;
-        case 11: cur.x2 = num; break;
-        case 21: cur.y2 = num; break;
-        case 40: cur.r = num; cur.size = num; break;
-        case 41: if (curType === "INSERT") cur.sx = num; break;
+        case 11: if (curType === "SPLINE") cur.fit.push([num, null]); else cur.x2 = num; break;
+        case 21:
+          if (curType === "SPLINE") { if (cur.fit.length) cur.fit[cur.fit.length - 1][1] = num; }
+          else cur.y2 = num;
+          break;
+        case 40: if (curType === "SPLINE") cur.knots.push(num); else { cur.r = num; cur.size = num; } break;
+        case 41: if (curType === "INSERT") cur.sx = num; else if (curType === "SPLINE") cur.wts.push(num); break;
         case 42: if (curType === "INSERT") cur.sy = num; break;
         case 50: if (curType === "INSERT") cur.rot = num; else cur.a1 = num; break;
         case 51: cur.a2 = num; break;
         case 70: cur.flags = num; break;
+        case 71: if (curType === "SPLINE") cur.degree = num; break;
         case 72: cur.hAlign = num; break;
         case 73: cur.vAlign = num; break;
         default: break;
@@ -631,7 +693,19 @@ function parseDXF(text) {
   out.forEach(e => {
     if ((e.type === "TEXT") && (e.hAlign || e.vAlign) && e.x2 !== undefined) { e.x1 = e.x2; e.y1 = e.y2; }
   });
-  return out.filter(e => e.type !== "INSERT" || e.unresolved);
+  const ents = out.filter(e => e.type !== "INSERT" || e.unresolved);
+  // スプライン片は輪郭が多数の短い曲線に分かれていることが多い。
+  // 前の終点と次の始点がつながっているものは1本の折れ線へまとめ、図形数を減らす
+  const merged = [];
+  for (const e of ents) {
+    const prev = merged[merged.length - 1];
+    if (e.spl && prev && prev.spl && !(prev.flags & 1) && !(e.flags & 1) &&
+      prev.layer === e.layer && prev.pts.length && e.pts.length &&
+      Math.hypot(prev.pts[prev.pts.length - 1][0] - e.pts[0][0], prev.pts[prev.pts.length - 1][1] - e.pts[0][1]) < 1e-3) {
+      prev.pts.push(...e.pts.slice(1));
+    } else merged.push(e);
+  }
+  return merged;
 }
 
 /** 取り込んだエンティティ群の外接矩形 (DXF 座標系) */
