@@ -38,6 +38,9 @@ function zoomAt(clientX, clientY, factor) {
   updateZoomLabel();
 }
 function zoomFit() {
+  // ページ切替直後は renderAll (rAF 待ち) より先に呼ばれるので、
+  // 用紙・尺度が違うページでも正しく収まるよう、先にこのページの図枠を適用する
+  applySheet(curPage());
   const r = Editor.svg.getBoundingClientRect();
   const pad = 36;
   const s = Math.min((r.width - pad * 2) / SHEET.w, (r.height - pad * 2) / SHEET.h);
