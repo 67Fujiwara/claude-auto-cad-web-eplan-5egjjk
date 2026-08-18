@@ -94,7 +94,7 @@ function symShapeSVG(sh, opts = {}) {
   }
   if (sh.k === "text") {
     const fam = sh.mono ? "monospace" : "sans-serif";
-    return `<text x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" font-size="${svgFontSizeFor(sh.text, sh.h || TEXT_H.normal, !!sh.mono)}" text-anchor="middle" fill="currentColor" stroke="none" font-family="${fam}">${escXML(sh.text)}</text>`;
+    return `<text x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" font-size="${svgFontSizeFor(sh.text, sh.h || TEXT_H.normal, !!sh.mono, { noMin: true })}" text-anchor="middle" fill="currentColor" stroke="none" font-family="${fam}">${escXML(sh.text)}</text>`;
   }
   return "";
 }
@@ -153,10 +153,26 @@ function dxfEntsToShapes(ents, opt = {}) {
       out.push({ k: "arc", x: X(e.x1), y: Y(e.y1), r: +(e.r * k).toFixed(2),
         a0: -(e.a2 || 0), a1: -(e.a1 || 0), style: "solid" });
     } else if (e.type === "TEXT" || e.type === "MTEXT") {
+      // 文字高さは DXF の値に尺度をかけたまま使う。下限で持ち上げると
+      // 縮尺取り込みで図形だけ縮んで文字が相対的に巨大化する
       out.push({ k: "text", x: X(e.x1), y: Y(e.y1), text: e.text || "",
-        h: Math.max(TEXT_H.small, +((e.size || 3.5) * k).toFixed(2)), mono: true });
+        h: Math.max(0.3, +((e.size || 3.5) * k).toFixed(2)), mono: true });
     }
   });
+  // センタリングをやり直す: dxfEntsBounds の文字幅は見積もりなので、
+  // 実際に描いた寸法 (getBBox) とずれると図形群が原点から大きく外れ、
+  // 作画キャンバスの外に出て「プレビューには出るのに見えない」状態になる
+  if (out.length) {
+    const bb = symShapesBounds(out, []);
+    const dx = -(bb[0] + bb[2] / 2), dy = -(bb[1] + bb[3] / 2);
+    if (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01) {
+      const r1 = v => Math.round(v * 100) / 100;
+      out.forEach(sh => {
+        if (sh.k === "line") sh.pts = sh.pts.map(q => [r1(q[0] + dx), r1(q[1] + dy)]);
+        else { sh.x = r1(sh.x + dx); sh.y = r1(sh.y + dy); }
+      });
+    }
+  }
   return out;
 }
 
@@ -201,7 +217,7 @@ UI.openSymbolEditor = (symId = null) => {
          Math.max(a[1] + a[3], f[1] + f[3]) - Math.min(a[1], f[1])]
       : a;
     const need = Math.max(Math.abs(bd[0]), Math.abs(bd[1]), Math.abs(bd[0] + bd[2]), Math.abs(bd[1] + bd[3])) * 2 + 8;
-    S.W = S.H = [40, 60, 100, 160].find(v => v >= need) || 160;
+    S.W = S.H = [40, 60, 100, 160, 240, 320].find(v => v >= need) || 320;
   } else { S.W = S.H = 60; }
   const body = h(`<div class="se-wrap">
     <div class="se-left">
@@ -219,7 +235,7 @@ UI.openSymbolEditor = (symId = null) => {
       </select></div>
       <div class="prop-sect">作画範囲</div>
       <div class="prop-row"><select id="seSize">
-        ${[40, 60, 100, 160].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
+        ${[40, 60, 100, 160, 240, 320].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
       </select></div>
       <div class="prop-sect" id="sePinHead">端子</div>
       <div id="sePins" class="se-pins"></div>
@@ -911,7 +927,7 @@ UI.openSymbolEditor = (symId = null) => {
       // 収まる作画範囲へ広げる
       const bd = symShapesBounds(S.shapes, S.pins);
       const need = Math.max(Math.abs(bd[0]), Math.abs(bd[1]), Math.abs(bd[0] + bd[2]), Math.abs(bd[1] + bd[3])) * 2 + 8;
-      const want = [40, 60, 100, 160].find(v => v >= need) || 160;
+      const want = [40, 60, 100, 160, 240, 320].find(v => v >= need) || 320;
       if (want > S.W) {
         S.W = S.H = want;
         S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);

@@ -582,7 +582,8 @@ function svgFontSize(h, mono, bold) { return +(h / capRatio((mono ? "mono" : "sa
 function svgFontSizeFor(text, h, mono, opts) {
   const o = typeof opts === "object" && opts ? opts : {};
   const b = o.bold ? "+b" : "";
-  if (hasCJK(text)) return +(Math.max(h, TEXT_H_MIN_CJK) / capRatio("cjk" + b)).toFixed(3);
+  // noMin: 取り込んだ図面の注記など、元の寸法に忠実であるべき文字は和文の最小呼びを適用しない
+  if (hasCJK(text)) return +((o.noMin ? h : Math.max(h, TEXT_H_MIN_CJK)) / capRatio("cjk" + b)).toFixed(3);
   return +(h / capRatio((o.serif ? "serif" : mono ? "mono" : "sans") + b)).toFixed(3);
 }
 /** 文字列が実際に占める高さ (mm)。和文は最小呼びに引き上げられる */
