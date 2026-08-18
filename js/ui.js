@@ -200,6 +200,7 @@ UI.insertPageAt = (idx, name) => {
   App.pageIdx = idx;
   App.selection.clear();
   UI.refresh();
+  zoomFit(); // 新しいページに切り替わるので全体表示にする
   UI.setMsg(`${idx + 1} ページ目に挿入しました (図番を再採番しました)`);
 };
 
@@ -228,12 +229,14 @@ UI.buildPageTabs = () => {
         App.pageIdx = Math.max(0, Math.min(App.pageIdx, App.project.pages.length - 1));
         App.selection.clear();
         UI.refresh();
+        zoomFit(); // 表示ページが変わるので全体表示にする
         return;
       }
       if (i === App.pageIdx) return; // 同一タブ再クリックはDOMを保持 (ダブルクリックのリネームを生かす)
       App.pageIdx = i;
       App.selection.clear();
       UI.refresh();
+      zoomFit(); // ページを切り替えたら全体表示にする
     });
     // タブをドラッグして順番を入れ替える (図番も再採番される)
     el.addEventListener("dragstart", e => {

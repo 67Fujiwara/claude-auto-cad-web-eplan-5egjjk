@@ -34,7 +34,7 @@ const SYMEDIT_TOOLS = [
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
   ["conn", "コネクタ", "多極コネクタ (CN3 など) をまとめて置く。クリックした位置が1番ピン"],
-  ["select", "選択", "クリックで選択、つまんでドラッグで移動、Del で削除"],
+  ["select", "選択", "クリックで選択、空白からドラッグで範囲選択 (まとめて移動/Del)。青いシンボル枠は角をドラッグでサイズ変更"],
 ];
 
 /** 画面座標 → 作画座標 (mm)。viewBox は preserveAspectRatio で余白が付くので、
@@ -165,6 +165,7 @@ UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
   const S = SymEdit;
   S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null; S.moving = null;
+  S.msel = { shapes: [], pins: [] }; S.marquee = null; S.frame = null; S.frameDrag = null;
   S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
@@ -182,10 +183,23 @@ UI.openSymbolEditor = (symId = null) => {
       // 図形一覧を持たない (DXF取り込み等) シンボルは、そのまま1つの図形として扱う
       S.shapes = [{ k: "raw", body: src.body }];
     }
+    // 保存済みの枠 (bounds) が自動計算と違えば「手で決めた枠」として引き継ぐ
+    const auto = symShapesBounds(S.shapes, S.pins);
+    const bd0 = src.bounds;
+    if (Array.isArray(bd0) && bd0.length === 4 && bd0.some((v, i2) => Math.abs(v - auto[i2]) > 0.05)) {
+      S.frame = [...bd0];
+    }
   }
 
   if (S.shapes.length || S.pins.length) {
-    const bd = symShapesBounds(S.shapes, S.pins);
+    const a = symShapesBounds(S.shapes, S.pins);
+    const f = S.frame;
+    // 手動枠があれば、それも収まる作画範囲にする
+    const bd = f
+      ? [Math.min(a[0], f[0]), Math.min(a[1], f[1]),
+         Math.max(a[0] + a[2], f[0] + f[2]) - Math.min(a[0], f[0]),
+         Math.max(a[1] + a[3], f[1] + f[3]) - Math.min(a[1], f[1])]
+      : a;
     const need = Math.max(Math.abs(bd[0]), Math.abs(bd[1]), Math.abs(bd[0] + bd[2]), Math.abs(bd[1] + bd[3])) * 2 + 8;
     S.W = S.H = [40, 60, 100, 160].find(v => v >= need) || 160;
   } else { S.W = S.H = 60; }
@@ -272,7 +286,8 @@ UI.openSymbolEditor = (symId = null) => {
   toolsEl.addEventListener("click", e => {
     const b = e.target.closest(".se-tool");
     if (!b) return;
-    S.tool = b.dataset.t; S.draft = null; S.sel = -1; S.moving = null;
+    S.tool = b.dataset.t; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null;
+    S.msel = { shapes: [], pins: [] };
     toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === S.tool));
     const t = SYMEDIT_TOOLS.find(x => x[0] === S.tool);
     hintEl.textContent = t ? t[2] : "";
@@ -302,26 +317,47 @@ UI.openSymbolEditor = (symId = null) => {
     out += `<path d="${d5}" stroke="rgba(120,150,200,.28)" stroke-width="0.12" fill="none"/>`;
     // 原点の十字
     out += `<path d="M-3,0 H3 M0,-3 V3" stroke="rgba(255,120,120,.55)" stroke-width="0.2" fill="none"/>`;
+    // シンボル枠 (青)。配置時の外接矩形。選択ツールでは角をドラッグしてサイズを変えられる
+    if (S.shapes.length || S.pins.length) {
+      const fb = S.frame ?? symShapesBounds(S.shapes, S.pins);
+      out += `<rect x="${fb[0]}" y="${fb[1]}" width="${fb[2]}" height="${fb[3]}" fill="none" stroke="#4b9fff" stroke-width="${S.frame ? 0.3 : 0.16}" stroke-dasharray="1.6 1" opacity="${S.frame ? 0.95 : 0.55}"/>`;
+      if (S.tool === "select") {
+        const hs = 1.3;
+        [[fb[0], fb[1]], [fb[0] + fb[2], fb[1]], [fb[0], fb[1] + fb[3]], [fb[0] + fb[2], fb[1] + fb[3]]]
+          .forEach(([cx, cy]) => { out += `<rect x="${cx - hs / 2}" y="${cy - hs / 2}" width="${hs}" height="${hs}" fill="#4b9fff" stroke="none"/>`; });
+      }
+    }
     // 図形
     out += `<g fill="none" stroke="#e6edf7" stroke-width="${S.lw}" stroke-linecap="round" stroke-linejoin="round" color="#e6edf7">`;
-    S.shapes.forEach((sh, i) => { out += sh.k === "raw" ? sh.body : symShapeSVG(sh, { hl: i === S.sel }); });
+    S.shapes.forEach((sh, i) => { out += sh.k === "raw" ? sh.body : symShapeSVG(sh, { hl: i === S.sel || S.msel.shapes.includes(i) }); });
     out += `</g>`;
+    // 範囲選択の矩形
+    if (S.marquee) {
+      const q = S.marquee;
+      out += `<rect x="${Math.min(q.x0, q.x1)}" y="${Math.min(q.y0, q.y1)}" width="${Math.abs(q.x1 - q.x0)}" height="${Math.abs(q.y1 - q.y0)}" fill="rgba(75,159,255,.08)" stroke="${SEL}" stroke-width="0.25" stroke-dasharray="1 0.8"/>`;
+    }
     // 作画中
     if (S.draft) {
       out += `<g fill="none" stroke="${SEL}" stroke-width="0.4" stroke-dasharray="1 0.8">${S.draft.k === "raw" ? "" : symShapeSVG(S.draft)}</g>`;
     }
     // 端子
     S.pins.forEach((p, i) => {
-      out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${S.sel === -2 - i ? SEL : "#e5484d"}" stroke="none"/>`;
+      out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${S.sel === -2 - i || S.msel.pins.includes(i) ? SEL : "#e5484d"}" stroke="none"/>`;
       if (p.n) out += `<text x="${p.x + 1.6}" y="${p.y - 1.2}" font-size="2.6" fill="#8b96ab" font-family="monospace">${escXML(p.n)}</text>`;
     });
     S.svg.innerHTML = out;
     refreshSide();
   };
   const refreshSide = () => {
-    const bd = symShapesBounds(S.shapes, S.pins);
-    body.querySelector("#seBounds").textContent =
-      `外接矩形: X ${bd[0]} / Y ${bd[1]} / 幅 ${bd[2]} / 高さ ${bd[3]} mm`;
+    const bd = S.frame ?? symShapesBounds(S.shapes, S.pins);
+    const bEl = body.querySelector("#seBounds");
+    bEl.innerHTML =
+      `シンボル枠 (青): X ${bd[0]} / Y ${bd[1]} / 幅 ${bd[2]} / 高さ ${bd[3]} mm` +
+      (S.frame
+        ? ` <button id="seFrameReset" class="se-pin-del" title="図形から自動計算した枠に戻す">自動に戻す</button>`
+        : ` <span class="rp-dim">(自動。選択ツールで角をドラッグして変更)</span>`);
+    const fr = bEl.querySelector("#seFrameReset");
+    if (fr) fr.addEventListener("click", () => { S.frame = null; draw(); });
     const prevSym = { bounds: bd, lw: S.lw, body: symShapesToBody(S.shapes.filter(s => s.k !== "raw")) + S.shapes.filter(s => s.k === "raw").map(s => s.body).join("") };
     body.querySelector("#sePrev").innerHTML = prevSym.body ? symThumbSVG(prevSym, 90) : '<span class="se-empty">図形がありません</span>';
     const ph = body.querySelector("#sePinHead");
@@ -380,10 +416,18 @@ UI.openSymbolEditor = (symId = null) => {
   };
 
   // ── マウス操作 ──
+  const distSeg = (px, py, x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
+    if (!L2) return Math.hypot(px - x1, py - y1);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / L2));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  };
   const hitShape = (x, y) => {
     for (let i = S.shapes.length - 1; i >= 0; i--) {
       const sh = S.shapes[i];
-      if (sh.k === "line" && sh.pts.some(p => Math.hypot(p[0] - x, p[1] - y) < 2)) return i;
+      // 線は頂点だけでなく線分の途中もつまめるようにする
+      if (sh.k === "line" && (sh.pts.some(p => Math.hypot(p[0] - x, p[1] - y) < 2) ||
+        sh.pts.some((p, j) => j > 0 && distSeg(x, y, sh.pts[j - 1][0], sh.pts[j - 1][1], p[0], p[1]) < 1.2))) return i;
       if (sh.k === "rect" && x > sh.x - 1 && x < sh.x + sh.w + 1 && y > sh.y - 1 && y < sh.y + sh.h + 1) return i;
       if ((sh.k === "circle" || sh.k === "arc" || sh.k === "half") && Math.abs(Math.hypot(x - sh.x, y - sh.y) - sh.r) < 2) return i;
       if (sh.k === "text" && Math.abs(x - sh.x) < 6 && Math.abs(y - sh.y) < 3) return i;
@@ -391,21 +435,59 @@ UI.openSymbolEditor = (symId = null) => {
     }
     return -1;
   };
+  /** 図形1つの外接矩形 [x0,y0,x1,y1]。範囲選択の当たり判定に使う (raw は対象外) */
+  const shapeBBox = (sh) => {
+    if (sh.k === "line") {
+      const xs = sh.pts.map(q => q[0]), ys = sh.pts.map(q => q[1]);
+      return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+    }
+    if (sh.k === "rect") return [sh.x, sh.y, sh.x + sh.w, sh.y + sh.h];
+    if (sh.k === "circle" || sh.k === "arc" || sh.k === "half") return [sh.x - sh.r, sh.y - sh.r, sh.x + sh.r, sh.y + sh.r];
+    if (sh.k === "text") return [sh.x - 5, sh.y - 3, sh.x + 5, sh.y + 1];
+    return null;
+  };
+  const clearMsel = () => { S.msel = { shapes: [], pins: [] }; };
   S.svg.addEventListener("mousemove", e => {
     const p = symEditXY(e);
     const g = S.tool === "pin" ? GRID : S.snap;
     const x = symSnap(p.x, g), y = symSnap(p.y, g);
     statusEl.textContent = `X: ${x.toFixed(1)}  Y: ${y.toFixed(1)}`;
+    if (S.marquee) {
+      if (!(e.buttons & 1)) { S.marquee = null; }
+      else { S.marquee.x1 = p.x; S.marquee.y1 = p.y; draw(); return; }
+    }
+    if (S.frameDrag) {
+      if (!(e.buttons & 1)) { S.frameDrag = null; }
+      else {
+        // シンボル枠の角を引っぱってサイズ変更 (0.5mm スナップ・最小 2mm)
+        const o = S.frameDrag.orig, hd = S.frameDrag.handle;
+        const rx = symSnap(p.x, 0.5), ry = symSnap(p.y, 0.5);
+        let x0 = o[0], y0 = o[1], x1 = o[0] + o[2], y1 = o[1] + o[3];
+        if (hd.includes("w")) x0 = Math.min(rx, x1 - 2);
+        if (hd.includes("e")) x1 = Math.max(rx, x0 + 2);
+        if (hd.includes("n")) y0 = Math.min(ry, y1 - 2);
+        if (hd.includes("s")) y1 = Math.max(ry, y0 + 2);
+        const r1 = v => Math.round(v * 10) / 10;
+        S.frame = [r1(x0), r1(y0), r1(x1 - x0), r1(y1 - y0)];
+        draw(); return;
+      }
+    }
     if (S.moving) {
       if (!(e.buttons & 1)) { S.moving = null; }        // svg 外でボタンを離した後の迷子ドラッグを防ぐ
       else {
-        const m = S.moving, mg = m.pi >= 0 ? GRID : S.snap;
+        const m = S.moving;
+        // 端子が混ざるときは端子のグリッドに合わせる (別々のスナップだと形が崩れる)
+        const mg = m.multi ? (m.targets.some(t => t.pi >= 0) ? GRID : S.snap) : (m.pi >= 0 ? GRID : S.snap);
         const dx = symSnap(p.x - m.px, mg), dy = symSnap(p.y - m.py, mg);
         if (dx || dy || m.pushed) {
           if (!m.pushed) { push(); m.pushed = true; }   // 最初に動いた時点で1回だけ undo を積む
-          const t = m.pi >= 0 ? S.pins[m.pi] : S.shapes[m.i], o = m.orig;
-          if (o.k === "line") t.pts = o.pts.map(q => [q[0] + dx, q[1] + dy]);
-          else { t.x = o.x + dx; t.y = o.y + dy; }      // rect/circle/half/arc/text/端子は x,y 起点
+          const apply = (t2) => {
+            const t = t2.pi >= 0 ? S.pins[t2.pi] : S.shapes[t2.i], o = t2.orig;
+            if (!t) return;
+            if (o.k === "line") t.pts = o.pts.map(q => [q[0] + dx, q[1] + dy]);
+            else { t.x = o.x + dx; t.y = o.y + dy; }    // rect/circle/half/arc/text/端子は x,y 起点
+          };
+          if (m.multi) m.targets.forEach(apply); else apply(m);
           draw();
         }
         return;
@@ -445,16 +527,41 @@ UI.openSymbolEditor = (symId = null) => {
     S.downAt = { x: e.clientX, y: e.clientY };
     if (S.draft) return;
     if (S.tool === "select") {
-      // 図形/端子をつまむ → そのままドラッグで移動 (mousemove 側で追従)
       const p = symEditXY(e);
+      // シンボル枠 (青) の角ハンドル → 枠のサイズ変更
+      if (S.shapes.length || S.pins.length) {
+        const fb = S.frame ?? symShapesBounds(S.shapes, S.pins);
+        const corners = [[fb[0], fb[1], "nw"], [fb[0] + fb[2], fb[1], "ne"], [fb[0], fb[1] + fb[3], "sw"], [fb[0] + fb[2], fb[1] + fb[3], "se"]];
+        // 当たり判定は描いている青い四角 (1.3mm) と同じ感覚に絞る。
+        // 広くすると、角の近くから始める範囲選択ドラッグが枠リサイズに化ける
+        const hc = corners.find(c => Math.abs(c[0] - p.x) < 0.9 && Math.abs(c[1] - p.y) < 0.9);
+        if (hc) { S.frameDrag = { handle: hc[2], orig: [...fb] }; return; }
+      }
       const pi = S.pins.findIndex(q => Math.hypot(q.x - p.x, q.y - p.y) < 2);
       const i = pi >= 0 ? -1 : hitShape(p.x, p.y);
-      if (pi >= 0 || i >= 0) {
-        S.sel = pi >= 0 ? -2 - pi : i;
-        const t = pi >= 0 ? S.pins[pi] : S.shapes[i];
-        if (t.k !== "raw") S.moving = { pi, i, px: p.x, py: p.y, orig: deepCopy(t), pushed: false };
-        draw();
+      if (pi < 0 && i < 0) {
+        // 空白から押した → 範囲選択を始める
+        S.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+        return;
       }
+      // まとめ選択の中をつまんだ → 選択したものを全部一緒に動かす
+      const inMsel = (pi >= 0 && S.msel.pins.includes(pi)) || (i >= 0 && S.msel.shapes.includes(i));
+      if (inMsel) {
+        S.moving = {
+          multi: true, px: p.x, py: p.y, pushed: false,
+          targets: [
+            ...S.msel.shapes.filter(ix => S.shapes[ix] && S.shapes[ix].k !== "raw").map(ix => ({ i: ix, pi: -1, orig: deepCopy(S.shapes[ix]) })),
+            ...S.msel.pins.map(ix => ({ i: -1, pi: ix, orig: deepCopy(S.pins[ix]) })),
+          ],
+        };
+        return;
+      }
+      // 単独でつまむ → そのままドラッグで移動 (mousemove 側で追従)
+      clearMsel();
+      S.sel = pi >= 0 ? -2 - pi : i;
+      const t = pi >= 0 ? S.pins[pi] : S.shapes[i];
+      if (t.k !== "raw") S.moving = { pi, i, px: p.x, py: p.y, orig: deepCopy(t), pushed: false };
+      draw();
       return;
     }
     if (!["rect", "rectf", "circle", "half", "arc"].includes(S.tool)) return;
@@ -472,6 +579,31 @@ UI.openSymbolEditor = (symId = null) => {
     // 作画中の図形は次の mousemove で描かれるので、ここでは描き直さない。
   });
   S.svg.addEventListener("mouseup", e => {
+    if (S.marquee) {
+      // 範囲選択を確定。触れている図形・端子をまとめて選ぶ
+      const q = S.marquee; S.marquee = null; S.downAt = null;
+      const x0 = Math.min(q.x0, q.x1), x1 = Math.max(q.x0, q.x1);
+      const y0 = Math.min(q.y0, q.y1), y1 = Math.max(q.y0, q.y1);
+      if (x1 - x0 > 1 || y1 - y0 > 1) {
+        const shapes = [], pins = [];
+        S.shapes.forEach((sh, i) => {
+          const b = shapeBBox(sh);
+          if (b && b[0] <= x1 && b[2] >= x0 && b[1] <= y1 && b[3] >= y0) shapes.push(i);
+        });
+        S.pins.forEach((pn, i) => {
+          if (pn.x >= x0 - 0.5 && pn.x <= x1 + 0.5 && pn.y >= y0 - 0.5 && pn.y <= y1 + 0.5) pins.push(i);
+        });
+        S.msel = { shapes, pins }; S.sel = -1;
+        S.suppressClick = true;
+        const n = shapes.length + pins.length;
+        UI.setMsg(n ? `${n} 個を選択しました (つまんでドラッグで一緒に移動 / Del で削除)` : "範囲内に図形がありません");
+      }
+      draw(); return;
+    }
+    if (S.frameDrag) {
+      S.frameDrag = null; S.downAt = null; S.suppressClick = true;
+      draw(); return;
+    }
     if (S.moving) {
       if (S.moving.pushed) S.suppressClick = true;      // 動かした後の click で選択を奪い直さない
       S.moving = null; S.downAt = null;
@@ -514,6 +646,7 @@ UI.openSymbolEditor = (symId = null) => {
       const i = hitShape(p.x, p.y);
       const pi = S.pins.findIndex(q => Math.hypot(q.x - p.x, q.y - p.y) < 2);
       S.sel = pi >= 0 ? -2 - pi : i;
+      clearMsel();  // クリックでの選択は単独に戻す
       draw(); return;
     }
     if (S.tool === "pin") {
@@ -656,8 +789,22 @@ UI.openSymbolEditor = (symId = null) => {
     if (e.key === "Escape") {
       // Esc は作画中の図形のキャンセルに使う (画面は閉じない)
       e.stopPropagation(); e.preventDefault();
-      if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; draw(); UI.setMsg("作画をキャンセルしました"); }
-      else if (S.sel !== -1) { S.sel = -1; S.moving = null; draw(); }
+      if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; S.marquee = null; draw(); UI.setMsg("作画をキャンセルしました"); }
+      else if (S.sel !== -1 || S.msel.shapes.length || S.msel.pins.length) { S.sel = -1; clearMsel(); S.moving = null; S.marquee = null; S.frameDrag = null; draw(); }
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && (S.msel.shapes.length || S.msel.pins.length)) {
+      // 範囲選択したものをまとめて削除。端子は機能の割り当ても詰め直す
+      push();
+      const rmS = new Set(S.msel.shapes.filter(i => S.shapes[i] && S.shapes[i].k !== "raw"));
+      S.shapes = S.shapes.filter((_, i) => !rmS.has(i));
+      const rmP = new Set(S.msel.pins);
+      const remap = new Map(); let k2 = 0;
+      S.pins.forEach((_, i) => { if (!rmP.has(i)) remap.set(i, k2++); });
+      S.pins = S.pins.filter((_, i) => !rmP.has(i));
+      S.funcs.forEach(f => { f.pins = (f.pins || []).map(v => (remap.has(v) ? remap.get(v) : null)); });
+      S.funcs = S.funcs.filter(f => (f.pins || []).every(v => v != null));
+      clearMsel(); S.sel = -1; draw(); e.stopPropagation(); e.preventDefault();
       return;
     }
     if ((e.key === "Delete" || e.key === "Backspace") && S.sel !== -1) {
@@ -732,7 +879,7 @@ UI.openSymbolEditor = (symId = null) => {
       const clear = db.querySelector("#dsClear").checked;
       dm.close();
       push();
-      if (clear) { S.shapes = []; S.pins = []; S.funcs = []; }
+      if (clear) { S.shapes = []; S.pins = []; S.funcs = []; S.frame = null; S.msel = { shapes: [], pins: [] }; }
       const add = dxfEntsToShapes(ents, { scale: k });
       S.shapes.push(...add);
       S.lw = lw;
@@ -765,11 +912,13 @@ UI.openSymbolEditor = (symId = null) => {
   foot.querySelector("#seUndo").addEventListener("click", () => {
     const st = S.undo.pop();
     if (!st) return;
-    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.draft = null; S.sel = -1; S.moving = null; draw();
+    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null;
+    S.msel = { shapes: [], pins: [] }; draw();
   });
   foot.querySelector("#seClear").addEventListener("click", () => {
     if (!confirm("作画した図形と端子をすべて消しますか？")) return;
-    push(); S.shapes = []; S.pins = []; S.funcs = []; S.draft = null; S.sel = -1; draw();
+    push(); S.shapes = []; S.pins = []; S.funcs = []; S.draft = null; S.sel = -1; S.frame = null;
+    S.msel = { shapes: [], pins: [] }; draw();
   });
   foot.querySelector("#seCancel").addEventListener("click", m.close);
 
@@ -798,7 +947,7 @@ UI.openSymbolEditor = (symId = null) => {
       sim: S.funcs.length ? "multi" : sim,
       lw: S.lw,
       funcs: S.funcs.length ? deepCopy(S.funcs) : undefined,
-      bounds: symShapesBounds(S.shapes, S.pins),
+      bounds: S.frame ? [...S.frame] : symShapesBounds(S.shapes, S.pins),
       body: bodySVG,
       shapes: deepCopy(S.shapes),      // 再編集できるように図形一覧も保存する
       imported: true,                  // localStorage へ保存する対象
