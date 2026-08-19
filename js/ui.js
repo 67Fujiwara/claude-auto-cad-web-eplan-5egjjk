@@ -798,12 +798,17 @@ UI.newProject = () => {
   zoomFit();
 };
 /** 端子構成が変わったシンボルを含む旧図面を開いたときの注意喚起。
-    配線 (座標) は互換だが、印字される端子番号が変わるので端子台表の再出力を促す。 */
-function noteSymbolMigration() {
-  if (App.project.pages.some(pg => pg.devices.some(d => d.sym === "press_sw"))) {
-    UI.setMsg("注意: 圧力スイッチは切替接点 (11=共通/12=b/14=a) に更新されています — " +
-      "旧版 (13/14) と端子番号の表示が変わるため、端子台表・渡り配線表は再出力してください");
+    配線 (座標) は互換だが、印字される端子番号が変わるので端子台表の再出力を促す。
+    once=true (ブラウザ自動保存からの復帰) では1回だけ知らせて毎回のナグを避ける。 */
+function noteSymbolMigration(opts = {}) {
+  if (!App.project.pages.some(pg => pg.devices.some(d => d.sym === "press_sw"))) return;
+  const FLAG = "electracad.note.presssw";
+  if (opts.once) {
+    try { if (localStorage.getItem(FLAG)) return; localStorage.setItem(FLAG, "1"); } catch (e) { /* 続行 */ }
   }
+  UI.setMsg("注意: 圧力スイッチは切替接点 (11=共通/12=b/14=a) に更新されています — " +
+    "旧版 (13/14) と端子番号の表示が変わるため、端子台表・渡り配線表は再出力してください。" +
+    "未使用の 12 端子に出る未接続警告は異常ではありません");
 }
 
 UI.openFile = async () => {
@@ -2045,6 +2050,7 @@ function boot() {
   mergeProjectSymbols();
   UI.renumberPages();   // ページ番号と図番を現在の設定に同期
   applySheet(); // 保存された用紙・尺度で作図領域を張る
+  noteSymbolMigration({ once: true }); // 自動保存からの復帰でも端子番号変更を1回だけ知らせる
   document.getElementById("projectName").value = App.project.name;
   const pn = document.getElementById("projectName");
   pn.addEventListener("change", e => {

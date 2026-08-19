@@ -1572,7 +1572,9 @@ function runDRC() {
   propagateLinkGroups(openData);
   // 切替接点は 11-12 と 11-14 が同時に閉じない。閉状態ネットで両投をつなぐと
   // 「b側→0V / a側→+24V を選ぶ」常套回路が偽の短絡になるため、
-  // 短絡検査だけは投ごと (a側のみ閉 / b側のみ閉) の2パスで評価する
+  // 短絡検査だけは投ごと (a側のみ閉 / b側のみ閉) の2パスで評価する。
+  // 注意: 2パスは全切替接点を一斉に同じ投へ倒す大域評価。複数の切替接点の
+  // 混合状態 (SW1=a側・SW2=b側) でのみ成立する短絡は対象外 (組合せ爆発の回避)
   const hasChangeover = App.project.pages.some(p => p.devices.some(d => symOf(d.sym).sim === "changeover"));
   const shortData = hasChangeover
     ? ["closedA", "closedB"].map(m => {
