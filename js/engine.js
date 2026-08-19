@@ -1010,6 +1010,16 @@ function conductivePairs(dev, mode = "closed") {
     case "contact2_no":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1], [2, 3]] : [];
+    case "contact2_nc":
+      // 2重化 b接点 (非常停止 2NC 等): 1操作で両極が同時に開く
+      if (mode === "open" || mode === "split") return [];
+      if (mode === "sim") return simActiveState(dev) ? [] : [[0, 1], [2, 3]];
+      return [[0, 1], [2, 3]];
+    case "changeover":
+      // 切替接点: pins[0]=a側固定(14) / pins[1]=b側固定(12) / pins[2]=共通(11)
+      if (mode === "open" || mode === "split") return [];
+      if (mode === "sim") return simActiveState(dev) ? [[0, 2]] : [[1, 2]];
+      return [[0, 2], [1, 2]];
     case "contact3_no":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1], [2, 3], [4, 5]] : [];
@@ -1373,7 +1383,8 @@ function setWireSpec(page, wire, spec) {
 /* ══════════════ 通電シミュレーション ══════════════ */
 function simActiveState(dev) {
   const sym = symOf(dev.sym);
-  if (sym.sim === "contact_no" || sym.sim === "contact_nc" || sym.sim === "contact2_no" || sym.sim === "contact3_no") {
+  if (sym.sim === "contact_no" || sym.sim === "contact_nc" || sym.sim === "contact2_no" || sym.sim === "contact3_no" ||
+      sym.sim === "contact2_nc" || sym.sim === "changeover") {
     if (dev.linkTo) {
       // コイル連動接点: タイマは遅延を考慮
       const t = App.sim.timers[dev.linkTo];

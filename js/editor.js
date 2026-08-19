@@ -354,7 +354,8 @@ function simDevVisual(dev, sym) {
   const en = !!App.sim.states[dev.id];
   const t = App.sim.timers[dev.id];
   switch (sym.sim) {
-    case "contact_no": case "contact_nc": case "contact3_no": {
+    case "contact_no": case "contact_nc": case "contact2_no": case "contact3_no":
+    case "contact2_nc": case "changeover": {
       const act = simActiveState(dev);
       return { color: act ? SIM_P : null };
     }
@@ -667,7 +668,8 @@ function onMouseDown(e) {
     const hit = hitTest(w.x, w.y);
     if (hit && hit.type === "device") {
       const sym = symOf(hit.obj.sym);
-      if ((sym.sim === "contact_no" || sym.sim === "contact_nc") && !hit.obj.linkTo) {
+      if ((sym.sim === "contact_no" || sym.sim === "contact_nc" ||
+           sym.sim === "contact2_nc" || sym.sim === "changeover") && !hit.obj.linkTo) {
         if (sym.momentary) {
           App.sim.states[hit.obj.id] = true;
           Editor.drag = { type: "simhold", devId: hit.obj.id };

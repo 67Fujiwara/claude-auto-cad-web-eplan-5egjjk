@@ -71,6 +71,14 @@ const SYMBOLS = [
     body: G_NC + G_MUSH(bladeXNC(10)),
   },
   {
+    id: "estop2", jis: "07-07-04", cat: "input", letter: "S", name: "非常停止ボタン (2NC)", nameEn: "Emergency stop 2NC",
+    desc: "キノコ形・b接点×2の2重化・ラッチ式。安全リレーの二重化入力用", typ: "XW1E-BV402M",
+    pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"},{x:10,y:0,n:"21"},{x:10,y:20,n:"22"}],
+    sim: "contact2_nc", momentary: false, bounds: [-18,-2, 30, 24],
+    // 1つのキノコ頭が両極の可動刃を機械リンクで同時に開く
+    body: G_NC + `<g transform="translate(10,0)">${G_NC}</g>` + G_MUSH(bladeXNC(10) + 10),
+  },
+  {
     id: "sel_sw", jis: "07-06-01", cat: "input", letter: "S", name: "セレクタスイッチ", nameEn: "Selector switch",
     desc: "回転式・オルタネイト (JIS C 0617 手動操作・回転)", typ: "XB4-BD21", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
     sim: "contact_no", momentary: false, bounds: [-17,-2, 19, 24],
@@ -97,9 +105,13 @@ const SYMBOLS = [
   },
   {
     id: "press_sw", jis: "07-08-05", cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
-    desc: "設定圧で動作・a接点", typ: "SNS-C102X", pins: [{x:0,y:0,n:"13"},{x:0,y:20,n:"14"}],
-    sim: "contact_no", momentary: false, bounds: [-17,-2, 19, 24],
-    body: G_NO + `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/>` + gLink(-11.8, bladeXNO(9.8), 9.8),
+    desc: "設定圧で切り替わる切替接点 (11=共通 / 12=b / 14=a)", typ: "SNS-C102X",
+    // 可動刃は常時 b 側 (12) に接し、設定圧に達すると a 側 (14) へ切り替わる。
+    // 従来の a接点2端子から変更 — 上(0,0)/下(0,20) の座標は維持し既存配線を壊さない
+    pins: [{x:0,y:0,n:"14"},{x:-10,y:0,n:"12"},{x:0,y:20,n:"11"}],
+    sim: "changeover", momentary: false, bounds: [-17,-2, 19, 24],
+    body: `<path d="M0,0 V5.2"/><path d="M0,20 V13 M0,13 L-4.8,3.4"/><path d="M-10,0 V7 M-10,7 H-2.5"/>` +
+      `<path d="M-15,13 A3.2,3.2 0 0 1 -8.6,13 Z"/>` + gLink(-11.8, bladeXNC(9.8), 9.8),
   },
   {
     id: "float_sw", jis: "07-08-06", cat: "input", letter: "B", name: "フロートスイッチ", nameEn: "Float switch",
