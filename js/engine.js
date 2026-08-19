@@ -1019,7 +1019,9 @@ function conductivePairs(dev, mode = "closed") {
       // 切替接点: pins[0]=a側固定(14) / pins[1]=b側固定(12) / pins[2]=共通(11)
       if (mode === "open" || mode === "split") return [];
       if (mode === "sim") return simActiveState(dev) ? [[0, 2]] : [[1, 2]];
-      return [[0, 2], [1, 2]];
+      if (mode === "closedA") return [[0, 2]];   // 短絡検査用: a側だけ閉じた状態
+      if (mode === "closedB") return [[1, 2]];   // 短絡検査用: b側だけ閉じた状態
+      return [[0, 2], [1, 2]];                   // 到達性検査は「どちらかで届き得る」でよい
     case "contact3_no":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1], [2, 3], [4, 5]] : [];
@@ -1568,6 +1570,17 @@ function runDRC() {
   propagateLinkGroups(closedData);
   const openData = App.project.pages.map(p => drcCollect(p, "open"));
   propagateLinkGroups(openData);
+  // 切替接点は 11-12 と 11-14 が同時に閉じない。閉状態ネットで両投をつなぐと
+  // 「b側→0V / a側→+24V を選ぶ」常套回路が偽の短絡になるため、
+  // 短絡検査だけは投ごと (a側のみ閉 / b側のみ閉) の2パスで評価する
+  const hasChangeover = App.project.pages.some(p => p.devices.some(d => symOf(d.sym).sim === "changeover"));
+  const shortData = hasChangeover
+    ? ["closedA", "closedB"].map(m => {
+        const d = App.project.pages.map(p => drcCollect(p, m));
+        propagateLinkGroups(d);
+        return d;
+      })
+    : [closedData];
   App.project.pages.forEach((page, pageIdx) => {
     applySheet(page);        // 図枠まわりの検査はページごとの用紙・尺度で行う
     const closed = closedData[pageIdx];
@@ -1754,11 +1767,14 @@ function runDRC() {
       }
     });
 
-    // 電源短絡 (+24V と 0V が閉状態で同一ネット)
-    for (const p of srcClosed.pNets) {
-      if (p && srcClosed.nNets.has(p)) {
-        issues.push({ sev: "err", msg: "+24V と 0V が短絡しています (接点閉時)", page: page.no, target: null, loc: `${page.no}.-` });
-        break;
+    // 電源短絡 (+24V と 0V が閉状態で同一ネット)。切替接点は投ごとの2パスで見る
+    shortHit: for (const sd of shortData) {
+      const s = sd[pageIdx];
+      for (const p of s.pNets) {
+        if (p && s.nNets.has(p)) {
+          issues.push({ sev: "err", msg: "+24V と 0V が短絡しています (接点閉時)", page: page.no, target: null, loc: `${page.no}.-` });
+          break shortHit;
+        }
       }
     }
 

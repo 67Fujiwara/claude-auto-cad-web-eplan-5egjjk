@@ -797,6 +797,15 @@ UI.newProject = () => {
   UI.refresh();
   zoomFit();
 };
+/** 端子構成が変わったシンボルを含む旧図面を開いたときの注意喚起。
+    配線 (座標) は互換だが、印字される端子番号が変わるので端子台表の再出力を促す。 */
+function noteSymbolMigration() {
+  if (App.project.pages.some(pg => pg.devices.some(d => d.sym === "press_sw"))) {
+    UI.setMsg("注意: 圧力スイッチは切替接点 (11=共通/12=b/14=a) に更新されています — " +
+      "旧版 (13/14) と端子番号の表示が変わるため、端子台表・渡り配線表は再出力してください");
+  }
+}
+
 UI.openFile = async () => {
   // File System Access API があればハンドルを保持し、以後の保存を上書き保存にする
   if (FS_API && window.showOpenFilePicker) {
@@ -824,6 +833,7 @@ UI.openFile = async () => {
       UI.refresh();
       zoomFit();
       UI.setMsg(`読み込みました — ${handle.name} (保存ボタンで上書き保存)`);
+      noteSymbolMigration();
     } catch (e) {
       if (e && (e.name === "AbortError" || e.name === "NotAllowedError")) return; // キャンセル
       alert("読み込みに失敗しました: 不正なファイル形式です");
@@ -856,6 +866,7 @@ UI.openFile = async () => {
         UI.refresh();
         zoomFit();
         UI.setMsg("プロジェクトを読み込みました");
+        noteSymbolMigration();
       } catch (e) { alert("読み込みに失敗しました: 不正なファイル形式です"); }
     };
     rd.readAsText(f);
