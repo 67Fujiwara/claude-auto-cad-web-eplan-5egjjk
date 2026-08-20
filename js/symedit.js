@@ -996,6 +996,7 @@ UI.openSymbolEditor = (symId = null) => {
     const at = DB_SYMBOLS.findIndex(s => s.id === id);
     if (at >= 0) DB_SYMBOLS[at] = sym; else DB_SYMBOLS.push(sym);
     SYMBOLS_BY_ID[id] = sym;
+    _symRectCache.delete(id);   // 同一 id で body を再編集した場合に古い箱をラベル障害物に使わない
     saveImportedSymbols();
     syncProjectSymbols();
     dbSetPinned([...new Set([...dbPinnedList(), id])]);
