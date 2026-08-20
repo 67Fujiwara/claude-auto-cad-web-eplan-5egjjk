@@ -107,7 +107,7 @@ const SYMBOLS = [
   {
     id: "press_sw", jis: "07-08-05", stdNote: "検出器箱 + 07-08-05 の圧力操作 + メーク接点の組合せ (電子式3線)",
     cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
-    desc: "電子式 3線 (P24V=+24V / N24V=0V / OUT=入力信号線)", typ: "DP-101",
+    desc: "電子式 3線 (P24V=+24V·茶BN / N24V=0V·青BU / OUT=入力信号·黒BK)。DP-101 系は NPN (シンク) 出力 — PLC入力のシンク/ソース設定に注意", typ: "DP-101",
     // 近接・光電センサと同じ3線構造。上(0,0)/下(0,20) の座標は維持し既存配線を壊さない
     pins: [{x:0,y:0,n:"P24V"},{x:0,y:20,n:"OUT"},{x:-10,y:20,n:"N24V"}],
     sim: "contact_no", momentary: false, bounds: [-21,-2, 23, 24],
