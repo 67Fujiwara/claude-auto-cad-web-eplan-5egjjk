@@ -277,11 +277,33 @@ function pinLabelVisible(page, dev, pinIdx) {
    ─ 配置はページ内で左→上の順に貪欲決定し、確定したラベルを順次障害物へ積む。 */
 const _labelCache = new WeakMap();   // page → { rev, map }
 
+/** シンボル body に描かれた箱 (<rect>) の一覧。ラベル配置の障害物に使う。
+    外接 bounds と違い実際に線が引かれる場所なので、自機のぶんも避けてよい。 */
+const _symRectCache = new Map();
+function symBodyRects(sym) {
+  if (_symRectCache.has(sym.id)) return _symRectCache.get(sym.id);
+  const out = [];
+  const re = /<rect\s+x="(-?[\d.]+)"\s+y="(-?[\d.]+)"\s+width="([\d.]+)"\s+height="([\d.]+)"/g;
+  let m;
+  while ((m = re.exec(sym.body || ""))) out.push([+m[1], +m[2], +m[3], +m[4]]);
+  _symRectCache.set(sym.id, out);
+  return out;
+}
+
 /** 端子番号ラベルの外接矩形 (画面・検図・ラベル配置で共通) */
 function pinLabelBoxes(page) {
   const f = contentScale();
   const out = [];
   const devBoxes = page.devices.map(d => insetRect(devBounds(d), 1.2 * f));
+  // 図記号の箱 (rect) は自機のぶんも障害物にする — 長い端子名 (N24V 等) が
+  // 検出器箱・機器ボックスの縁に乗るのを防ぐ (回転配置は bounds 側で概ね足りるため除外)
+  const bodyRects = [];
+  page.devices.forEach(d => {
+    if ((d.rot || 0) % 360 !== 0) return;
+    symBodyRects(symOf(d.sym)).forEach(([rx, ry, rw, rh]) => {
+      bodyRects.push({ x: d.x + rx * f, y: d.y + ry * f, w: rw * f, h: rh * f });
+    });
+  });
   page.devices.forEach((d2, di) => {
     const s2 = symOf(d2.sym);
     (s2.pins || []).forEach((p, pi) => {
@@ -303,6 +325,7 @@ function pinLabelBoxes(page) {
         let sc = 0;
         out.forEach(o => { sc += overlapArea(box, padRect(o, LABEL_CLEAR / 2)); });
         devBoxes.forEach((r, ri) => { if (ri !== di) sc += overlapArea(box, r); });
+        bodyRects.forEach(r => { sc += overlapArea(box, r); });
         if (sc === 0) { best = box; break; }
         if (!best || sc < best.__sc) { best = box; best.__sc = sc; }
       }
