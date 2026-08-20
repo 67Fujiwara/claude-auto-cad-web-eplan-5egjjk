@@ -279,10 +279,10 @@ function aiGenerate(sel) {
     addWire(page, [[x, ctrlRailY], [x, firstY]]);
 
     let rightMost = 6;
-    /** 3線式センサ (BUピン持ち) は 0V を自動配線する */
+    /** 3線式センサ (BU / N24V ピン持ち) は 0V を自動配線する */
     const wireSensorBU = (d) => {
       const sym3 = symOf(d.sym);
-      const buIdx = sym3.pins.findIndex(p => p.n === "BU");
+      const buIdx = sym3.pins.findIndex(p => p.n === "BU" || p.n === "N24V");
       if (buIdx < 0) return;
       const bu = devPins(d)[buIdx];
       addWire(page, [[bu.x, bu.y], [bu.x, L.botRailY]]);

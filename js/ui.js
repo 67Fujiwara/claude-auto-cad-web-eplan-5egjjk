@@ -806,9 +806,9 @@ function noteSymbolMigration(opts = {}) {
   if (opts.once) {
     try { if (localStorage.getItem(FLAG)) return; localStorage.setItem(FLAG, "1"); } catch (e) { /* 続行 */ }
   }
-  UI.setMsg("注意: 圧力スイッチは切替接点 (11=共通/12=b/14=a) に更新されています — " +
-    "旧版 (13/14) と端子番号の表示が変わるため、端子台表・渡り配線表は再出力してください。" +
-    "未使用の 12 端子に出る未接続警告は異常ではありません");
+  UI.setMsg("注意: 圧力スイッチは電子式3線 (P24V=+24V / N24V=0V / OUT=入力信号線) に更新されています — " +
+    "端子番号の表示が旧版と変わるため、端子台表・渡り配線表は再出力してください。" +
+    "N24V の 0V 配線と、切替接点版で 12 (左上) に配線していた場合のつなぎ直しを確認してください");
 }
 
 UI.openFile = async () => {

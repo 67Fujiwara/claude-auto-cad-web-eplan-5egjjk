@@ -105,16 +105,14 @@ const SYMBOLS = [
     body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-25,7 l5,2 m-2.2,-1.6 l2.2,1.6 l-2.6,0.6 M-25,12 l5,1 m-2.1,-1.4 l2.1,1.4 l-2.5,0.8"/><path d="M-10,17 V20"/>` + G_NO,
   },
   {
-    id: "press_sw", jis: "07-08-05", stdNote: "07-02-04 (切替接点) + 07-08-05 の圧力操作部の組合せ",
+    id: "press_sw", jis: "07-08-05", stdNote: "検出器箱 + 07-08-05 の圧力操作 + メーク接点の組合せ (電子式3線)",
     cat: "input", letter: "B", name: "圧力スイッチ", nameEn: "Pressure switch",
-    desc: "設定圧で切り替わる切替接点 (11=共通 / 12=b / 14=a)", typ: "SNS-C102X",
-    // 可動刃は常時 b 側 (12) に接し、設定圧に達すると a 側 (14) へ切り替わる。
-    // 従来の a接点2端子から変更 — 上(0,0)/下(0,20) の座標は維持し既存配線を壊さない
-    pins: [{x:0,y:0,n:"14"},{x:-10,y:0,n:"12"},{x:0,y:20,n:"11"}],
-    sim: "changeover", momentary: false, bounds: [-17.2,-2, 19.2, 24],
-    // 圧力操作部は平坦側 (弦) をリンクに向け、ドームを外側へ。リンクは同族共通の作用線 y=10
-    body: `<path d="M0,0 V5.2"/><path d="M0,20 V13 M0,13 L-4.8,3.4"/><path d="M-10,0 V7 M-10,7 H-1.5"/>` +
-      `<path d="M-12,6.8 V13.2"/><path d="M-12,6.8 A3.2,3.2 0 0 0 -12,13.2"/>` + gLink(-12, bladeXNC(10), 10),
+    desc: "電子式 3線 (P24V=+24V / N24V=0V / OUT=入力信号線)", typ: "DP-101",
+    // 近接・光電センサと同じ3線構造。上(0,0)/下(0,20) の座標は維持し既存配線を壊さない
+    pins: [{x:0,y:0,n:"P24V"},{x:0,y:20,n:"OUT"},{x:-10,y:20,n:"N24V"}],
+    sim: "contact_no", momentary: false, bounds: [-21,-2, 23, 24],
+    // 検出器箱の中に圧力操作部 (ドーム) を描いて検出原理を示す
+    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-16,12 A4,4 0 0 1 -8,12"/><path d="M-16,12 H-8"/><path d="M-10,17 V20"/>` + G_NO,
   },
   {
     id: "float_sw", jis: "07-08-06", cat: "input", letter: "B", name: "フロートスイッチ", nameEn: "Float switch",
