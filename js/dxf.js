@@ -153,7 +153,7 @@ function dxfSymPrimitives(sym) {
   const prims = [];
   const src = scaleSymbolGeom(symResolveTextSize(sym.body, contentScale()), contentScale());
   // <g transform="translate(a,b)"> の入れ子を追跡
-  const stack = [{ tx: 0, ty: 0, sw: null }];
+  const stack = [{ tx: 0, ty: 0, sw: null, up: null }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
   const attr = (s, name) => {
     const m = new RegExp(name + '="([^"]*)"').exec(s);
@@ -183,7 +183,11 @@ function dxfSymPrimitives(sym) {
       else {
         const t = translateOf(attrs || "");
         const gw = attr(attrs || "", "stroke-width");
-        stack.push({ tx: top.tx + t.tx, ty: top.ty + t.ty, sw: gw ? parseFloat(gw) : top.sw });
+        const tx = top.tx + t.tx, ty = top.ty + t.ty;
+        // data-upright のグループは機器を回しても正立させる。位置 (この原点) は
+        // 一緒に回すが、中身は回さない — 画面と同じ扱いにする
+        const up = /data-upright="1"/.test(attrs || "") ? { x: tx, y: ty } : top.up;
+        stack.push({ tx, ty, sw: gw ? parseFloat(gw) : top.sw, up });
       }
       continue;
     }
@@ -199,24 +203,25 @@ function dxfSymPrimitives(sym) {
     // ペンで出てしまう
     const swA = attr(attrs, "stroke-width");
     const sw = swA ? parseFloat(swA) : top.sw;
+    const up = top.up;
     if (tag === "path") {
       const d = attr(attrs, "d");
       if (d) dxfParsePathParts(d).forEach(pt2 => {
-        if (pt2.type === "arc") prims.push({ type: "arc", lt, sw, cx: pt2.cx + ox, cy: pt2.cy + oy, r: pt2.r, t1: pt2.t1, dt: pt2.dt });
-        else prims.push({ type: "poly", lt, sw, pts: pt2.pts.map(q => [q[0] + ox, q[1] + oy]) });
+        if (pt2.type === "arc") prims.push({ type: "arc", lt, sw, up, cx: pt2.cx + ox, cy: pt2.cy + oy, r: pt2.r, t1: pt2.t1, dt: pt2.dt });
+        else prims.push({ type: "poly", lt, sw, up, pts: pt2.pts.map(q => [q[0] + ox, q[1] + oy]) });
       });
     } else if (tag === "rect") {
       const x = +attr(attrs, "x"), y = +attr(attrs, "y");
       const w = +attr(attrs, "width"), h = +attr(attrs, "height");
-      prims.push({ type: "poly", lt, sw, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
+      prims.push({ type: "poly", lt, sw, up, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
     } else if (tag === "circle") {
-      prims.push({ type: "circle", lt, sw, cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
+      prims.push({ type: "circle", lt, sw, up, cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
     } else if (tag === "text") {
       // SVG の font-size は em 寸法。DXF の TEXT 高さ (group 40) は大文字高なので換算する
       const fam = (attr(attrs, "font-family") || "sans-serif").toLowerCase();
       const cap = capRatio(fam.includes("mono") ? "mono" : (fam.includes("serif") && !fam.includes("sans")) ? "serif" : "sans");
       pendingText = {
-        type: "text", mono: fam.includes("mono"),
+        type: "text", mono: fam.includes("mono"), up,
         x: +attr(attrs, "x") + ox, y: +attr(attrs, "y") + oy,
         size: +((+(attr(attrs, "font-size") || 5) * cap).toFixed(3)),
         anchor: attr(attrs, "text-anchor") || "start",
@@ -482,16 +487,28 @@ function pageToDXF(page) {
     const symLyr = symStrokeWidth(sym) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
     // 要素ごとに線幅が指定されていれば、そちらでレイヤを決める
     const lyrOf = (pr) => (pr.sw != null ? pr.sw : symStrokeWidth(sym)) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
+    const kk = contentScale();
+    /* 正立グループ (受け口の識別図) は、原点だけ機器と一緒に回して中身は回さない。
+       画面と同じ扱いにしないと、DXF でだけ絵が上下逆さまになる */
+    const place = (pr) => (x, y) => {
+      if (!pr.up) return xf(x, y);
+      const [ax, ay] = xf(pr.up.x, pr.up.y);
+      return [ax + (x - pr.up.x) * kk, ay + (y - pr.up.y) * kk];
+    };
     dxfSymPrimitives(sym).forEach(pr => {
       const lyr = lyrOf(pr);     // 破線も記号レイヤに置き、線種で区別する
+      const at = place(pr);
       if (pr.type === "poly") {
-        ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), lyr, pr.lt);
+        ents += dxfPoly(pr.pts.map(p => at(p[0], p[1])), lyr, pr.lt);
       } else if (pr.type === "arc") {
-        const [acx, acy] = xf(pr.cx, pr.cy);
-        ents += dxfArc(acx, acy, pr.r * contentScale(), pr.t1 + (dev.rot || 0) * Math.PI / 180, pr.dt, lyr, pr.lt);
+        const [acx, acy] = at(pr.cx, pr.cy);
+        ents += dxfArc(acx, acy, pr.r * kk, pr.t1 + (pr.up ? 0 : (dev.rot || 0) * Math.PI / 180), pr.dt, lyr, pr.lt);
       } else if (pr.type === "circle") {
-        const [cx, cy] = xf(pr.cx, pr.cy);
+        const [cx, cy] = at(pr.cx, pr.cy);
         ents += dxfCircle(cx, cy, pr.r, lyr, pr.lt);
+      } else if (pr.up) {        // 正立グループの中の文字
+        const [tx2, ty2] = at(pr.x, pr.y);
+        ents += dxfText(tx2, ty2, pr.size * kk, pr.text, lyr, pr.anchor || "middle", 0, { mono: pr.mono });
       } else if (pr.type === "text") {
         // 記号内の文字は回転させない (JIS Z 8313-0: 文字は図面の下辺から読める向き)。
         // 位置は記号中心を回した点からの相対で置く (画面と同じ。複数行の順序を保つ)

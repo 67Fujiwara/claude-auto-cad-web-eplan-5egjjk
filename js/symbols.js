@@ -404,7 +404,7 @@ function symBodySVG(sym, opts = {}) {
   // 機器を回転しても記号内の文字は図面の下辺から読める向きに保つ (JIS Z 8313-0)。
   // 回転グループの内側にあるので、文字だけ逆回転を掛けて打ち消す。
   const rot = ((opts.rot || 0) % 360 + 360) % 360;
-  if (rot) body = counterRotateText(body, rot);
+  if (rot) body = counterRotateUpright(counterRotateText(body, rot), rot);
   return `<g fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
 }
 
@@ -424,14 +424,36 @@ function symResolveTextSize(body, f) {
   });
 }
 
+/** data-upright を付けたグループ (受け口の識別図など) を、機器を回しても
+    正立させたまま保つ。位置は機器と一緒に回り、姿勢だけ打ち消す。
+    実物の外観を示す図は、回すと「上下逆さまの受け口」という実在しない絵に
+    なってしまうので、文字と同じ扱いにする */
+function counterRotateUpright(body, rot) {
+  return body.replace(/<g data-upright="1" transform="translate\(([-\d.]+),([-\d.]+)\)">/g,
+    (m, a, b) => `<g data-upright="1" transform="translate(${a},${b}) rotate(${-rot})">`);
+}
+
 /** シンボル内の <text> を、機器を回しても図面の下辺から読める向きに保つ。
     ・位置は機器と一緒に回す (回転後も図記号の内側に留まる)
     ・字面だけ各アンカ回りに逆回転して水平にする
     ・複数行は回転後の並びが元の読み順 (上→下・左→右) になるようアンカを入れ替える */
 function counterRotateText(body, rot) {
+  // 正立グループ (data-upright) の中はグループごと逆回転させるので、
+  // ここで文字にも掛けると二重になる。いったん伏せ字にして戻す
+  const hidden = [];
+  for (let i = body.indexOf('<g data-upright="1"'); i >= 0; i = body.indexOf('<g data-upright="1"')) {
+    let depth = 0, j = i;
+    for (const m2 of body.slice(i).matchAll(/<g\b|<\/g>/g)) {
+      depth += m2[0] === "</g>" ? -1 : 1;
+      if (depth === 0) { j = i + m2.index + m2[0].length; break; }
+    }
+    hidden.push(body.slice(i, j));
+    body = body.slice(0, i) + `\u0000UP${hidden.length - 1}\u0000` + body.slice(j);
+  }
+  const restore = (out) => out.replace(/\u0000UP(\d+)\u0000/g, (m, i) => hidden[+i]);
   const tags = [];
   body.replace(/<text\b([^>]*)>/g, (m, attrs, idx) => { tags.push({ m, attrs, idx }); return m; });
-  if (!tags.length) return body;
+  if (!tags.length) return restore(body);
   const num = (attrs, name) => {
     const r = new RegExp(name + '="(-?[\\d.]+)"').exec(attrs);
     return r ? parseFloat(r[1]) : 0;
@@ -457,14 +479,14 @@ function counterRotateText(body, rot) {
     inOrder.forEach((ti, k) => { target[ti] = slots[k]; });
   });
   let n = -1;
-  return body.replace(/<text\b([^>]*)>/g, (m, attrs) => {
+  return restore(body.replace(/<text\b([^>]*)>/g, (m, attrs) => {
     n++;
     if (/\btransform=/.test(attrs)) return m;
     const p = pts[n], q = pts[target[n]];
     const dx = +(q.x - p.x).toFixed(3), dy = +(q.y - p.y).toFixed(3);
     const tr = (dx || dy) ? `translate(${dx} ${dy}) ` : "";
     return `<text${attrs} transform="${tr}rotate(${-rot} ${p.x} ${p.y})">`;
-  });
+  }));
 }
 
 /** シンボル内の文字・線幅・破線を尺度に追従させる。
@@ -630,13 +652,12 @@ function pathLengthMM(d) {
 
 /** サムネイル用SVG (ライブラリパレット / プロパティ表示用) */
 function symThumbSVG(sym, size = 46) {
-  /* thumbGlyph を持つ記号は、パレットではそれだけを映す。多極コネクタは
-     図記号そのものが背高で、全体を 46px に収めると受け口の識別図が数 px に
-     潰れ、EtherNet/IP・USB・HDMI をパレットで見分けられない。
-     識別図は図面には出さない (実物の外観図を電気図記号に混ぜないため) ので、
-     ここでしか使わない */
-  const thumb = sym.thumbGlyph || null;
-  const [bx, by, bw, bh] = (thumb && sym.thumbBox) || sym.bounds;
+  /* thumbBox を持つ記号は、その範囲だけを映す。多極コネクタは図記号そのものが
+     背高で、全体を 46px に収めると受け口の識別図が数 px に潰れ、
+     EtherNet/IP・USB・HDMI をパレットで見分けられない。
+     映すのは図面に出るのと同じ図形なので、パレットと図面の絵は必ず一致する */
+  const thumb = !!sym.thumbBox;
+  const [bx, by, bw, bh] = sym.thumbBox || sym.bounds;
   const pad = thumb ? 0.4 : 3;
   const vb = `${bx - pad} ${by - pad} ${bw + pad * 2} ${bh + pad * 2}`;
   // 個別指定の線幅・破線もサムネイル倍率で拡大する (連結破線が消えないように)。
@@ -644,7 +665,7 @@ function symThumbSVG(sym, size = 46) {
   // 文字はそのままにして、はみ出しを防ぐ。
   const k = 1.1 / symStrokeWidth(sym);
   // 破線は「線素で始まり線素で終わる」補正を最後に掛ける (倍率は先に反映させる)
-  const scaled = symResolveTextSize(thumb || sym.body, 1)
+  const scaled = symResolveTextSize(sym.body, 1)
     .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${(parseFloat(v) * k).toFixed(3)}"`)
     .replace(/stroke-dasharray="([\d. ]+)"/g, (m, v) => `stroke-dasharray="${v.trim().split(/\s+/).map(n => (parseFloat(n) * k).toFixed(3)).join(" ")}"`);
   const body = scaleSymbolGeom(scaled, 1);

@@ -36,32 +36,36 @@ function mkConn(o) {
   const h = (rows - 1) * pitch + 8;
   for (let c = 0; c < nCols; c++) parts.push(`<rect x="${c * colGap + 2}" y="-4" width="12.8" height="${h}"/>`);
   const w = (nCols - 1) * colGap + 14.8;
-  parts.push(`<text x="${w / 2}" y="-6" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${o.label}</text>`);
-  // 外接矩形は他の記号と同じ作法で一様余白 2mm。ラベル幅は等幅 2.5mm の概算
-  const tw = String(o.label).length * 2.05;
-  const x0 = Math.min(0, w / 2 - tw / 2), x1 = Math.max(w, w / 2 + tw / 2);
-  const y0 = -8.6, y1 = -4 + h;
+  /* 受け口を正面から見た識別図 + ラベルを、記号の上に「見出し」として置く。
+     ・data-upright を付けたグループにするので、機器を回しても常に正立する
+       (実物の外観図を回すと、上下逆さまの受け口という実在しない絵になる)
+     ・グループの中は姿勢が変わらないので、絵とラベルの上下関係も崩れない
+     ・確保する枠は 14×14mm の正方形にしてある。回しても外接矩形が変わらないので、
+       90°/270° でも見出しが枠からはみ出さない
+     ・識別図は細線 0.25mm (JIS Z 8312)。電気的な意味は下の接続器記号が持つ */
+  const BLK = 14;                                  // 見出しに確保する正方形の辺
+  const cy = -6 - BLK / 2;                         // 見出しの中心 (記号の枠の上)
+  const tw = String(o.label).length * 2.05;        // ラベル幅は等幅 2.5mm の概算
+  if (o.glyph) {
+    parts.push(`<g data-upright="1" transform="translate(${r1(w / 2)},${r1(cy)})">` +
+      `<g transform="translate(0,-2.5)">${o.glyph}</g>` +
+      `<text x="0" y="6" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${o.label}</text>` +
+      `</g>`);
+  } else {
+    parts.push(`<text x="${w / 2}" y="-6" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${o.label}</text>`);
+  }
+  // 外接矩形は他の記号と同じ作法で一様余白 2mm
+  const bw = o.glyph ? BLK : tw;
+  const x0 = Math.min(0, w / 2 - bw / 2), x1 = Math.max(w, w / 2 + bw / 2);
+  const y0 = o.glyph ? cy - BLK / 2 : -8.6, y1 = -4 + h;
   const r = v => Math.round(v * 10) / 10;
-  /* 識別図 (受け口を正面から見た形) は「パレットで選ぶとき」だけに使う。
-     図面の記号本体には入れない —
-     ・図記号は IEC 60617 の抽象記号であり、実物の外観図を混ぜると
-       「どこまでが規格記号か」が読めなくなる (IEC 61082-1)。混ぜてよいのは
-       図面上に凡例で説明を出せる場合だけで、本ツールに凡例欄は無い。
-     ・記号を回すと絵も回る。90°/270° では水平を保つラベル文字と重なり、
-       180° では「上下逆さまの受け口」という実在しない絵になる。
-     ・DXF は線幅を色 (レイヤ) で伝えるが、レイヤは記号単位で決まるため
-       細線 0.25mm が太線と同じペンで出る。「細線だから説明図」が成立しない。
-     ・1:2 に縮めると紙上 0.125mm となり、JIS Z 8312 の最細線 0.13mm を下回る。
-     図面上でどの口かを示すのは、ラベル (RJ45 など) と機器の機能テキスト
-     (EtherNet/IP など・デバイスごとに編集できる) の役目にする。 */
   return {
     id: o.id, db: true, group: "通信・コネクタ", cat: "db", letter: o.letter || "X",
     ...(o.fn ? { fn: o.fn } : {}),
-    ...(o.glyph ? {
-      thumbGlyph: `<g transform="translate(0,-7)">${o.glyph}</g>` +
-        `<text x="0" y="0" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${o.label}</text>`,
-      thumbBox: [-7, -11.5, 14, 12.6],
-    } : {}),
+    // パレットの見出しは、図面に出るのと同じ「見出し」だけを映す (記号全体を
+    // 46px に収めると識別図が数 px に潰れる)。図面と同じ図形をそのまま使うので、
+    // パレットで見た絵と図面に出る絵が必ず一致する
+    ...(o.glyph ? { thumbBox: [r(w / 2 - BLK / 2), r(cy - BLK / 2), BLK, BLK] } : {}),
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.typ || "",
     stdNote: o.stdNote || "接続器 (JIS C 0617-3)。極数と端子名は実機の仕様に合わせる",
     pins, sim: "none",

@@ -2236,10 +2236,14 @@ function runDRC() {
     if (sheetScale() > 1 && page.devices.length) {
       const f3 = sheetScale();
       const minH = TEXT_H.small / f3;   // 用紙上の最小文字高
+      const minW = LINE_W.thin / f3;    // 用紙上の最細線 (受け口の識別図など)
+      const bad2 = [];
+      if (minH < 2.5) bad2.push(`最小文字高 ${minH.toFixed(2)}mm は JIS Z 8313 の 2.5mm を下回ります`);
+      if (minW < 0.13) bad2.push(`最細線 ${minW.toFixed(3)}mm は JIS Z 8312 の線幅列 (最細 0.13mm) を下回ります`);
       issues.push({
-        sev: minH < 2.5 ? "err" : "warn",
+        sev: bad2.length ? "err" : "warn",
         msg: `尺度 ${pageSheetMeta(page).scale} では図記号・文字が用紙上 1/${f3} になります` +
-             (minH < 2.5 ? ` — 最小文字高 ${minH.toFixed(2)}mm は JIS Z 8313 の 2.5mm を下回ります (回路図は NS または 1:1 を推奨)` : ""),
+             (bad2.length ? ` — ${bad2.join("、")} (回路図は NS または 1:1 を推奨)` : ""),
         page: page.no, target: null, loc: `${page.no}.-`,
       });
     }
