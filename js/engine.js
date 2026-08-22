@@ -234,7 +234,40 @@ function wireLabelPosCalc(w, page, placed) {
   // それでも空きが無いときにだけ法線方向へ逃がす — 逃がしを先に試すと、
   // 同じ線上に空きがあるのに線から離れた位置を選んでしまう
   const TS = [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
-  for (const extra of [0, 3, 6]) {
+  for (const sg of segs) {
+    const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
+    const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
+    for (const t of TS) {
+      const ok = consider(at(t), horiz, [0]);
+      if (ok) return ok;
+    }
+    // 線上に収まらない場合は、じゃまをしている物 (囲みなど) の外側へ寄せて
+    // 同じ線の上に置く。線から離すより「自分の線の続き」に置くほうが読みやすい
+    const mid = at(0.5);
+    const box0 = boxOf(...posOf(mid, horiz, 1, 0), horiz);
+    const size = horiz ? box0.w : box0.h;
+    const cands = [];
+    for (const r of obst) {
+      const gap = LABEL_CLEAR + 0.4;
+      if (horiz) {
+        if (r.y - gap < mid[1] && r.y + r.h + gap > mid[1]) {
+          cands.push([r.x - gap - size / 2, mid[1]]);            // じゃま物の左へ
+          cands.push([r.x + r.w + gap + size / 2, mid[1]]);      // じゃま物の右へ
+        }
+      } else if (r.x - gap < mid[0] && r.x + r.w + gap > mid[0]) {
+        cands.push([mid[0], r.y - gap - size / 2]);
+        cands.push([mid[0], r.y + r.h + gap + size / 2]);
+      }
+    }
+    // 自分の線の近くにある候補から順に試す
+    cands.sort((p1, p2) => Math.hypot(p1[0] - mid[0], p1[1] - mid[1]) - Math.hypot(p2[0] - mid[0], p2[1] - mid[1]));
+    for (const c of cands) {
+      const ok = consider(c, horiz, [0]);
+      if (ok) return ok;
+    }
+  }
+  // それでも空かないときだけ、線から法線方向へ離す
+  for (const extra of [3, 6]) {
     for (const sg of segs) {
       const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
       const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
@@ -376,14 +409,24 @@ function deviceObstacleBoxes(dev, inset) {
   if (!rx) return [insetRect(devBounds(dev), inset)];
   const [, by, , bh] = sym.bounds;
   const band = 1.2 + inset;
-  // 機器座標で輪郭の左右に帯を作ってから回転させる (回転しても長辺を守る)。
-  // 帯は輪郭の外側だけ — 内側へ食い込ませると、中を通る心線の線番の逃げ場が
-  // 無くなり (囲みを二重に重ねると特に)、線番が囲みの外へ飛ばされる
-  return [[-rx - band, -rx + 0.2], [rx - 0.2, rx + band]].map(([x0, x1]) => {
-    const cs = [[x0, by], [x1, by], [x1, by + bh], [x0, by + bh]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
+  const span = sym.span || (symStretchBase(sym) || { stretch: { def: 25 } }).stretch.def;
+  const boxOf = (x0, y0, x1, y1) => {
+    const cs = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
     const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
-  });
+  };
+  // 機器座標で作ってから回転させる (回転しても輪郭を守る)。
+  // ・左右の帯は輪郭の外側だけ — 内側へ食い込ませると、中を通る心線の線番の
+  //   逃げ場が無くなり (囲みを二重に重ねると特に) 線番が囲みの外へ飛ばされる
+  // ・上下の丸い端部には心線が無いので、幅いっぱいを塞ぐ
+  return [
+    boxOf(-rx - band, by, -rx + 0.2, by + bh),
+    boxOf(rx - 0.2, by, rx + band, by + bh),
+    // 端部は丸い輪郭が通る帯だけを塞ぐ (端部ぜんぶを塞ぐと、最初/最後の心線の
+    // すぐ上下という一番読みやすい位置まで使えなくなる)
+    boxOf(-rx - band, by, rx + band, -rx + 0.2),
+    boxOf(-rx - band, span - 10 + rx - 0.2, rx + band, by + bh),
+  ];
 }
 
 /** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
@@ -1170,7 +1213,7 @@ function propagateLinkGroups(pagesData) {
   for (let guard = 0; guard < 8; guard++) {
     let moved = false;
     groups.forEach(list => {
-      ["pNets", "nNets", "acNets"].forEach(kind => {
+      ["pNets", "nNets", "acNets", "eNets"].forEach(kind => {
         const hot = list.some(({ pd, net }) => pd[kind].has(net));
         if (hot) list.forEach(({ pd, net }) => {
           if (!pd[kind].has(net)) { pd[kind].add(net); moved = true; }
@@ -1632,8 +1675,19 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続",
+  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致",
 ];
+
+/** 接地記号につながっているネット (遮へいの接地判定に使う) */
+function drcEarthNets(page, pinNet) {
+  const out = new Set();
+  page.devices.forEach(d => {
+    const s = symOf(d.sym);
+    if (!EARTH_SYM_IDS.has(s.stretchOf || s.id)) return;
+    (s.pins || []).forEach((_, i) => { const n = pinNet(d, i); if (n) out.add(n); });
+  });
+  return out;
+}
 
 function drcSources(page, pinNet) {
   const pNets = new Set(), nNets = new Set();
@@ -1654,7 +1708,7 @@ function drcSources(page, pinNet) {
 function drcCollect(page, mode) {
   const { pinNet, wireNet } = computeNets(page, mode);
   const { pNets, nNets } = drcSources(page, pinNet);
-  return { page, pinNet, wireNet, pNets, nNets, acNets: new Set() };
+  return { page, pinNet, wireNet, pNets, nNets, acNets: new Set(), eNets: drcEarthNets(page, pinNet) };
 }
 
 function runDRC() {
@@ -1878,18 +1932,36 @@ function runDRC() {
         if (!EARTH_SYM_IDS.has(s2.stretchOf || s2.id)) return false;
         return (s2.pins || []).some((_, i) => closed.pinNet(d2, i) === net);
       });
-      if (!earths.length) {
+      // 接地の有無は電位リンク経由で他ページの接地も見る (別葉で片端接地する
+      // 描き方でも誤って「未接地」と言わない)
+      const earthedAnywhere = net && closed.eNets.has(net);
+      if (!earthedAnywhere) {
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が接地されていません (片端のみ FE へ接続してください)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
       } else if (earths.length >= 2) {
         // 遮へいを両端で接地すると接地間の電位差で循環電流が流れる
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が ${earths.length} 箇所で接地されています (片端のみにしてください — 両端接地は循環電流の原因)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
-      } else if ((symOf(earths[0].sym).stretchOf || earths[0].sym) === "prot_earth") {
+      } else if (earths.length === 1 && (symOf(earths[0].sym).stretchOf || earths[0].sym) === "prot_earth") {
         // 遮へいのドレン線はノイズ用の機能接地へ落とす (保護接地母線に載せない)
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が保護接地 (PE) に接続されています (遮へいは機能接地 FE へ落としてください)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
       }
+      // 遮へいは心線囲みに重ねて使う。位置や本数が食い違うと、どの心線を
+      // 遮へいしているのか図面から読めない
+      const core = page.devices.find(d2 => (symOf(d2.sym).stretchOf || d2.sym) === "cable_core" &&
+        Math.abs(d2.x - dev.x) < 0.01 && Math.abs(d2.y - dev.y) < 0.01 && (d2.rot || 0) === (dev.rot || 0));
+      if (!core) {
+        const near = page.devices.find(d2 => (symOf(d2.sym).stretchOf || d2.sym) === "cable_core" &&
+          Math.hypot(d2.x - dev.x, d2.y - dev.y) < 20);
+        issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
+          msg: near ? `${displayTag(dev) || sym.name} と心線囲みの位置がずれています (同じ位置に重ねてください)`
+                    : `${displayTag(dev) || sym.name} に囲まれる心線囲み (多芯ケーブル) がありません` });
+      } else if ((symOf(core.sym).span || 0) !== (sym.span || 0)) {
+        issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
+          msg: `${displayTag(dev) || sym.name} と心線囲みの心線本数が違います (${symSpanToCores(symOf(core.sym).span || 25)} 芯 / ${symSpanToCores(sym.span || 25)} 芯)` });
+      }
+
       // 遮へいの中を通る心線とドレン線が同じネットになっていたら短絡 (遮へいの意味が失われる)
       if (net) {
         // 心線が並ぶ範囲 (ドレン線の引出し行と上下の余白は除く) を機器座標から作る
