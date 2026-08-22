@@ -371,6 +371,17 @@ const SYMBOLS = [
     body: `<path d="M0,0 V3 M-7,3 L0,8 L7,3 Z"/>`,
   },
   {
+    id: "goto_ref", nonstd: true, cat: "misc", letter: "", name: "行き先 (継続先)", nameEn: "Continuation reference",
+    desc: "回路の続きが描いてあるページを指す。行き先はプロパティのプルダウンで選び、図面番号は選んだページのものを自動で表示する (ページの並べ替え・図番の振り直しに追従)",
+    stdNote: "継続先の表示 (IEC 61082-1 の相互参照)。電気的な接続そのものは電位リンクで表す",
+    gotoRef: true,                       // 行き先の図番を図形の中に表示する
+    pins: [{ x: 0, y: 0, n: "" }],
+    sim: "none", bounds: [-2, -6, 37, 12],
+    // 進行方向を示す五角形 (旗)。中に行き先の図番が入る。
+    // 内側の幅 24mm は、等幅 2.5mm の図番 11 文字 (TK-2026-011) が収まる寸法
+    body: `<path d="M0,0 H4"/><path d="M4,-4 H28 L33,0 L28,4 H4 Z"/>`,
+  },
+  {
     id: "generic2", nonstd: true, cat: "misc", letter: "U", name: "汎用機器 (2端子)", nameEn: "Generic device 2-pin",
     desc: "未登録機器用の箱。名称/型式はプロパティで設定", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
     sim: "none", bounds: [-9,-2, 18, 24],

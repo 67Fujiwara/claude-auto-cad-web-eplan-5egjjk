@@ -346,6 +346,15 @@ UI.showProps = (focusTag = false) => {
           (cable ? `<div class="prop-row"><label>長さ (m) <span class="rp-dim">(部品表の集計用)</span></label>
           <input id="pLen" class="mono" type="number" step="0.1" min="0" value="${dev.props && dev.props.len !== undefined ? dev.props.len : ""}" placeholder="例: 12.5"/></div>` : "");
       })() : ""}
+      ${sym.gotoRef ? (() => {
+        // 行き先はページ id を持つ。図番はページの現在の値を描くたびに引くので、
+        // ページを並べ替えても図番を振り直しても表示が追従する
+        const cur2 = (dev.props && dev.props.toPage) || "";
+        const opts2 = App.project.pages.filter(pg => pg !== curPage())
+          .map(pg => `<option value="${pg.id}"${pg.id === cur2 ? " selected" : ""}>${escAttr(pageDwgNo(pg))} — ${pg.no}. ${escAttr(pg.name)}</option>`).join("");
+        return `<div class="prop-row"><label>行き先 <span class="rp-dim">(図面番号は選んだページのものを表示)</span></label>
+          <select id="pGoto"><option value=""${cur2 ? "" : " selected"}>— 未設定 —</option>${opts2}</select></div>`;
+      })() : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}
     `;
     const bind = (id, fn) => {
@@ -368,6 +377,11 @@ UI.showProps = (focusTag = false) => {
     bind("#pX", v => dev.x = num(v, dev.x));
     bind("#pY", v => dev.y = num(v, dev.y));
     bind("#pLink", v => dev.linkTo = v || null);
+    bind("#pGoto", v => {
+      dev.props = dev.props || {};
+      if (v) dev.props.toPage = v; else delete dev.props.toPage;
+      App.labelRev++;
+    });
     bind("#pDelay", v => { const n = parseFloat(v); dev.props.delay = isNaN(n) ? 2 : n; });
     // 伸縮シンボル: 長さを変えると "base@長さ" の寸法違いに差し替える
     bind("#pSpan", v => {

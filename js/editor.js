@@ -390,7 +390,7 @@ function devLabelsSVG(dev, sym, page) {
   // タグを右へ寄せた機器では、その下に置いて重ならないようにする
   const xr = deviceXrefBox(page || curPage(), dev);
   if (xr) {
-    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSizeFor(xr.text, xr.size, true)}" fill="#7a4ec2" font-family="monospace">${escXML(xr.text)}</text>`;
+    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSizeFor(xr.text, xr.size, true)}" fill="#7a4ec2" font-family="monospace"${xr.anchor ? ` text-anchor="${xr.anchor}"` : ""}${xr.angle ? ` transform="rotate(${-xr.angle} ${xr.x} ${xr.y})"` : ""}>${escXML(xr.text)}</text>`;
   }
   return out;
 }

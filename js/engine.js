@@ -833,7 +833,40 @@ function computePageLabels(page) {
 
 /** リンク接点の相互参照 (/ページ.列) の位置と外接矩形。
     端子番号・デバイスタグ・図記号を避け、収まらなければ重なり最小を選ぶ。 */
+/** 行き先 (継続先) 記号が指しているページ。未設定・削除済みなら null */
+function gotoTargetPage(dev) {
+  const id = dev.props && dev.props.toPage;
+  if (!id) return null;
+  return App.project.pages.find(pg => pg.id === id) || null;
+}
+/** 行き先 記号に表示する図面番号。行き先を選んでいなければ "?" */
+function gotoRefText(dev) {
+  const pg = gotoTargetPage(dev);
+  return pg ? pageDwgNo(pg) : "?";
+}
 function deviceXrefBox(page, dev) {
+  const sym0 = symOf(dev.sym);
+  if (sym0 && sym0.gotoRef) {
+    /* 行き先の図番は旗の中央に、旗の長手方向へ沿わせて置く。図番そのものは
+       持たず、選んだページのものを描くたびに引くので、ページを並べ替えても
+       図番を振り直しても追従する。
+       縦向きに置いた行き先では文字も 90° 倒す (JIS Z 8313-0 の読む向きは
+       下辺からと右辺からの 2 通り)。水平のままだと 24mm の旗から横へはみ出す */
+    const s0 = contentScale();
+    const h0 = TEXT_H.small * s0;
+    const text0 = gotoRefText(dev);
+    const w0 = textWidthMM(text0, h0, false, true);
+    const c0 = pinAbs(dev, { x: 18.5, y: 0 });          // 旗の中央 (機器と一緒に回る)
+    const rot0 = (((dev.rot || 0) % 360) + 360) % 360;
+    const ang0 = (rot0 === 90 || rot0 === 270) ? 90 : 0;
+    // 読む向き u と字の下向き v (画面は y 下向き)。基線は中央から v へ h/2
+    const ca = Math.cos(ang0 * Math.PI / 180), sa = Math.sin(ang0 * Math.PI / 180);
+    const vx = sa, vy = ca;
+    return { x: c0.x + vx * h0 / 2, y: c0.y + vy * h0 / 2, text: text0, size: h0,
+      anchor: "middle", angle: ang0,
+      box: { x: c0.x - (ang0 ? h0 : w0) / 2, y: c0.y - (ang0 ? w0 : h0) / 2,
+        w: ang0 ? h0 : w0, h: ang0 ? w0 : h0 } };
+  }
   if (!dev.linkTo) return null;
   const f = findDevice(dev.linkTo);
   if (!f) return null;
@@ -1991,7 +2024,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "線番と導体の重なり", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
+  "線番の重複", "図番の重複", "線番と導体の重なり", "行き先未設定", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
 /** 接地記号につながっているネット (遮へいの接地判定に使う) */
@@ -2408,6 +2441,29 @@ function runDRC() {
       }
     });
 
+    // 行き先 (継続先) の指し先。未設定・削除済みのページを指したままだと
+    // 図面の続きが追えない
+    page.devices.forEach(dev => {
+      const sy = symOf(dev.sym);
+      if (!sy || !sy.gotoRef) return;
+      const id = dev.props && dev.props.toPage;
+      const who = displayTag(dev) || "行き先";
+      if (!id) {
+        issues.push({ sev: "warn", rule: "行き先未設定", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} の指す先が選ばれていません (プロパティの「行き先」でページを選んでください)` });
+      } else if (!gotoTargetPage(dev)) {
+        issues.push({ sev: "err", rule: "行き先未設定", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} が指しているページは削除されています (行き先を選び直してください)` });
+      } else {
+        // 図番が旗に入りきらないと、どこへ続くのか読めない
+        const tw2 = textWidthMM(gotoRefText(dev), TEXT_H.small * contentScale(), false, true);
+        if (tw2 > 24 * contentScale() + 0.01) {
+          issues.push({ sev: "warn", rule: "行き先未設定", page: page.no, target: dev.id, loc: devLocation(dev),
+            msg: `${who} の図番「${gotoRefText(dev)}」が記号に入りきりません (幅 ${tw2.toFixed(1)}mm / 枠 24mm)` });
+        }
+      }
+    });
+
     // 電源短絡 (+24V と 0V が閉状態で同一ネット)。切替接点は投ごとの2パスで見る
     shortHit: for (const sd of shortData) {
       const s = sd[pageIdx];
@@ -2580,7 +2636,7 @@ function cablePartner(page, dev) {
   return page.devices.find(d2 => d2 !== dev && (symOf(d2.sym).stretchOf || d2.sym) === want &&
     Math.abs(d2.x - dev.x) < 0.01 && Math.abs(d2.y - dev.y) < 0.01 && (d2.rot || 0) === (dev.rot || 0)) || null;
 }
-const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth"]); // 購買部品でないもの
+const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth", "goto_ref"]); // 購買部品でないもの (行き先は図面の注記)
 function buildBOM() {
   const rows = new Map();
   App.project.pages.forEach(page => page.devices.forEach(dev => {

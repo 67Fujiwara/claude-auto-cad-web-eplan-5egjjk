@@ -533,7 +533,7 @@ function pageToDXF(page) {
     const lboxes = deviceLabelBoxes(page, dev);
     lboxes.forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor); });
     const xr = deviceXrefBox(page, dev);      // 位置は画面と同じ探索結果を使う
-    if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "WIRENUM");
+    if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "WIRENUM", xr.anchor || "start", xr.angle || 0);
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)
     if (sym.mirror) ents += dxfMirrorTable(dev, C);
   });
