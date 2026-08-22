@@ -490,7 +490,7 @@ function scaleSymbolGeom(body, f) {
       // 閉曲線は周期で割り切り、開いた線だけ線素で終わらせる
       const d = /\bd="([^"]*)"/.exec(attrs);
       const closed = el !== "path" || (d ? /[Zz]\s*$/.test(d[1].trim()) || pathIsClosed(d[1]) : false);
-      const n = Math.max(1, Math.round(closed ? len / per : (len - e) / per));
+      const n = closed ? Math.max(1, Math.round(len / per)) : Math.max(0, Math.round((len - e) / per));
       const k = len / (closed ? n * per : n * per + e);
       // 線素長は公称の ±20% までしか伸縮させない (JIS Z 8312 / ISO 128-20 表2)。
       // fitDashPattern と同じ規則にそろえる — 許容差を守る実装と守らない実装が
@@ -508,7 +508,9 @@ function fitDashPattern(pattern, len) {
   if (!p.length || !(len > 0)) return pattern.slice();
   const per = p.reduce((a, b) => a + b, 0);
   const e = p[0];
-  const n = Math.max(1, Math.round((len - e) / per));
+  // n=0 も許す: 周期より短い線は「線素 1 つぶん」= 線全体が 1 本の線素になる。
+  // n≥1 を強いると倍率が許容差を外れ、公称のまま端が中途半端に切れる
+  const n = Math.max(0, Math.round((len - e) / per));
   const k = len / (n * per + e);
   // 線素長は公称の ±20% までしか伸縮させない (JIS Z 8312 / ISO 128-20 表2)。
   // それを超える短い線は、周期をそのまま使い端部の欠けを許す方が規格に近い。
@@ -578,16 +580,22 @@ function svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2) {
 /** path が閉じているか (始点と終点が同じ位置に戻るか) */
 function pathIsClosed(d) {
   const t = String(d).match(/[MLHVAmlhvaZz]|-?\d*\.?\d+/g) || [];
-  let i = 0, x = 0, y = 0, sx = 0, sy = 0, started = false;
+  let i = 0, x = 0, y = 0, sx = 0, sy = 0, x0 = 0, y0 = 0, started = false;
   const num = () => parseFloat(t[i++]);
   while (i < t.length) {
     const c = t[i++];
-    if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; if (!started) { sx = x; sy = y; started = true; } }
+    if (c === "M" || c === "m") {
+      const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny;
+      // 2 つめ以降のサブパスが開いていれば「閉じていない」— 最初の Z だけ見て
+      // true を返すと、開いたサブパスを含む図形を閉曲線として扱ってしまう
+      if (started && Math.hypot(x0 - sx, y0 - sy) > 0.01) return false;
+      sx = x; sy = y; x0 = x; y0 = y; started = true;
+    }
     else if (c === "L" || c === "l") { const nx = num(), ny = num(); x = c === "L" ? nx : x + nx; y = c === "L" ? ny : y + ny; }
     else if (c === "H" || c === "h") { const nx = num(); x = c === "H" ? nx : x + nx; }
     else if (c === "V" || c === "v") { const ny = num(); y = c === "V" ? ny : y + ny; }
     else if (c === "A" || c === "a") { const rx = num(), ry = num(); num(); num(); num(); const nx = num(), ny = num(); x = c === "A" ? nx : x + nx; y = c === "A" ? ny : y + ny; }
-    else if (c === "Z" || c === "z") return true;
+    else if (c === "Z" || c === "z") { x = sx; y = sy; }
   }
   return started && Math.hypot(x - sx, y - sy) < 0.01;
 }
@@ -602,7 +610,9 @@ function pathLengthMM(d) {
     // Z は始点へ戻る辺。ここを数え落とすと閉曲線の周長が実長より短くなり、
     // 破線の「線素で始まり線素で終わる」補正が周期の整数倍にならない
     if (c === "Z" || c === "z") { len += Math.hypot(sx - x, sy - y); x = sx; y = sy; }
-    else if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; if (!started) { sx = x; sy = y; started = true; } }
+    // 始点は M のたびに更新する。最初の M だけで覚えると、サブパスが 2 つ以上
+    // ある path で Z が別のサブパスの始点まで戻ってしまい、周長が暴走する
+    else if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; sx = x; sy = y; started = true; }
     else if (c === "L" || c === "l") { const nx = num(), ny = num(); const ax = c === "L" ? nx : x + nx, ay = c === "L" ? ny : y + ny; len += Math.hypot(ax - x, ay - y); x = ax; y = ay; }
     else if (c === "H" || c === "h") { const nx = num(); const ax = c === "H" ? nx : x + nx; len += Math.abs(ax - x); x = ax; }
     else if (c === "V" || c === "v") { const ny = num(); const ay = c === "V" ? ny : y + ny; len += Math.abs(ay - y); y = ay; }
@@ -620,22 +630,25 @@ function pathLengthMM(d) {
 
 /** サムネイル用SVG (ライブラリパレット / プロパティ表示用) */
 function symThumbSVG(sym, size = 46) {
-  // thumbBox がある記号は、パレットでは「見分けがつく部分」だけを大きく映す。
-  // 多極コネクタのように背の高い記号は、全体を 46px に収めると識別図が数 px に
-  // 潰れてしまい、どの規格の口かパレットで分からなくなる
-  const [bx, by, bw, bh] = sym.thumbBox || sym.bounds;
-  const pad = sym.thumbBox ? 0.4 : 3;
+  /* thumbGlyph を持つ記号は、パレットではそれだけを映す。多極コネクタは
+     図記号そのものが背高で、全体を 46px に収めると受け口の識別図が数 px に
+     潰れ、EtherNet/IP・USB・HDMI をパレットで見分けられない。
+     識別図は図面には出さない (実物の外観図を電気図記号に混ぜないため) ので、
+     ここでしか使わない */
+  const thumb = sym.thumbGlyph || null;
+  const [bx, by, bw, bh] = (thumb && sym.thumbBox) || sym.bounds;
+  const pad = thumb ? 0.4 : 3;
   const vb = `${bx - pad} ${by - pad} ${bw + pad * 2} ${bh + pad * 2}`;
   // 個別指定の線幅・破線もサムネイル倍率で拡大する (連結破線が消えないように)。
   // 破線は図面と同じ scaleSymbolGeom で「線素で始まり線素で終わる」よう補正する。
   // 文字はそのままにして、はみ出しを防ぐ。
   const k = 1.1 / symStrokeWidth(sym);
   // 破線は「線素で始まり線素で終わる」補正を最後に掛ける (倍率は先に反映させる)
-  const scaled = symResolveTextSize(sym.body, 1)
+  const scaled = symResolveTextSize(thumb || sym.body, 1)
     .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${(parseFloat(v) * k).toFixed(3)}"`)
     .replace(/stroke-dasharray="([\d. ]+)"/g, (m, v) => `stroke-dasharray="${v.trim().split(/\s+/).map(n => (parseFloat(n) * k).toFixed(3)).join(" ")}"`);
   const body = scaleSymbolGeom(scaled, 1);
-  const clip = sym.thumbBox ? ";overflow:hidden" : "";
+  const clip = thumb ? ";overflow:hidden" : "";
   return `<svg viewBox="${vb}" width="${size}" height="${size * (bh + pad * 2) / (bw + pad * 2)}" style="max-height:100%${clip}">` +
     `<g fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
 }

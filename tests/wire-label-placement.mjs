@@ -10,8 +10,11 @@
           しかなく、桁数が多い線番は入りきらない限界の図
    どちらも端子台の 2 ピンを結線し、ドレン線を片端で FE へ落とした「図面として
    成立する形」にする (検図が 0 件であることも合否条件にする)。
-   なお心線 28mm に端子台を付けた図は、囲み 21mm + 端子 24mm×2 が心線より長く、
-   導体が全て図記号に覆われる = 人が描けない図なので試験に含めない
+   なお心線 28mm + 端子台の図は試験に含めない。以前ここに「導体が全て図記号に
+   覆われるので人が描けない図」と書いたが、実測すると空いている導体は片側 4.0mm
+   残っており 1 桁の線番は入る。事実は「囲み 21mm と端子 24mm×2 で導体がほぼ
+   埋まり、線番の置き場所が図記号の縁に貼り付く 1 通りしか無い」ため、置き方の
+   良し悪しを測る試験として意味を持たない、である
 
    判定 (全シーン共通):
    ・脇      線番の箱は自分の線のすぐ脇にある (≤2.5mm)
@@ -41,7 +44,10 @@ const R = await p.evaluate(() => {
   const probe = document.createElementNS(NS, "svg");
   probe.style.cssText = "position:absolute;left:-9999px"; document.body.appendChild(probe);
   const outlinePts = (dev) => {
-    const sym = symOf(dev.sym), d = /d="([^"]*)"/.exec(sym.body)[1];
+    // 遮へいの輪郭は「端部の半円 2 つ + 直線部 2 本」に分かれているので、
+    // body の全ての path を1本につないでサンプルする
+    const sym = symOf(dev.sym);
+    const d = (sym.body.match(/<path d="([^"]*)"/g) || []).map(m => /d="([^"]*)"/.exec(m)[1]).join(" ");
     const el = document.createElementNS(NS, "path"); el.setAttribute("d", d); probe.appendChild(el);
     const L = el.getTotalLength(), out = [];
     for (let i = 0; i < 720; i++) { const q = el.getPointAtLength(L * i / 720); out.push(pinAbs(dev, { x: q.x, y: q.y })); }
@@ -54,9 +60,11 @@ const R = await p.evaluate(() => {
       opt.twin : 並び方向に離して 2 本目のケーブルを置く (隣のケーブルが障害物) */
   const run = (n, dig, vert, half, opt = {}) => {
     const id = ++sceneNo;
-    const pg = newPage(`m${id}`, App.project.pages.length + 1);
-    App.project.pages.push(pg); App.pageIdx = App.project.pages.length - 1;
-    const A = 200 + (opt.shift || 0), B = 60, L0 = 200 - half, L1 = 200 + half, E = 20;
+    // 1 シーン 1 ページに保つ。ページを溜めると検図が全ページを舐めて O(n^2) に
+    // なるうえ、別シーンのタグ重複などが混ざって判定が濁る
+    const pg = newPage(`m${id}`, 1);
+    App.project.pages = [pg]; App.pageIdx = 0;
+    const A = 200 + (opt.shift || 0), B = opt.twin ? 60 : 110, L0 = 200 - half, L1 = 200 + half, E = 20;
     const mk = (u, v) => vert ? [v, u] : [u, v];       // u=心線方向 v=並び方向
     // 心線は端子の外側まで伸ばし、端子の 2 ピンを両方とも結線する
     const cores = [];
@@ -95,7 +103,10 @@ const R = await p.evaluate(() => {
     }
     // 線番は必ず桁上がりをまたぐ連番にして、線番の幅が混ざる場合を通す
     const base = dig === 1 ? 0 : Math.pow(10, dig - 1) - 1;
-    cores.forEach((w, i) => { w.num = String(base + i); w.fixed = true; w.numShow = true; });
+    cores.forEach((w, i) => {
+      w.num = String(base + i); w.fixed = true; w.numShow = true;
+      if (opt.spec && i === Math.floor(n / 2)) w.spec = "KIV1.25";
+    });
     App.labelRev++;
     const pts = [...outlinePts(d1), ...outlinePts(d2)];            // 実際の外形線
     const bb = [devBounds(d1), devBounds(d2)];                     // 囲みが占める範囲
@@ -113,13 +124,39 @@ const R = await p.evaluate(() => {
     });
     const U0 = Math.max(L0 - E, T0), U1 = Math.min(L1 + E, T1);    // 使える導体の範囲
     const freeRun = Math.max(0, e0 - U0, U1 - e1);                 // 空いている導体
-    const res = { anch: [], c: [], u0: [], u1: [], offSeg: 0, pierce: 0, nb: 0, ink: 99, margin: 99, over: 0, width: 0, far: 0 };
+    const res = { anch: [], c: [], u0: [], u1: [], offSeg: 0, pierce: 0, nb: 0, ink: 99, margin: 99,
+      onWire: 0, specOwn: 0, specMargin: 99, over: 0, width: 0, far: 0 };
     const wvs = cores.map(o2 => vert ? o2.pts[0][0] : o2.pts[0][1]);
     const HW = LINE_W.thick / 2;                                   // 導体の線幅の半分
+    const HWW = LINE_W.thick / 2;
+    const onOther = (bx, self) => pg.wires.some(o => {
+      if (o === self) return false;
+      for (let i = 0; i < o.pts.length - 1; i++) {
+        const p0 = o.pts[i], p1 = o.pts[i + 1];
+        const r = { x: Math.min(p0[0], p1[0]) - HWW, y: Math.min(p0[1], p1[1]) - HWW,
+          w: Math.abs(p1[0] - p0[0]) + HWW * 2, h: Math.abs(p1[1] - p0[1]) + HWW * 2 };
+        const ox = Math.min(bx.x + bx.w, r.x + r.w) - Math.max(bx.x, r.x);
+        const oy = Math.min(bx.y + bx.h, r.y + r.h) - Math.max(bx.y, r.y);
+        if (ox > 0.3 && oy > 0.3) return true;
+      }
+      return false;
+    });
     cores.forEach(w => {
       const pos = wireLabelPos(w, pg); if (!pos) return;
-      const bx = wireNumBox(w, pos[0], pos[1], pos[2]);
+      const { num: bx, spec } = wireLabelBoxes(w, pos);
+      if (onOther(bx, w)) res.onWire++;
+      if (spec) {
+        if (onOther(spec, w)) res.onWire++;
+        const sv0 = vert ? spec.x : spec.y, sv1 = vert ? spec.x + spec.w : spec.y + spec.h;
+        const wv2 = vert ? w.pts[0][0] : w.pts[0][1];
+        const dS = t => Math.max(0, sv0 - t, t - sv1);
+        res.specOwn = Math.max(res.specOwn, +dS(wv2).toFixed(2));
+        let o2 = Infinity;
+        wvs.forEach(t => { if (Math.abs(t - wv2) > 0.01) o2 = Math.min(o2, dS(t)); });
+        if (o2 < Infinity) res.specMargin = Math.min(res.specMargin, +(o2 - dS(wv2)).toFixed(1));
+      }
       res.width = Math.max(res.width, vert ? bx.h : bx.w);
+      if (spec) res.width = Math.max(res.width, vert ? spec.h : spec.w);   // 仕様のほうが幅広い
       const wv = vert ? w.pts[0][0] : w.pts[0][1];                 // 自線の位置
       const v0 = vert ? bx.x : bx.y, v1 = vert ? bx.x + bx.w : bx.y + bx.h;
       const distTo = t => Math.max(0, v0 - t, t - v1);
@@ -147,7 +184,7 @@ const R = await p.evaluate(() => {
     res.overLimit = +Math.max(0, res.width - freeRun).toFixed(1);   // はみ出しの幾何的な下限
     res.limit = res.overLimit > 0;                                  // 置き場所が残らない図
     const drc = runDRC().filter(i => i.page === pg.no);              // このシーンの検図だけ見る
-    res.drcTold = drc.some(i => /線番.*重なって/.test(i.msg));
+    res.drcTold = drc.some(i => /(線番|電線仕様).*重なって/.test(i.msg));
     // 図面の作りに起因する指摘 (芯数の不一致・ドレン線の未接地・端子の浮きなど) は
     // 0 でなければならない。線番が図記号に重なる指摘だけは、置き場所が残らない
     // 限界の図で出るのが正しいので別に数える
@@ -155,9 +192,10 @@ const R = await p.evaluate(() => {
     const listed = ovl.filter(i => !/^文字の重なりは他に/.test(i.msg));
     // 並べて出た重なりが全部「線番が図記号に乗った」なら、打ち切りのまとめ行も
     // 同じ種類とみなす (20 件で打ち切られるため個別には出てこない)
-    const allNum = listed.length > 0 && listed.every(i => /^線番/.test(i.msg));
+    // 線番と電線仕様は、置き場所が残らない図では図記号に載るのが正しい挙動
+    const allNum = listed.length > 0 && listed.every(i => /^(線番|電線仕様)/.test(i.msg));
     const build = drc.filter(i => i.rule !== "textOverlap")
-      .concat(listed.filter(i => !/^線番/.test(i.msg)))
+      .concat(listed.filter(i => !/^(線番|電線仕様)/.test(i.msg)))
       .concat(allNum ? [] : ovl.filter(i => /^文字の重なりは他に/.test(i.msg)));
     res.drcAll = build.length;
     res.drcMsg = build.slice(0, 4).map(i => i.msg);
@@ -168,6 +206,10 @@ const R = await p.evaluate(() => {
     const V = vert ? "縦" : "横";
     out[`${n}芯/${dig}桁/${V}/長`] = run(n, dig, vert, 35);
     out[`${n}芯/${dig}桁/${V}/短`] = run(n, dig, vert, 20);
+    // 電線仕様つき (線番の反対側にもう 1 行入る) — ここを通していなかったため、
+    // 仕様が隣の心線に乗る不具合を素通りさせた
+    out[`${n}芯/${dig}桁/${V}/長+仕様`] = run(n, dig, vert, 35, { spec: true });
+    out[`${n}芯/${dig}桁/${V}/短+仕様`] = run(n, dig, vert, 20, { spec: true });
   }
   // 対称な図だけでは足りない。囲みが中央にない図・並んだ 2 本のケーブルも回す
   for (const n of [4, 12]) for (const dig of [2, 5]) for (const vert of [0, 1]) {
@@ -188,6 +230,8 @@ for (const [k, v] of Object.entries(R)) {
   if (v.xSpread > 0.6) bad.push("x幅");
   if (v.over > v.overLimit + 0.6) bad.push("はみ");
   if (v.far > 0) bad.push("離れ");
+  if (v.onWire > 0) bad.push("導体に乗り");
+  if (v.specMargin < 99 && (v.specOwn > 2.5 || v.specMargin < 0.95)) bad.push("仕様の脇");
   if (v.ink < LW - 0.01) bad.push("インク");
   if (!v.limit && (v.offSeg > 0 || v.pierce > 0)) bad.push("重なり");
   if (v.limit && (v.offSeg > 0 || v.pierce > 0) && !v.drcTold) bad.push("検図もれ");
@@ -195,7 +239,7 @@ for (const [k, v] of Object.entries(R)) {
   console.log((bad.length ? "NG " : "ok ") + k.padEnd(16),
     "脇", v.worstAnch, "インク", v.ink, "隣差", v.margin, "載らず", v.offSeg, "貫通", v.pierce,
     "列", v.xSpread, `(${v.spread.join("/")})`, "はみ", v.over, "/", v.overLimit,
-    "離れ", v.far, v.limit ? (v.drcTold ? "限界:検図○" : "限界") : "", v.drcAll ? "検図:" + v.drcMsg.join(" / ") : "");
+    "離れ", v.far, "導体", v.onWire, v.specMargin < 99 ? `仕様${v.specOwn}/${v.specMargin}` : "", v.limit ? (v.drcTold ? "限界:検図○" : "限界") : "", v.drcAll ? "検図:" + v.drcMsg.join(" / ") : "");
 }
 console.log("RESULT:", fail.length ? "FAIL " + fail.map(([k, b2]) => `${k}[${b2}]`).join(",") : `ok (${Object.keys(R).length}件)`);
 console.log("ERRORS:", errs.length, errs.slice(0, 3));

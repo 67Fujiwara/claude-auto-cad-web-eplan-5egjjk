@@ -153,7 +153,7 @@ function dxfSymPrimitives(sym) {
   const prims = [];
   const src = scaleSymbolGeom(symResolveTextSize(sym.body, contentScale()), contentScale());
   // <g transform="translate(a,b)"> の入れ子を追跡
-  const stack = [{ tx: 0, ty: 0 }];
+  const stack = [{ tx: 0, ty: 0, sw: null }];
   const tagRe = /<(\/?)(g|path|rect|circle|text)\b([^>]*?)(\/?)>|<\/text>/g;
   const attr = (s, name) => {
     const m = new RegExp(name + '="([^"]*)"').exec(s);
@@ -182,7 +182,8 @@ function dxfSymPrimitives(sym) {
       if (close) { if (stack.length > 1) stack.pop(); }
       else {
         const t = translateOf(attrs || "");
-        stack.push({ tx: top.tx + t.tx, ty: top.ty + t.ty });
+        const gw = attr(attrs || "", "stroke-width");
+        stack.push({ tx: top.tx + t.tx, ty: top.ty + t.ty, sw: gw ? parseFloat(gw) : top.sw });
       }
       continue;
     }
@@ -193,18 +194,23 @@ function dxfSymPrimitives(sym) {
     // 破線 (機械的結合・囲い・遮蔽) は導体と区別できるよう DXF でも線種を保つ
     const da = attr(attrs, "stroke-dasharray");
     const lt = da ? dxfLtypeFor(da) : null;
+    // 線幅は要素ごとに指定できる (機械的結合の破線・囲みなど)。R12 は線幅を
+    // 持たないのでレイヤ (色) で伝えるが、記号単位で決めると細線が太線の
+    // ペンで出てしまう
+    const swA = attr(attrs, "stroke-width");
+    const sw = swA ? parseFloat(swA) : top.sw;
     if (tag === "path") {
       const d = attr(attrs, "d");
       if (d) dxfParsePathParts(d).forEach(pt2 => {
-        if (pt2.type === "arc") prims.push({ type: "arc", lt, cx: pt2.cx + ox, cy: pt2.cy + oy, r: pt2.r, t1: pt2.t1, dt: pt2.dt });
-        else prims.push({ type: "poly", lt, pts: pt2.pts.map(q => [q[0] + ox, q[1] + oy]) });
+        if (pt2.type === "arc") prims.push({ type: "arc", lt, sw, cx: pt2.cx + ox, cy: pt2.cy + oy, r: pt2.r, t1: pt2.t1, dt: pt2.dt });
+        else prims.push({ type: "poly", lt, sw, pts: pt2.pts.map(q => [q[0] + ox, q[1] + oy]) });
       });
     } else if (tag === "rect") {
       const x = +attr(attrs, "x"), y = +attr(attrs, "y");
       const w = +attr(attrs, "width"), h = +attr(attrs, "height");
-      prims.push({ type: "poly", lt, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
+      prims.push({ type: "poly", lt, sw, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
     } else if (tag === "circle") {
-      prims.push({ type: "circle", lt, cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
+      prims.push({ type: "circle", lt, sw, cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
     } else if (tag === "text") {
       // SVG の font-size は em 寸法。DXF の TEXT 高さ (group 40) は大文字高なので換算する
       const fam = (attr(attrs, "font-family") || "sans-serif").toLowerCase();
@@ -460,8 +466,8 @@ function pageToDXF(page) {
       ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec && wr.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
-      const [mx, my, horiz, gap] = wireLabelPos(wr, page);
-      const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap);
+      const [mx, my, horiz, gap, side] = wireLabelPos(wr, page);
+      const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
       ents += dxfText(sx, sy, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
@@ -474,8 +480,10 @@ function pageToDXF(page) {
     const xf = dxfDevXform(dev);
     // 細線 (0.25mm) で登録したシンボルは細線レイヤへ (AutoCAD 側でペンを分けられる)
     const symLyr = symStrokeWidth(sym) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
+    // 要素ごとに線幅が指定されていれば、そちらでレイヤを決める
+    const lyrOf = (pr) => (pr.sw != null ? pr.sw : symStrokeWidth(sym)) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
     dxfSymPrimitives(sym).forEach(pr => {
-      const lyr = symLyr;        // 破線も記号レイヤに置き、線種で区別する
+      const lyr = lyrOf(pr);     // 破線も記号レイヤに置き、線種で区別する
       if (pr.type === "poly") {
         ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), lyr, pr.lt);
       } else if (pr.type === "arc") {

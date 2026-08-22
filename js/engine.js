@@ -142,31 +142,47 @@ function wireNumBox(w, mx, my, horiz) {
                : { x: mx - h, y: my - wd / 2, w: h, h: wd };
 }
 /** 電線仕様ラベルを打つ位置 (線番の反対側で、配線からのすき間は線番と同じ)。
-    gap は wireLabelPos が返す「配線から文字までのすき間」(mm・尺度込み) */
-function wireSpecAnchor(mx, my, horiz, gap) {
+    pos = wireLabelPos の戻り値 [mx, my, horiz, gap, side]。
+    線番の位置から「配線そのものの座標」を戻して、そこを基準に反対側へ置く。
+    my からの相対で足すと、線番が配線の下/右に置かれた回で仕様だけが
+    2(g+h) ぶん外へ飛び、隣の心線の上に乗る */
+function wireSpecAnchor(mx, my, horiz, gap, side) {
   const f = contentScale(), h = TEXT_H.small * f;
   const g = (gap === undefined ? WIRE_LABEL_GAP * f : gap);
-  // 線番は配線の手前側に g、仕様は反対側に g。文字の高さ h をまたぐので 2g + h
-  return horiz ? [mx, my + 2 * g + h] : [mx + 2 * g + h, my];
+  const sd = (side === undefined ? 1 : side);
+  const lv = horiz ? my : mx;                       // 線番の基準線 (箱の配線側の縁)
+  const wv = sd > 0 ? lv + g : lv - g - h;          // 配線そのものの座標
+  const sv = sd > 0 ? wv + g + h : wv - g;          // 仕様の基準線 (反対側)
+  return horiz ? [mx, sv] : [sv, my];
 }
 /** 電線仕様ラベルの外接矩形 (線番の反対側)。spec が無ければ null */
-function wireSpecBox(w, mx, my, horiz, gap) {
+function wireSpecBox(w, mx, my, horiz, gap, side) {
   if (!w.spec || w.numShow === false) return null;
   const f = contentScale(), h = TEXT_H.small * f;
   const wd = textWidthMM(String(w.spec), h, false, true);
-  const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap);
+  const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
   return horiz ? { x: sx - wd / 2, y: sy - h, w: wd, h }
                : { x: sx - h, y: sy - wd / 2, w: h, h: wd };
+}
+/** 線番と電線仕様の確定矩形。pos は wireLabelPos の戻り値をそのまま渡す。
+    画面・DXF・検図・配置器がどれも同じ矩形を見るための唯一の入口 —
+    引数を1つ渡し忘れただけで検図と描画が別の場所を見る、という事故を防ぐ */
+function wireLabelBoxes(w, pos) {
+  const [mx, my, horiz, gap, side] = pos;
+  return { num: wireNumBox(w, mx, my, horiz), spec: wireSpecBox(w, mx, my, horiz, gap, side) };
 }
 /** 配線から線番の文字までのすき間 (mm)。並走する導体が 5mm 以内にあるときは
     WIRE_LABEL_GAP_TIGHT まで詰める — そうしないと文字が自分の線より隣の線に
     近くなり、どの線の番号か読めなくなる (文字高 2.5mm・心線ピッチ 5mm) */
 const WIRE_LABEL_GAP = 1.4;
-// 0.75mm は「文字のインクが導体から線幅ぶん (0.5mm) 離れる」下限であり、かつ
-// 「自分の線までが隣の線までより 1.0mm 近い」を満たす唯一の値。
-// 文字高 2.5・ピッチ 5 では g − 0.25 ≥ 0.5 と (2.5 − g) − g ≥ 1.0 が g = 0.75 で
-// ちょうど両立する
-const WIRE_LABEL_GAP_TIGHT = 0.75;
+/* 並走する導体があるときは、そこまでの距離 d から
+      g = (d − 文字高 − 1.0) / 2
+   で詰める。「自分の線までが隣の線まで(d − g − 文字高)より 1.0mm 近い」を
+   満たす最大の g で、心線ピッチ 5mm・文字高 2.5mm なら g = 0.75mm になる
+   (このとき文字のインクは導体から 0.5mm = 線幅ぶん離れる)。
+   5mm ちょうどで段階的に切り替えると、5.5mm ピッチで隣差 0.2mm という
+   元より悪い図になるので、距離の連続関数にしてある */
+const WIRE_LABEL_GAP_MIN = 0.6;
 /** 並走する導体を「隣」とみなす間隔 (多芯ケーブルの心線ピッチ) */
 const WIRE_NEIGHBOR_PITCH = 5;
 
@@ -183,10 +199,9 @@ function wireLabelMap(page) {
   wires.forEach(w => {
     const res = wireLabelPosCalc(w, page, placed);
     map.set(w.id, res);
-    const bx = wireNumBox(w, res[0], res[1], res[2]);
-    placed.push(bx);
-    const sp = wireSpecBox(w, res[0], res[1], res[2]);
-    if (sp) placed.push(sp);
+    const { num, spec } = wireLabelBoxes(w, res);
+    placed.push(num);
+    if (spec) placed.push(spec);
   });
   _wireLabelCache.set(page, { rev: App.labelRev, map });
   return map;
@@ -220,6 +235,20 @@ function wireLabelPosCalc(w, page, placed) {
   });
   (notes || []).forEach(t => obst.push(textBounds(t)));
   (placed || []).forEach(b => obst.push(b));      // すでに確定した他の線番ラベル
+  // 導体そのものも障害物にする。梯子図では線番の脇を別の配線が横切るので、
+  // それを見ないと交差する導体の上に線番が乗る (自分の線は除く — 線番は
+  // 自分の線の脇に置くのが目的なので)
+  const HALFW = LINE_W.thick / 2 * f;
+  (page ? condWires(page) : []).forEach(o => {
+    if (o.id === w.id) return;
+    for (let i = 0; i < o.pts.length - 1; i++) {
+      const a = o.pts[i], b2 = o.pts[i + 1];
+      obst.push({
+        x: Math.min(a[0], b2[0]) - HALFW, y: Math.min(a[1], b2[1]) - HALFW,
+        w: Math.abs(b2[0] - a[0]) + HALFW * 2, h: Math.abs(b2[1] - a[1]) + HALFW * 2, cond: true,
+      });
+    }
+  });
   // この区間のすぐ隣 (心線ピッチ以内) を並走している導体があるか。多芯ケーブルの
   // ように線が詰まって並ぶ図では、線番を自分の線へ十分寄せないと、隣の線の
   // 番号に見えてしまう
@@ -228,8 +257,9 @@ function wireLabelPosCalc(w, page, placed) {
     const lo = horiz ? Math.min(sg.a[0], sg.b[0]) : Math.min(sg.a[1], sg.b[1]);
     const hi = horiz ? Math.max(sg.a[0], sg.b[0]) : Math.max(sg.a[1], sg.b[1]);
     const P = WIRE_NEIGHBOR_PITCH * f;
-    return (page ? condWires(page) : []).some(o => {
-      if (o.id === w.id) return false;
+    let best = Infinity;
+    (page ? condWires(page) : []).forEach(o => {
+      if (o.id === w.id) return;
       for (let i = 0; i < o.pts.length - 1; i++) {
         const a = o.pts[i], b2 = o.pts[i + 1];
         if ((Math.abs(b2[1] - a[1]) < 0.01) !== horiz) continue;
@@ -237,11 +267,14 @@ function wireLabelPosCalc(w, page, placed) {
         if (d < 0.01 || d > P + 0.01) continue;
         const ol = horiz ? Math.min(a[0], b2[0]) : Math.min(a[1], b2[1]);
         const oh = horiz ? Math.max(a[0], b2[0]) : Math.max(a[1], b2[1]);
-        if (Math.min(hi, oh) - Math.max(lo, ol) > 0.5) return true;
+        if (Math.min(hi, oh) - Math.max(lo, ol) > 0.5) best = Math.min(best, d);
       }
-      return false;
     });
+    return best;
   };
+  /** 並走導体までの距離から、配線から文字までのすき間を決める */
+  const gapFor = (sg, horiz) => Math.min(WIRE_LABEL_GAP * f,
+    Math.max(WIRE_LABEL_GAP_MIN * f, (parallelNear(sg, horiz) - th - 1 * f) / 2));
   // 実際に印字される位置 → その文字の外接矩形 (画面・DXF・検図で同じ式を使う)。
   // side=+1 は配線の左/上、-1 は右/下に置く。
   // 縦区間の文字は rotate(-90)・text-anchor=middle で描くので、pt がそのまま
@@ -253,13 +286,12 @@ function wireLabelPosCalc(w, page, placed) {
   const posOf = (pt, horiz, side = 1, extra = 0, gap = WIRE_LABEL_GAP * f) => {
     const d = gap + extra * f;
     const o = side > 0 ? -d : d + th;
-    // 4 番目に「配線からのすき間」を返す — 電線仕様を線番と同じ間隔で
-    // 反対側へ置くために、画面・DXF の描画側が使う
-    return horiz ? [pt[0], pt[1] + o, horiz, gap] : [pt[0] + o, pt[1], horiz, gap];
+    // 4・5 番目に「配線からのすき間」と「どちら側に置いたか」を返す — 電線仕様を
+    // 線番と同じ間隔で反対側へ置くために、画面・DXF・検図がこれを使う
+    return horiz ? [pt[0], pt[1] + o, horiz, gap, side] : [pt[0] + o, pt[1], horiz, gap, side];
   };
-  const boxOf = (mx, my, horiz, gap) => {
-    const b = wireNumBox(w, mx, my, horiz);
-    const sp = wireSpecBox(w, mx, my, horiz, gap);
+  const boxOf = (pos) => {
+    const { num: b, spec: sp } = wireLabelBoxes(w, pos);
     if (!sp) return b;
     const x0 = Math.min(b.x, sp.x), y0 = Math.min(b.y, sp.y);
     return { x: x0, y: y0, w: Math.max(b.x + b.w, sp.x + sp.w) - x0, h: Math.max(b.y + b.h, sp.y + sp.h) - y0 };
@@ -271,7 +303,7 @@ function wireLabelPosCalc(w, page, placed) {
     for (const extra of extras) {
       for (const side of sides) {
         const res = posOf(pt, horiz, side, extra, gap);
-        const bx = boxOf(res[0], res[1], horiz, gap);
+        const bx = boxOf(res);
         let sc = 0;
         for (const r of obst) sc += overlapArea(bx, padRect(r, LABEL_CLEAR / 2));
         if (sc === 0) return res;
@@ -315,7 +347,7 @@ function wireLabelPosCalc(w, page, placed) {
     const out = [];
     TS.forEach((t, i) => {
       const res = posOf(at(t), horiz, side, 0, gap);
-      const bx = boxOf(res[0], res[1], horiz, gap);
+      const bx = boxOf(res);
       let sc = 0;
       for (const r of obst) sc += overlapArea(bx, padRect(r, LABEL_CLEAR / 2));
       if (sc === 0) out.push({ res, bx, i, clr: clearOf(bx, sg, horiz) });
@@ -334,8 +366,8 @@ function wireLabelPosCalc(w, page, placed) {
     // 同じ側で線に沿って動かすほうがよい — 多芯ケーブルのように線が 5mm 間隔で
     // 並ぶ図では、反対側へ回すと隣の線のほうが近くなってどの線の番号か読めなくなる
     // 並走する導体があるときは、線番を自分の線へ十分に寄せる
-    const para = parallelNear(sg, horiz);
-    const lgap = (para ? WIRE_LABEL_GAP_TIGHT : WIRE_LABEL_GAP) * f;
+    const lgap = gapFor(sg, horiz);
+    const para = lgap < WIRE_LABEL_GAP * f - 0.001;
     // 隣を並走する心線に既に線番が付いていれば、まず「その列」に置いてみる。
     // ケーブルの中で列が割れると、どの心線の番号か読めなくなる — 囲みに少し
     // 重なってでも列をそろえるほうが図面としては読める (重なりは検図が知らせる)
@@ -352,7 +384,7 @@ function wireLabelPosCalc(w, page, placed) {
         const hard = obst.filter(r => !r.soft);
         for (const side of [1, -1]) {
           const res = posOf(horiz ? [col, sg.a[1]] : [sg.a[0], col], horiz, side, 0, lgap);
-          const bx = boxOf(res[0], res[1], horiz, lgap);
+          const bx = boxOf(res);
           if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) return res;
         }
       }
@@ -362,7 +394,7 @@ function wireLabelPosCalc(w, page, placed) {
     // 線上に収まらない場合は、じゃまをしている物 (囲みなど) の外側へ寄せて
     // 同じ線の上に置く。線から離すより「自分の線の続き」に置くほうが読みやすい
     const mid = at(0.5);
-    const box0 = boxOf(...posOf(mid, horiz, 1, 0, lgap), horiz, lgap);
+    const box0 = boxOf(posOf(mid, horiz, 1, 0, lgap));
     const size = horiz ? box0.w : box0.h;
     let cands = [];
     for (const r of obst) {
@@ -424,7 +456,7 @@ function wireLabelPosCalc(w, page, placed) {
     // ケーブルの中で幅の広い線番 (桁数の多いもの) だけ入りきらず列が割れる
     const clrAt = (c) => {
       const r0 = posOf(c, horiz, 1, 0, lgap);
-      return clearOf(boxOf(r0[0], r0[1], horiz, lgap), sg, horiz);
+      return clearOf(boxOf(r0), sg, horiz);
     };
     const rank = (p1, p2) => (Math.round(over(p1) * 2) - Math.round(over(p2) * 2))
       || (Math.round(clrAt(p2) * 2) - Math.round(clrAt(p1) * 2)) || near(p1, p2);
@@ -469,11 +501,11 @@ function wireLabelPosCalc(w, page, placed) {
     for (const sg of segs) {
       const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
       const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
-      const lg = (parallelNear(sg, horiz) ? WIRE_LABEL_GAP_TIGHT : WIRE_LABEL_GAP) * f;
+      const lg = gapFor(sg, horiz);
       for (const t of TS) {
         for (const side of [1, -1]) {
           const res = posOf(at(t), horiz, side, 0, lg);
-          const bx = boxOf(res[0], res[1], horiz, lg);
+          const bx = boxOf(res);
           if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) ok.push({ res, bx, horiz });
         }
       }
@@ -656,7 +688,7 @@ function labelObstacles(page) {
     for (let i = 0; i < w.pts.length - 1; i++) {
       const [x1, y1] = w.pts[i], [x2, y2] = w.pts[i + 1];
       out.push({
-        owner: null,
+        owner: null, wire: true,
         x: Math.min(x1, x2) - wt, y: Math.min(y1, y2) - wt,
         w: Math.abs(x2 - x1) + wt * 2, h: Math.abs(y2 - y1) + wt * 2,
       });
@@ -704,13 +736,14 @@ function placeDeviceLabels(page, dev, obstacles) {
   if (!tag && !desc) return wrap([], "left");
 
   // 候補の生成 ─ side ごとに機器へ寄せる段階を持つ
-  const sideCand = (side, d) => {
+  const sideCand = (side, d, dy = 0) => {
     const out = [];
     if (side === "left" || side === "right") {
       const x = side === "left" ? b.x - d * f : b.x + b.w + d * f;
       const anchor = side === "left" ? "end" : "start";
-      if (tag) out.push(mk(tag, x, b.y + b.h / 2 - 0.8 * f, anchor, true));
-      if (desc) out.push(mk(desc, x, b.y + b.h / 2 + (tag ? 4 : 1) * f, anchor));
+      const y = b.y + b.h / 2 + dy * f;
+      if (tag) out.push(mk(tag, x, y - 0.8 * f, anchor, true));
+      if (desc) out.push(mk(desc, x, y + (tag ? 4 : 1) * f, anchor));
     } else if (side === "top" || side === "topL" || side === "topR") {
       const cx = b.x + b.w / 2 + (side === "topL" ? -5 : side === "topR" ? 5 : 0) * f;
       const y = b.y - d * f;
@@ -735,6 +768,13 @@ function placeDeviceLabels(page, dev, obstacles) {
       ? [["left", [2.2, 1.4, 0.8, 0.3]], ...vert, ["right", [2.2, 1.4]]]
       : [["left", [2.2, 1.4, 0.8, 0.3]], ["right", [2.2, 1.4, 0.8, 0.3]], ...vert];
 
+  // 上下左右のどこも空いていない混んだ図のために、もっと離した候補も持つ。
+  // 左右は行をずらした候補も持つ — 同じ位置に重ねた 2 つの記号 (心線囲みと
+  // 遮へいなど) のタグは、横へ逃がすより上下に積むほうが図面として読める
+  order.push(["left", [2.2, 6, 10, 15, 21, 27], [4.5, -4.5, 9, -9]],
+             ["right", [2.2, 6, 10, 15, 21, 27], [4.5, -4.5, 9, -9]],
+             ["top", [9, 13]], ["bottom", [11, 15]]);
+
   const relevant = obstacles.filter(o => o.owner !== dev.id);
   // 図枠 (輪郭線) の外は不可。はみ出し面積も重なりと同じ重みで効かせる
   const fr = frameRect();
@@ -744,13 +784,15 @@ function placeDeviceLabels(page, dev, obstacles) {
     return dx * bx.h + dy * bx.w;
   };
   let best = null;
-  for (const [side, gaps] of order) {
-    for (const d of gaps) {
-      const cand = sideCand(side, d);
+  for (const [side, gaps, dys] of order) {
+    for (const dy of (dys || [0])) for (const d of gaps) {
+      const cand = sideCand(side, d, dy);
       let score = 0;
       for (const o of cand) {
         score += outArea(o.box);
-        for (const r of relevant) score += overlapArea(o.box, padRect(r, LABEL_CLEAR / 2));
+        // 導体の上に載るのは、少し離れて置くより悪い (文字も線も読めなくなる)。
+        // 面積だけで比べると細い線への重なりが小さく見え、離れた候補に負ける
+        for (const r of relevant) score += overlapArea(o.box, padRect(r, LABEL_CLEAR / 2 + 0.05)) * (r.wire ? 6 : 1);
       }
       if (score === 0) return cand;
       if (!best || score < best.score) best = { cand, score };
@@ -1132,7 +1174,8 @@ function addDevice(page, symId, x, y, opts = {}) {
   const dev = {
     id: uid("d"), sym: symId, x: snap(x), y: snap(y), rot: opts.rot || 0,
     tag: opts.tag !== undefined ? opts.tag : (sym.letter ? nextTag(sym.letter) : ""),
-    desc: opts.desc || "", typeRef: opts.typeRef !== undefined ? opts.typeRef : (sym.typ || ""), linkTo: opts.linkTo || null,
+    desc: opts.desc !== undefined ? opts.desc : (sym.fn || ""),
+    typeRef: opts.typeRef !== undefined ? opts.typeRef : (sym.typ || ""), linkTo: opts.linkTo || null,
     props: opts.props || {},
   };
   page.devices.push(dev);
@@ -1501,6 +1544,15 @@ function mirrorOrigin(coilDev) {
     // 先に配置が決まっている (id 順で前の) コイルのミラー表
     if (d2.id < coilDev.id) mirrorLabelBoxes(d2).forEach(b => obst.push(b));
   });
+  // 導体も避ける。表の中を配線が貫くと、どの接点の行か読めなくなる
+  const HW = LINE_W.thick / 2 * f;
+  condWires(page).forEach(o => {
+    for (let i = 0; i < o.pts.length - 1; i++) {
+      const p0 = o.pts[i], p1 = o.pts[i + 1];
+      obst.push({ x: Math.min(p0[0], p1[0]) - HW, y: Math.min(p0[1], p1[1]) - HW,
+        w: Math.abs(p1[0] - p0[0]) + HW * 2, h: Math.abs(p1[1] - p0[1]) + HW * 2 });
+    }
+  });
   const fr = frameRect();
   const outArea = bx => {
     const dx = Math.max(0, fr.x - bx.x) + Math.max(0, bx.x + bx.w - (fr.x + fr.w));
@@ -1508,7 +1560,10 @@ function mirrorOrigin(coilDev) {
     return dx * bx.h + dy * bx.w;
   };
   const cands = [[baseX, baseY], [baseX, baseY + 4.2 * f], [baseX + 6 * f, baseY],
-    [coilDev.x - 24 * f, baseY], [coilDev.x - 24 * f, baseY + 4.2 * f], [baseX, baseY - 6 * f]];
+    [coilDev.x - 24 * f, baseY], [coilDev.x - 24 * f, baseY + 4.2 * f], [baseX, baseY - 6 * f],
+    [baseX - w.w - 3 * f, baseY], [baseX + 10 * f, baseY], [baseX, baseY + 9 * f],
+    [baseX - w.w - 3 * f, baseY + 4.2 * f], [baseX + 10 * f, baseY + 4.2 * f],
+    [baseX, baseY - 12 * f], [baseX, baseY - 18 * f], [baseX + 10 * f, baseY - 12 * f]];
   let best = null;
   for (const [x, y0] of cands) {
     const box = { x, y: y0 - 2 * f, w: w.w, h: w.h };
@@ -1921,7 +1976,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
+  "線番の重複", "図番の重複", "線番と導体の重なり", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
 /** 接地記号につながっているネット (遮へいの接地判定に使う) */
@@ -2059,10 +2114,9 @@ function runDRC() {
       pinLabelBoxes(page).forEach(bx => report2(bx, "端子番号", bx.owner));
       condWires(page).forEach(w => {
         if (!w.num || w.numShow === false) return;
-        const [mx, my, hz] = wireLabelPos(w, page);
-        report2(wireNumBox(w, mx, my, hz), `線番 ${w.num}`, w.id);
-        const sp = wireSpecBox(w, mx, my, hz);
-        if (sp) report2(sp, `電線仕様「${w.spec}」`, w.id);
+        const { num, spec } = wireLabelBoxes(w, wireLabelPos(w, page));
+        report2(num, `線番 ${w.num}`, w.id);
+        if (spec) report2(spec, `電線仕様「${w.spec}」`, w.id);
       });
       page.texts.forEach(t => report2(textBounds(t), `注記「${t.text}」`, t.id));
     }
@@ -2086,10 +2140,9 @@ function runDRC() {
     // 線番・電線仕様・注記
     condWires(page).forEach(w => {
       if (!w.num || w.numShow === false) return;
-      const [mx, my, horiz] = wireLabelPos(w, page);
-      labels.push({ ...wireNumBox(w, mx, my, horiz), wire: w, what: `線番 ${w.num}` });
-      const sp = wireSpecBox(w, mx, my, horiz);
-      if (sp) labels.push({ ...sp, wire: w, what: `電線仕様「${w.spec}」` });
+      const { num, spec } = wireLabelBoxes(w, wireLabelPos(w, page));
+      labels.push({ ...num, wire: w, what: `線番 ${w.num}` });
+      if (spec) labels.push({ ...spec, wire: w, what: `電線仕様「${w.spec}」` });
     });
     page.texts.forEach(t => {
       const b0 = textBounds(t);
@@ -2098,11 +2151,18 @@ function runDRC() {
     /* 判定は絶対量で行う。JIS Z 8313-0 の文字間隔は線幅の2倍以上なので、
        重なっていなくても「あき」が 0.7mm 未満なら判読できないものとして指摘する。 */
     const MIN_GAP = 0.7 * f4;
+    // 文字の「行の向き」(細いほう) でどちらの軸を見るか決める。高さ固定で見ると
+    // 回転した文字 (縦区間の線番) の判定が効かない — symHit と同じ規則にそろえる
     const realHit = (a, b2) => {
       const ox = Math.min(a.x + a.w, b2.x + b2.w) - Math.max(a.x, b2.x);
       const oy = Math.min(a.y + a.h, b2.y + b2.h) - Math.max(a.y, b2.y);
-      if (oy <= Math.min(a.h, b2.h) * 0.4) return false;    // 高さ方向がずれていれば読める
-      return ox > -MIN_GAP;                                  // 重なり or 0.7mm 未満のあき
+      const vert = a.w < a.h && b2.w < b2.h;                  // どちらも縦書き
+      if (vert) {
+        if (ox <= Math.min(a.w, b2.w) * 0.4) return false;    // 列がずれていれば読める
+        return oy > -MIN_GAP;
+      }
+      if (oy <= Math.min(a.h, b2.h) * 0.4) return false;      // 行がずれていれば読める
+      return ox > -MIN_GAP;                                    // 重なり or 0.7mm 未満のあき
     };
     /* 文字と図記号は「重なり」だけを見る (図記号のすぐ脇に置くのは通常の作法) */
     const symHit = (a, r) => {
@@ -2140,6 +2200,36 @@ function runDRC() {
     }
     if (overlapTotal > overlapCount) {
       issues.push({ sev: "warn", rule: "textOverlap", msg: `文字の重なりは他に ${overlapTotal - overlapCount} 箇所あります`, page: page.no, target: null, loc: `${page.no}.-` });
+    }
+    /* 文字が導体の上に乗っていないか。梯子図では線番の脇を別の配線が横切るので、
+       配置器が避けきれない図では検図で知らせる (自分の線は、脇に置くのが作法
+       なので除く)。配置器と同じく導体の線幅ぶんを見込んで判定する */
+    {
+      const HW = LINE_W.thick / 2 * f4;
+      const segsOf = (o) => {
+        const rs = [];
+        for (let i = 0; i < o.pts.length - 1; i++) {
+          const p0 = o.pts[i], p1 = o.pts[i + 1];
+          rs.push({ x: Math.min(p0[0], p1[0]) - HW, y: Math.min(p0[1], p1[1]) - HW,
+                    w: Math.abs(p1[0] - p0[0]) + HW * 2, h: Math.abs(p1[1] - p0[1]) + HW * 2 });
+        }
+        return rs;
+      };
+      let n2 = 0;
+      labels.forEach(a => {
+        if (n2 >= 20) return;
+        const on = (r) => {
+          const ox = Math.min(a.x + a.w, r.x + r.w) - Math.max(a.x, r.x);
+          const oy = Math.min(a.y + a.h, r.y + r.h) - Math.max(a.y, r.y);
+          return ox > 0.3 * f4 && oy > 0.3 * f4;
+        };
+        const hit = condWires(page).find(o => (!a.wire || o.id !== a.wire.id) && segsOf(o).some(on));
+        if (!hit) return;
+        n2++;
+        issues.push({ sev: "warn", rule: "textOnWire", page: page.no, loc: `${page.no}.${sheetCol(a.x)}`,
+          target: (a.wire || a.dev || a.text || {}).id || null,
+          msg: `${a.what} が導体${hit.num ? " (線番 " + hit.num + ")" : ""} と重なっています` });
+      });
     }
 
     // 縮小尺度では図記号だけが用紙上小さくなるため、回路図ページでは必ず知らせる
