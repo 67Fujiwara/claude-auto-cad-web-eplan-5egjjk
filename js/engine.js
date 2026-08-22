@@ -839,24 +839,69 @@ function gotoTargetPage(dev) {
   if (!id) return null;
   return App.project.pages.find(pg => pg.id === id) || null;
 }
-/** 行き先 記号に表示する図面番号。行き先を選んでいなければ "?" */
+/** 行き先の旗の寸法 (mm)。記号定義が持つ値をそのまま使う */
+function gotoFlag(sym) {
+  const g = (sym && typeof sym.gotoRef === "object") ? sym.gotoRef : {};
+  return { lead: g.lead || 5, x0: g.x0 || 5, x1: g.x1 || 30, tip: g.tip || 35, h: g.h || 2.5 };
+}
+/* 図番と旗の内側とのあき。JIS Z 8313-0 の字間 a = 2d (h=2.5 なら 0.5mm) より
+   広く、この図面の判読限界 0.7mm に合わせる */
+const GOTO_TEXT_GAP = 0.7;
+/** 旗の中で図番を置ける幅 (平行部からあきを引いた値) */
+function gotoTextRoom(sym) {
+  const fl = gotoFlag(sym);
+  return (fl.x1 - fl.x0) - GOTO_TEXT_GAP * 2;
+}
+/** 行き先の旗の外接矩形 (作図領域座標)。回転にも追従する */
+function gotoFlagBox(dev) {
+  const fl = gotoFlag(symOf(dev.sym));
+  const pts = [[fl.x0, -fl.h], [fl.tip, -fl.h], [fl.tip, fl.h], [fl.x0, fl.h]]
+    .map(([x, y]) => pinAbs(dev, { x, y }));
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys),
+    w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+/** 行き先の対 (指した先のページからこちらを指し返している行き先)。
+    1 つに定まらなければ null — 継続先の区分 (列) はこれが決まって初めて書ける */
+function gotoCounterpart(dev) {
+  const to = gotoTargetPage(dev);
+  const home = findDevice(dev.id);
+  if (!to || !home) return null;
+  const back = to.devices.filter(d => {
+    const s = symOf(d.sym);
+    return s && s.gotoRef && d.props && d.props.toPage === home.page.id;
+  });
+  return back.length === 1 ? back[0] : null;
+}
+/** 行き先 記号に表示する文字。行き先を選んでいなければ "?"。
+    指し先に対の行き先があれば、その位置の区分 (列) まで書く (E-002/7)。
+    IEC 61082-1 の相互参照は「どの葉の・どこ」で一意になる */
 function gotoRefText(dev) {
   const pg = gotoTargetPage(dev);
-  return pg ? pageDwgNo(pg) : "?";
+  if (!pg) return "?";
+  const no = pageDwgNo(pg);
+  const mate = gotoCounterpart(dev);
+  return mate ? `${no}/${sheetCol(mate.x)}` : no;
 }
 function deviceXrefBox(page, dev) {
   const sym0 = symOf(dev.sym);
   if (sym0 && sym0.gotoRef) {
-    /* 行き先の図番は旗の中央に、旗の長手方向へ沿わせて置く。図番そのものは
+    /* 行き先の図番は旗の平行部の中央に、旗の長手方向へ沿わせて置く。図番そのものは
        持たず、選んだページのものを描くたびに引くので、ページを並べ替えても
        図番を振り直しても追従する。
-       縦向きに置いた行き先では文字も 90° 倒す (JIS Z 8313-0 の読む向きは
-       下辺からと右辺からの 2 通り)。水平のままだと 24mm の旗から横へはみ出す */
+       中心を五角形全体ではなく平行部 (x0〜x1) に合わせるのが肝で、全体の中心に
+       置くと長い図番が先端の斜辺に食い込む。
+       縦向きに置いた行き先では文字も 90° 倒す (図面の文字は下辺から、やむを
+       得なければ右辺から読む向き — JIS Z 8317-1 / IEC 61082-1)。
+       高さは textHeightMM を通す。和文の図番は最小呼び 3.5mm へ上がるので
+       (JIS Z 8313-10)、2.5mm のままだと外接矩形が実際より 1mm 低くなり、
+       図枠はみ出し・文字の重なりの検図が誤判定する */
     const s0 = contentScale();
-    const h0 = TEXT_H.small * s0;
     const text0 = gotoRefText(dev);
+    const h0 = textHeightMM(text0, TEXT_H.small * s0);
     const w0 = textWidthMM(text0, h0, false, true);
-    const c0 = pinAbs(dev, { x: 18.5, y: 0 });          // 旗の中央 (機器と一緒に回る)
+    const fl0 = gotoFlag(sym0);
+    const c0 = pinAbs(dev, { x: (fl0.x0 + fl0.x1) / 2, y: 0 });   // 平行部の中央 (機器と一緒に回る)
     const rot0 = (((dev.rot || 0) % 360) + 360) % 360;
     const ang0 = (rot0 === 90 || rot0 === 270) ? 90 : 0;
     // 読む向き u と字の下向き v (画面は y 下向き)。基線は中央から v へ h/2
@@ -2024,7 +2069,9 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "線番と導体の重なり", "行き先未設定", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
+  "線番の重複", "図番の重複", "線番と導体の重なり",
+  "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
+  "行き先の図番が入らない", "行き先どうしの重なり", "行き先とリンクの不一致", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
 /** 接地記号につながっているネット (遮へいの接地判定に使う) */
@@ -2441,28 +2488,84 @@ function runDRC() {
       }
     });
 
-    // 行き先 (継続先) の指し先。未設定・削除済みのページを指したままだと
-    // 図面の続きが追えない
-    page.devices.forEach(dev => {
+    /* 行き先 (継続先)。相互参照は「指し先が一意に決まる」ことと「往復で対に
+       なっている」ことで初めて図面の続きが追える (IEC 61082-1)。
+       未設定のまま出図すると紙に「?」が刷られるので、警告ではなくエラー */
+    const gotoDevs = page.devices.filter(d => { const s = symOf(d.sym); return s && s.gotoRef; });
+    gotoDevs.forEach(dev => {
       const sy = symOf(dev.sym);
-      if (!sy || !sy.gotoRef) return;
       const id = dev.props && dev.props.toPage;
       const who = displayTag(dev) || "行き先";
       if (!id) {
-        issues.push({ sev: "warn", rule: "行き先未設定", page: page.no, target: dev.id, loc: devLocation(dev),
-          msg: `${who} の指す先が選ばれていません (プロパティの「行き先」でページを選んでください)` });
-      } else if (!gotoTargetPage(dev)) {
         issues.push({ sev: "err", rule: "行き先未設定", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} の指す先が選ばれていません (このままだと図面に「?」が刷られます。プロパティの「行き先」でページを選んでください)` });
+        return;
+      }
+      if (id === page.id) {
+        issues.push({ sev: "err", rule: "行き先の自己参照", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} が自分のページを指しています (続きの葉を選び直してください)` });
+        return;
+      }
+      const to = gotoTargetPage(dev);
+      if (!to) {
+        issues.push({ sev: "err", rule: "行き先の指し先が無い", page: page.no, target: dev.id, loc: devLocation(dev),
           msg: `${who} が指しているページは削除されています (行き先を選び直してください)` });
-      } else {
-        // 図番が旗に入りきらないと、どこへ続くのか読めない
-        const tw2 = textWidthMM(gotoRefText(dev), TEXT_H.small * contentScale(), false, true);
-        if (tw2 > 24 * contentScale() + 0.01) {
-          issues.push({ sev: "warn", rule: "行き先未設定", page: page.no, target: dev.id, loc: devLocation(dev),
-            msg: `${who} の図番「${gotoRefText(dev)}」が記号に入りきりません (幅 ${tw2.toFixed(1)}mm / 枠 24mm)` });
+        return;
+      }
+      // 相手の葉に、こちらを指し返す行き先が無いと「どこから来たか」が追えない
+      const back = to.devices.filter(d => {
+        const s2 = symOf(d.sym);
+        return s2 && s2.gotoRef && d.props && d.props.toPage === page.id;
+      });
+      if (!back.length) {
+        issues.push({ sev: "warn", rule: "行き先の対が無い", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} の指す ${pageDwgNo(to)} に、この葉を指し返す行き先がありません (相互参照は往復で対にしてください)` });
+      }
+      /* 電気的な継続は電位リンクが担う。行き先の線と同じネットにリンクが無い、
+         あるいはリンクの相手が行き先の指す葉と食い違っていると、
+         図面の見た目と回路の実体がずれる (IEC 61082-1 の中断表示) */
+      const gnet = closed.pinNet(dev, 0);
+      if (gnet) {
+        const links = page.devices.filter(d => {
+          const s2 = symOf(d.sym);
+          return s2 && s2.sim === "link" && d.tag && closed.pinNet(d, 0) === gnet;
+        });
+        if (!links.length) {
+          issues.push({ sev: "warn", rule: "行き先とリンクの不一致", page: page.no, target: dev.id, loc: devLocation(dev),
+            msg: `${who} の線に電位リンクがありません (行き先は表示だけで通電しません。回路の続きは同じタグの電位リンクでつないでください)` });
+        } else {
+          const reach = new Set();
+          links.forEach(lk => App.project.pages.forEach(pg2 => {
+            if (pg2 === page) return;
+            if (pg2.devices.some(d2 => { const s3 = symOf(d2.sym); return s3 && s3.sim === "link" && d2.tag === lk.tag; })) reach.add(pg2.id);
+          }));
+          if (reach.size && !reach.has(to.id)) {
+            const names = [...reach].map(id2 => pageDwgNo(App.project.pages.find(pg2 => pg2.id === id2))).join("・");
+            issues.push({ sev: "err", rule: "行き先とリンクの不一致", page: page.no, target: dev.id, loc: devLocation(dev),
+              msg: `${who} は ${pageDwgNo(to)} を指していますが、線がつながっている電位リンクの相手は ${names} です` });
+          }
         }
       }
+      // 図番が旗に入りきらないと、どこへ続くのか読めない
+      const txt2 = gotoRefText(dev);
+      const room = gotoTextRoom(sy) * contentScale();
+      const tw2 = textWidthMM(txt2, textHeightMM(txt2, TEXT_H.small * contentScale()), false, true);
+      if (tw2 > room + 0.01) {
+        issues.push({ sev: "warn", rule: "行き先の図番が入らない", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} の「${txt2}」が記号に入りきりません (幅 ${tw2.toFixed(1)}mm / 旗の内側 ${room.toFixed(1)}mm)` });
+      }
     });
+    // 行き先どうしが近すぎると旗が重なって読めない (5mm ピッチで並べたとき)
+    for (let i = 0; i < gotoDevs.length; i++) {
+      for (let j = i + 1; j < gotoDevs.length; j++) {
+        const g = rectGap(gotoFlagBox(gotoDevs[i]), gotoFlagBox(gotoDevs[j]));
+        if (g < GOTO_TEXT_GAP) {
+          issues.push({ sev: "warn", rule: "行き先どうしの重なり", page: page.no, target: gotoDevs[i].id,
+            loc: devLocation(gotoDevs[i]),
+            msg: `行き先の旗どうしが近すぎます (あき ${g.toFixed(1)}mm / ${GOTO_TEXT_GAP}mm 以上あけてください)` });
+        }
+      }
+    }
 
     // 電源短絡 (+24V と 0V が閉状態で同一ネット)。切替接点は投ごとの2パスで見る
     shortHit: for (const sd of shortData) {

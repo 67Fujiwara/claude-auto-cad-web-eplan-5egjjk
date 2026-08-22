@@ -13,15 +13,25 @@
 
    判定
    ・記号が 1 極 (線 1 本) で、図番を旗の中に表示すること
+   ・旗の寸法が図形 (body) と計算用の値で一致し、寸法モジュール M=2.5mm の
+     整数倍・全長は格子 5mm の整数倍であること (JIS C 0617-1)
+   ・旗の輪郭が細線 0.25mm で白抜きであること (JIS Z 8312: 太線は導体と外形)
    ・図番が指し先ページの pageDwgNo と一致し、画面 (SVG) にもその文字が出ること
    ・図番の文字列を保存データに持たないこと
    ・並べ替え・接頭辞の変更・ページ個別図番・ページ追加のどれでも追従すること
    ・プルダウン (#pGoto) が実際の操作で効き、自ページは選べず、
      並べ替え後は選択肢の表示も新しい図番になること
-   ・未設定は警告、指し先が削除済みならエラー、正しく指していれば 0 件
-   ・図番が旗 (24mm) に入りきらなければ警告
-   ・図番の文字が旗の中央にあり、機器を 0/90/180/270 回しても旗から出ないこと
-   ・DXF にも同じ文字が同じ位置で出ること */
+   ・図番の文字が旗の平行部の中央にあり、五角形の 5 辺から 0.7mm 以上あくこと。
+     縦置きでは 90° 倒れること (文字は下辺から/右辺から読む: JIS Z 8317-1)
+   ・和文の図番は最小呼び 3.5mm へ上がり (JIS Z 8313-10)、外接矩形も実寸で返すこと
+   ・相手の葉から指し返す対ができたら、図番に区分 (列) まで書くこと。
+     対が 2 つあって定まらないときは図番だけに戻ること (嘘の位置を書かない)
+   ・検図: 未設定=エラー (紙に「?」が刷られるため) / 自己参照=エラー /
+     指し先が削除済み=エラー / 対が無い=警告 / 旗どうしが近すぎる=警告 /
+     図番が旗に入らない=警告 / 電位リンクが無い・相手が食い違う=警告とエラー。
+     正しく描いた図では 0 件
+   ・DXF にも同じ文字が同じ位置・同じ角度で、専用レイヤ (XREF) に出ること。
+     中央寄せは揃え記号 (72/11/21) でも渡すこと */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -49,6 +59,16 @@ const R = await p.evaluate(() => {
 
   const sym = symOf("goto_ref");
   out.sym = { gotoRef: !!sym.gotoRef, pins: sym.pins.length, cat: sym.cat, name: sym.name };
+  out.flagDef = JSON.stringify(sym.gotoRef);
+  // 旗の輪郭は電気的な意味を持たない参照枠なので細線 0.25mm (JIS Z 8312)
+  out.thin = /L30,0[^"]*"[^>]*stroke-width="0\.25"/.test(sym.body) ||
+    /<path d="M5,-2\.5[^"]*"[^>]*stroke-width="0\.25"/.test(sym.body);
+  out.filled = /fill="#fff"/.test(sym.body);
+  // 寸法モジュール M=2.5mm の整数倍で、全長は格子 5mm の整数倍か
+  const M = 2.5, G = 5;
+  const g0 = sym.gotoRef;
+  out.module = [g0.lead, g0.x0, g0.x1, g0.tip, g0.h].every(v => Math.abs(v / M - Math.round(v / M)) < 1e-9) &&
+    Math.abs(g0.tip / G - Math.round(g0.tip / G)) < 1e-9;
 
   /* 旗 (2 本目の path = 矢羽根の輪郭) の範囲を body から直に読む。文字の位置は
      図形そのものを基準に見るので、旗の形を変えれば必ずここで落ちる */
@@ -69,6 +89,9 @@ const R = await p.evaluate(() => {
   };
   const flag = walk((sym.body.match(/<path d="([^"]+)"/g) || [])[1].match(/d="([^"]+)"/)[1]);
   out.flag = flag;
+  // 実際に描く図形と、engine が計算に使う寸法が一致していること
+  out.bodyMatchesDef = flag.x0 === g0.x0 && flag.x1 === g0.tip &&
+    flag.y0 === -g0.h && flag.y1 === g0.h;
 
   const shown = () => { const xr = deviceXrefBox(p1, dev); return xr ? xr.text : "(なし)"; };
   const drawnText = () => {                     // 実際に紙へ出る文字 (この記号のぶんだけ)
@@ -121,24 +144,49 @@ const R = await p.evaluate(() => {
   out.reloadMoved = { shown: deviceXrefBox(App.project.pages[0], dev2).text, want: pageDwgNo(App.project.pages.find(pg => pg.id === q2.id)) };
   UI.movePage(2, 1);
 
-  // ⑨ 文字の位置: 旗の中央にあり、旗の内側に収まる (回しても同じ)
+  /* ⑨ 文字の位置: 旗の平行部の中央にあり、五角形の内側に判読できるあき
+     (0.7mm) を残して収まる。外接矩形ではなく五角形の 5 辺で見るので、
+     先端の斜辺への食い込みも捕まえる */
   const d3 = App.project.pages[0].devices.find(x => symOf(x.sym).gotoRef);
+  // 五角形の頂点 (記号ローカル)。辺への距離で判定する
+  const poly = [[g0.x0, -g0.h], [g0.x1, -g0.h], [g0.tip, 0], [g0.x1, g0.h], [g0.x0, g0.h]];
+  const distToEdges = (px, py) => {
+    let min = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length];
+      const vx = bx - ax, vy = by - ay;
+      const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
+      min = Math.min(min, Math.hypot(px - (ax + t * vx), py - (ay + t * vy)));
+    }
+    return min;
+  };
+  /* 検図が「入る」と言い切る幅 (gotoTextRoom) いっぱいの図番を、実際に置いたときに
+     五角形からあきが取れるか。検図の閾値と図形が食い違っていたらここで落ちる */
+  {
+    const room = gotoTextRoom(sym), hh = TEXT_H.small / 2, cx = (g0.x0 + g0.x1) / 2;
+    out.roomFits = Math.min(...[[-room / 2, -hh], [room / 2, -hh], [room / 2, hh], [-room / 2, hh]]
+      .map(([dx, dy]) => distToEdges(cx + dx, dy))).toFixed(3);
+    // 和文 (3.5mm) でも上下のあきが取れるか
+    const hj = 3.5 / 2;
+    out.roomFitsCJK = Math.min(...[[-room / 2, -hj], [room / 2, -hj], [room / 2, hj], [-room / 2, hj]]
+      .map(([dx, dy]) => distToEdges(cx + dx, dy))).toFixed(3);
+  }
   out.place = {};
   [0, 90, 180, 270].forEach(rot => {
     d3.rot = rot;
     const xr = deviceXrefBox(App.project.pages[0], d3);
     const c = { x: xr.box.x + xr.box.w / 2, y: xr.box.y + xr.box.h / 2 };
-    const want = pinAbs(d3, { x: (flag.x0 + flag.x1) / 2, y: (flag.y0 + flag.y1) / 2 });
-    // 旗の四隅 (回した後) の内側にあるか
-    const corners = [[flag.x0, flag.y0], [flag.x1, flag.y0], [flag.x1, flag.y1], [flag.x0, flag.y1]]
-      .map(([x, y]) => pinAbs(d3, { x, y }));
-    const fx0 = Math.min(...corners.map(v => v.x)), fx1 = Math.max(...corners.map(v => v.x));
-    const fy0 = Math.min(...corners.map(v => v.y)), fy1 = Math.max(...corners.map(v => v.y));
+    const want = pinAbs(d3, { x: (g0.x0 + g0.x1) / 2, y: 0 });     // 平行部の中央
+    // 文字の 4 隅を記号ローカルへ戻し、五角形の辺までのあきを測る
+    const hw = (rot === 90 || rot === 270 ? xr.box.h : xr.box.w) / 2;
+    const hh = (rot === 90 || rot === 270 ? xr.box.w : xr.box.h) / 2;
+    const cx = (g0.x0 + g0.x1) / 2;
+    const gaps = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
+      .map(([dx, dy]) => distToEdges(cx + dx, dy));
     out.place[rot] = {
       off: Math.hypot(c.x - want.x, c.y - want.y).toFixed(3),
-      inside: xr.box.x >= fx0 - 0.01 && xr.box.x + xr.box.w <= fx1 + 0.01 &&
-              xr.box.y >= fy0 - 0.01 && xr.box.y + xr.box.h <= fy1 + 0.01,
-      angle: xr.angle,                   // 旗の長手に沿う (JIS Z 8313-0 の読む向き)
+      gap: Math.min(...gaps).toFixed(3),      // 文字と旗の輪郭のあき
+      angle: xr.angle,      // 旗の長手に沿う (文字は下辺から/右辺から読む: JIS Z 8317-1)
       // 画面 (SVG) の文字も同じ角度で出ているか
       svg: /transform="rotate\(-90 /.test(devLabelsSVG(d3, symOf(d3.sym), App.project.pages[0])),
     };
@@ -151,7 +199,7 @@ const R = await p.evaluate(() => {
   const re = new RegExp(`\\n1\\n${xr0.text}\\n`);
   out.dxf = { has: re.test(t), text: xr0.text };
   // TEXT エンティティを拾って画面と同じ位置か見る (DXF は Y 反転)
-  const ent = t.split("\n0\nTEXT\n").find(s => s.startsWith("8\nWIRENUM") && s.includes("\n1\n" + xr0.text + "\n"));
+  const ent = t.split("\n0\nTEXT\n").find(s => s.startsWith("8\nXREF") && s.includes("\n1\n" + xr0.text + "\n"));
   if (ent) {
     const gx = parseFloat((/\n10\n(-?[\d.]+)/.exec(ent) || [])[1]);
     const gy = parseFloat((/\n20\n(-?[\d.]+)/.exec(ent) || [])[1]);
@@ -159,13 +207,18 @@ const R = await p.evaluate(() => {
     // 画面の外接矩形の左端と一致していれば、両方で同じ位置に見える
     out.dxf.dx = Math.abs(gx - xr0.box.x).toFixed(3);
     out.dxf.dy = Math.abs((SHEET.h - gy) - xr0.y).toFixed(3);
+    /* 受け側 CAD が別の書体に置き換えても中心がずれないよう、中央寄せは
+       72 (位置合わせ) + 11/21 (位置合わせ点) でも渡しているか */
+    out.dxf.align = (/\n72\n1\n/.test(ent)) &&
+      Math.abs(parseFloat((/\n11\n(-?[\d.]+)/.exec(ent) || [])[1]) - xr0.x) < 0.01 &&
+      Math.abs((SHEET.h - parseFloat((/\n21\n(-?[\d.]+)/.exec(ent) || [])[1])) - xr0.y) < 0.01;
   }
 
   // ⑩b 縦置きの行き先は DXF でも 90° で出る
   d3.rot = 90;
   const xr9 = deviceXrefBox(App.project.pages[0], d3);
   const t9 = pageToDXF(App.project.pages[0]);
-  const e9 = t9.split("\n0\nTEXT\n").find(s2 => s2.startsWith("8\nWIRENUM") && s2.includes("\n1\n" + xr9.text + "\n"));
+  const e9 = t9.split("\n0\nTEXT\n").find(s2 => s2.startsWith("8\nXREF") && s2.includes("\n1\n" + xr9.text + "\n"));
   out.dxfRot = e9 ? {
     ang: (/\n50\n(-?[\d.]+)/.exec(e9) || [])[1],
     // 90° なので基点は文字列の下端。画面の外接矩形の下辺と一致するはず
@@ -174,21 +227,79 @@ const R = await p.evaluate(() => {
   } : null;
   d3.rot = 0;
 
-  // ⑪ 指し先が消えたら (ページ削除) エラー
   const drc2 = (rule) => runDRC().filter(i => i.target === d3.id && (!rule || i.rule === rule))
-    .map(i => `${i.sev}:${i.msg}`);
-  out.okDrc = drc2();
+    .map(i => `${i.sev}:${i.rule}:${i.msg}`);
+
+  /* ⑪ 片道だけの相互参照は追えない。相手の葉から指し返して初めて対になる
+     (IEC 61082-1)。対ができると図番に相手の区分 (列) が付く */
+  out.oneWay = drc2();                     // 「対が無い」と「電位リンクが無い」の 2 件
+  const home = App.project.pages[0];
+  const to = App.project.pages.find(pg => pg.id === d3.props.toPage);
+  const third = App.project.pages.find(pg => pg !== home && pg !== to);
+  const mate = addDevice(to, "goto_ref", 150, 80, { tag: "" });
+  mate.props = { toPage: home.id };
+  addWire(to, [[135, 80], [150, 80]]);
+  /* 電気的な継続は電位リンクが担う。行き先だけでは通電しないので、
+     同じネットにリンクが無ければ検図が知らせる */
+  const lk1 = addDevice(home, "link", 85, 60, { tag: "-W101" });
+  const lk2 = addDevice(to, "link", 135, 80, { tag: "-W101" });
+  out.paired = { drc: drc2(), shown: deviceXrefBox(home, d3).text,
+    want: `${pageDwgNo(to)}/${sheetCol(mate.x)}` };
+  // リンクの相手が別の葉だと、絵と回路が食い違う
+  lk2.tag = "-W999";
+  const lk3 = addDevice(third, "link", 60, 60, { tag: "-W101" });
+  out.linkMismatch = drc2("行き先とリンクの不一致");
+  third.devices.splice(third.devices.indexOf(lk3), 1);
+  lk2.tag = "-W101";
+  out.linkOk = drc2("行き先とリンクの不一致");
+  // 対が 2 つあると区分が定まらないので図番だけに戻る (嘘の位置を書かない)
+  const mate2 = addDevice(to, "goto_ref", 150, 100, { tag: "" });
+  mate2.props = { toPage: App.project.pages[0].id };
+  out.ambiguous = deviceXrefBox(App.project.pages[0], d3).text;
+  to.devices.splice(to.devices.indexOf(mate2), 1);
+
+  // ⑫ 行き先どうしが近すぎる (5mm ピッチで並べると旗が接する)
+  const near = addDevice(to, "goto_ref", 150, 85, { tag: "" });
+  near.props = { toPage: App.project.pages[0].id };
+  out.tooNear = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
+  to.devices.splice(to.devices.indexOf(near), 1);
+  // 10mm 離せば出ない
+  const far = addDevice(to, "goto_ref", 150, 95, { tag: "" });
+  far.props = { toPage: App.project.pages[0].id };
+  out.farOk = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
+  to.devices.splice(to.devices.indexOf(far), 1);
+
+  // ⑬ 自分のページを指したらエラー (貼り付けで起こりうる)
+  const back0 = d3.props.toPage;
+  d3.props.toPage = App.project.pages[0].id;
+  out.selfRef = drc2();
+  d3.props.toPage = back0;
+
+  // ⑭ 指し先が消えたら (ページ削除) エラー
   const ti = App.project.pages.findIndex(pg => pg.id === d3.props.toPage);
   const keep = App.project.pages[ti];
   App.project.pages.splice(ti, 1); UI.renumberPages();
   out.deleted = { shown: deviceXrefBox(App.project.pages[0], d3).text, drc: drc2() };
   App.project.pages.splice(ti, 0, keep); UI.renumberPages();
 
-  // ⑫ 図番が旗 (24mm) に入りきらない
+  // ⑮ 図番が旗に入りきらない (判定は旗の実寸から計算する)
+  out.room = gotoTextRoom(symOf(d3.sym));
   projectMeta().dwgNo = "PROJECT-2026-VERYLONG-0010"; UI.renumberPages();
-  out.tooWide = drc2("行き先未設定");
+  out.tooWide = drc2("行き先の図番が入らない");
   projectMeta().dwgNo = ""; UI.renumberPages();
+  // ⑯ 和文の図番は最小呼び 3.5mm へ上がる。外接矩形も実際の高さで返すこと
+  const pgTo = App.project.pages.find(pg => pg.id === d3.props.toPage);
+  pgTo.dwgNo = "制御盤一次"; pgTo.dwgNoManual = true;
+  const xrJ = deviceXrefBox(App.project.pages[0], d3);
+  out.cjk = { size: xrJ.size, h: +xrJ.box.h.toFixed(2),
+    fits: xrJ.box.h + 0.7 * 2 <= symOf(d3.sym).gotoRef.h * 2 + 0.001 };
+  delete pgTo.dwgNoManual; UI.renumberPages();
+
   out.finalDrc = drc2();
+  // 操作経路の検査に入る前に、対の行き先を片づけて 1 個だけの状態に戻す
+  App.project.pages.forEach(pg => {
+    pg.devices = pg.devices.filter(d => !symOf(d.sym).gotoRef || d === d3);
+  });
   return out;
 });
 console.log(JSON.stringify(R, null, 1));
@@ -255,7 +366,9 @@ const S = await p.evaluate(() => {
     return JSON.stringify({ st: App.sim.states, p: [...e.pNets].sort(), n: [...e.nNets].sort() }); };
   simStart();
   o.before = snap();
-  o.drcBefore = runDRC().map(i => i.msg).join("|");
+  // 行き先そのものへの指摘は別途見る。ここは「他の機器の検図が変わらないこと」
+  const otherDrc = (id) => runDRC().filter(i => i.target !== id).map(i => i.msg).join("|");
+  o.drcBefore = otherDrc(null);
   o.bomBefore = JSON.stringify(buildBOM().rows ? buildBOM().rows : buildBOM());
   o.termBefore = JSON.stringify(buildTerminalList());
   // 生きている線に 行き先 をぶら下げる
@@ -264,7 +377,7 @@ const S = await p.evaluate(() => {
   o.after = snap();
   o.same = o.before === o.after;
   o.coilStillOn = !!App.sim.states[co.id];
-  o.drcSame = o.drcBefore === runDRC().map(i => i.msg).join("|");
+  o.drcSame = o.drcBefore === otherDrc(g.id);
   o.bomSame = o.bomBefore === JSON.stringify(buildBOM().rows ? buildBOM().rows : buildBOM());
   o.termSame = o.termBefore === JSON.stringify(buildTerminalList());
   // どの状態でも導通しない (閉/開/分離/実行中/切替の各モード)
@@ -285,7 +398,13 @@ console.log("シミュレーション:", JSON.stringify(S, null, 1));
 
 const checks = {
   // 記号そのもの
-  symIsGoto: R.sym.gotoRef === true && R.sym.pins === 1,
+  symIsGoto: !!R.sym.gotoRef && R.sym.pins === 1,
+  // 図形と、計算に使う寸法が一致していること
+  flagDefMatchesBody: R.bodyMatchesDef === true,
+  // 寸法モジュール M=2.5mm の整数倍・全長は格子 5mm の整数倍 (JIS C 0617-1)
+  flagOnModule: R.module === true,
+  // 旗は参照枠なので細線 0.25mm (JIS Z 8312)、白抜きで下の導体を隠す
+  flagThinAndFilled: R.thin === true && R.filled === true,
   // 図番の表示 (要求①)
   showsDwgNo: R.set.shown === R.set.want && R.set.want !== "?" ,
   drawnOnSheet: R.set.drawn === R.set.want,
@@ -301,19 +420,39 @@ const checks = {
     R.reloadMoved.shown === R.reloadMoved.want && R.reloadMoved.shown !== R.reload.shown,
   // 置き方
   centered: Object.values(R.place).every(v => parseFloat(v.off) < 0.01),
-  insideFlag: Object.values(R.place).every(v => v.inside),
+  // 五角形の 5 辺すべてから 0.7mm 以上あく (先端の斜辺への食い込みも見る)
+  insideFlag: Object.values(R.place).every(v => parseFloat(v.gap) >= 0.7 - 0.001),
+  // 検図が許す最大幅の図番を入れても、五角形から 0.7mm あくこと (和文 3.5mm も)
+  roomMatchesFlag: parseFloat(R.roomFits) >= 0.7 - 0.001 && parseFloat(R.roomFitsCJK) >= 0.7 - 0.001,
   // 横置きは水平、縦置きは 90° (読む向きは 2 通りだけ)。画面の文字も同じ角度
   textAngle: R.place[0].angle === 0 && R.place[180].angle === 0 &&
     R.place[90].angle === 90 && R.place[270].angle === 90 &&
     R.place[90].svg === true && R.place[0].svg === false,
-  // 検図
-  drcUnset: R.unset.drc.length === 1 && R.unset.drc[0].startsWith("warn:"),
-  drcOk: R.okDrc.length === 0 && R.finalDrc.length === 0,
-  drcDeleted: R.deleted.drc.length === 1 && R.deleted.drc[0].startsWith("err:") && R.deleted.shown === "?",
+  // 検図 (紙に「?」が刷られてしまうので未設定はエラー)
+  drcUnset: R.unset.drc.length === 1 && R.unset.drc[0].startsWith("err:") &&
+    /選ばれていません/.test(R.unset.drc[0]),
+  drcOk: R.paired.drc.length === 0 && R.finalDrc.length === 0,
+  drcDeleted: R.deleted.drc.length === 1 && R.deleted.drc[0].startsWith("err:行き先の指し先が無い") &&
+    R.deleted.shown === "?",
+  drcSelfRef: R.selfRef.length === 1 && R.selfRef[0].startsWith("err:行き先の自己参照"),
+  drcOneWay: R.oneWay.length === 2 &&
+    R.oneWay.some(m => m.startsWith("warn:行き先の対が無い")) &&
+    R.oneWay.some(m => m.startsWith("warn:行き先とリンクの不一致") && /電位リンクがありません/.test(m)),
+  // 行き先の指す葉と、電位リンクの相手の葉が食い違ったらエラー
+  drcLinkMismatch: R.linkMismatch.length === 1 && R.linkMismatch[0].startsWith("err:") &&
+    R.linkOk.length === 0,
+  drcTooNear: R.tooNear === 1 && R.farOk === 0,
   drcTooWide: R.tooWide.length === 1 && /入りきりません/.test(R.tooWide[0]),
+  // 対ができたら区分 (列) まで書く / 対が 2 つで定まらなければ図番だけ
+  zoneWhenPaired: R.paired.shown === R.paired.want && /\/\d+$/.test(R.paired.shown),
+  zoneOnlyWhenUnique: !/\//.test(R.ambiguous),
+  // 和文の図番は 3.5mm に上がる。外接矩形も実寸で返し、旗にも収まる
+  cjkHeight: R.cjk.size === 3.5 && R.cjk.h === 3.5 && R.cjk.fits === true,
   // DXF
   dxfText: R.dxf.has === true,
   dxfPos: parseFloat(R.dxf.dx) < 0.01 && parseFloat(R.dxf.dy) < 0.01,
+  // 中央寄せは揃え記号でも渡す (受け側の書体が変わっても中心がずれない)
+  dxfAlign: R.dxf.align === true,
   dxfRotated: R.dxfRot && parseFloat(R.dxfRot.ang) === 90 &&
     parseFloat(R.dxfRot.dx) < 0.01 && parseFloat(R.dxfRot.dy) < 0.01,
   // プルダウン (要求②)

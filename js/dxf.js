@@ -4,11 +4,11 @@
    - 座標系: mm。DXF は Y 上向きのため Y を反転して出力
    - シンボルは SVG ボディ (path/rect/circle/text) を解析して LINE/POLYLINE/
      CIRCLE/TEXT に変換。円弧 (A コマンド) は折線近似
-   - レイヤ: FRAME / WIRE / SYMBOL / TEXT / WIRENUM / PIN
+   - レイヤ: FRAME / WIRE / SYMBOL / TEXT / WIRENUM / XREF / PIN
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
-const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "SYMBOL_THIN", "TEXT", "WIRENUM", "PIN"];
+const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "SYMBOL_THIN", "TEXT", "WIRENUM", "XREF", "PIN"];
 /* R12 は線幅を持たないため、太さの区分はレイヤと色 (ペン) で伝える。
    FRAME=輪郭 0.7 / FRAME_THIN=区分線・仕切り 0.25 / WIRE=0.5 / AUXLINE=0.25 */
 
@@ -295,8 +295,13 @@ function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}
   const off = anchor === "middle" ? -w / 2 : anchor === "end" ? -w : 0;
   const ax = x + off * Math.cos(rad);       // 回転後の基線方向へ寄せる
   const ay = y - off * Math.sin(rad);
+  /* 寄せは 72 (水平位置合わせ) + 11/21 (位置合わせ点) でも渡す。10/20 だけだと
+     受け側 CAD が別の書体に置き換えた瞬間に中心がずれる (幅はこちらの実測値なので)。
+     72 を読まない古いビューアのために 10/20 の左端も従来どおり入れておく */
+  const al = anchor === "middle" ? 1 : anchor === "end" ? 2 : 0;
   return dxfEntity([[0, "TEXT"], [8, layer], [7, "JP"], [10, ax.toFixed(3)], [20, dxfY(ay)],
-    [40, size.toFixed(2)], [1, dxfEscape(text)], [50, angle]]);
+    [40, size.toFixed(2)], [1, dxfEscape(text)], [50, angle]]
+    .concat(al ? [[72, al], [11, x.toFixed(3)], [21, dxfY(y)]] : []));
 }
 
 /** デバイス座標変換 (回転 + 平行移動) */
@@ -533,7 +538,8 @@ function pageToDXF(page) {
     const lboxes = deviceLabelBoxes(page, dev);
     lboxes.forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor); });
     const xr = deviceXrefBox(page, dev);      // 位置は画面と同じ探索結果を使う
-    if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "WIRENUM", xr.anchor || "start", xr.angle || 0);
+    // 相互参照は線番ではないので専用レイヤへ (受領側で線番だけを操作しても巻き込まれない)
+    if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "XREF", xr.anchor || "start", xr.angle || 0);
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)
     if (sym.mirror) ents += dxfMirrorTable(dev, C);
   });
@@ -546,7 +552,7 @@ function pageToDXF(page) {
   // ── DXF 全体 (R12) ──
   /* R12 は線幅を持たないため、太さの区分は色番号 (ペン) で伝える。
      7=太線 0.5mm / 6=中間 / 8=細線 0.25mm / 5=輪郭 0.7mm */
-  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, PIN: 8 };
+  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, XREF: 6, PIN: 8 };
   const layers = DXF_LAYERS.map(l =>
     dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, LAYER_COLOR[l] || 7], [6, "CONTINUOUS"]])).join("");
   return [

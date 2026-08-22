@@ -1217,6 +1217,9 @@ function pasteClipboard() {
   cb.devs.forEach((d0, i) => {
     const d = page.devices[page.devices.length - cb.devs.length + i];
     if (d.linkTo && idMap[d.linkTo]) d.linkTo = idMap[d.linkTo];
+    // 行き先を別ページへ貼ると、指し先が貼り付け先そのものになることがある。
+    // 自分の葉を指す相互参照は意味を成さないので落とす (検図でも err)
+    if (symOf(d.sym).gotoRef && d.props && d.props.toPage === page.id) delete d.props.toPage;
     if (d.tag && !d.linkTo) {
       const sym = symOf(d.sym);
       if (sym.letter) d.tag = nextTag(sym.letter);
