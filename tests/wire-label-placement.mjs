@@ -63,6 +63,8 @@ const R = await p.evaluate(() => {
     res.worstDy = Math.max(...res.dy.map(Math.abs));
     res.xSpread = +(Math.max(...res.x) - Math.min(...res.x)).toFixed(1);
     res.overLimit = +Math.max(0, res.width - freeRun).toFixed(1);           // 幾何的な下限
+    // 囲みの上に載せた場合、検図が「図記号と重なる」と知らせるか
+    res.drcTold = runDRC().some(i => /線番.*重なって/.test(i.msg));
     return res;
   };
   const out = {};
@@ -83,10 +85,14 @@ for (const [k, v] of Object.entries(R)) {
   console.log(k.padEnd(20), "dy≤", v.worstDy, "導体に載らず", v.offSeg, "貫通", v.pierce,
     "x幅", v.xSpread, "はみ出し", v.over, "/ 下限", v.overLimit);
 }
-// ※ 付き = 空いている導体が線番より短い限界の図。整列は幾何的に不可能なので、
-//   線の脇にあること (dy) と図記号を貫通しないことだけを見る
+// ※ 付き = 空いている導体が残らない限界の図 (囲みが心線のほぼ全長を占める)。
+//   線番の置き場所が無いので囲みの上に載せる — 白紙へ飛ばさない。よって
+//   「線の脇にあること・はみ出しが幾何的下限以内・列が揃うこと」を見る。
+//   囲みとの重なりは避けられないので、代わりに検図が知らせることを確かめる。
+//   列の整列までは保証しない (線番ごとに置ける場所が違うため) — 図面としては
+//   心線を伸ばすか囲みを縮めるのが正解で、それを検図が促す
 const fail = Object.entries(R).filter(([k, v]) => k.startsWith("※")
-  ? (v.worstDy > 2.5 || v.pierce > 0)
+  ? (v.worstDy > 2.5 || v.over > v.overLimit + 0.6 || !v.drcTold)
   : (v.worstDy > 2.5 || v.offSeg > 0 || v.pierce > 0 || v.xSpread > 0.6 || v.over > v.overLimit + 0.6));
 console.log("RESULT:", fail.length ? "FAIL " + fail.map(([k]) => k).join(",") : "ok");
 console.log("ERRORS:", errs.length, errs.slice(0, 3));

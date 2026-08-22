@@ -194,7 +194,8 @@ function wireLabelPosCalc(w, page, placed) {
   // 障害物: 機器の図記号・注記・デバイスタグ/機能テキスト (線番が図記号に被らないように)
   const obst = page ? pinLabelBoxes(page) : [];
   devs.forEach(d => {
-    deviceObstacleBoxes(d, OBST_INSET.wireNum * f).forEach(b => obst.push(b));
+    const soft = !!symOf(d.sym).enclosure;   // 囲み記号 = 最後の手段では上に載せてよい
+    deviceObstacleBoxes(d, OBST_INSET.wireNum * f).forEach(b => obst.push(soft ? { ...b, soft: true } : b));
     if (page) {
       deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
       mirrorLabelBoxes(d).forEach(b => obst.push(b));
@@ -297,20 +298,27 @@ function wireLabelPosCalc(w, page, placed) {
     // 空いている導体が線番より短い図 (囲みが大きい・心線が短い) では、線番は
     // 導体の延長上へ出る。線から法線方向へ大きく離すより、線の続きに置いて
     // 全心線で同じ側・同じ位置に揃えるほうが、どの心線の番号か読める
-    // 線側へ寄せた版と元の版の両方を候補にする (寄せると囲みに当たる場合があるため)
-    const all = [...cands, ...cands.map(shift)];
+    // 線側へ寄せた版と元の版の両方を候補にする (寄せると囲みに当たる場合があるため)。
+    // 自分の線にまったく重ならない位置は使わない — 導体から離れた白紙の上に
+    // 線番が浮くくらいなら、後段で囲みの上に載せたほうが読める
+    const touches = (c) => {
+      const v = horiz ? c[0] : c[1], lo = horiz ? lo0 : lo1, hi = horiz ? hi0 : hi1;
+      return Math.min(v + size / 2, hi) - Math.max(v - size / 2, lo) >= 0.5;
+    };
+    const all = [...cands, ...cands.map(shift)].filter(touches);
     const rank = (p1, p2) => (over(p1) - over(p2)) || near(p1, p2);
     // 既に置いた線番 (並んだ心線の線番) と同じ側へ揃える。ケーブルの中で
     // 線番が左右にばらけると、どの心線の番号か読めなくなる
+    // 既に置いた線番と「箱の端」で揃える。連番の桁数が変わって線番の幅が
+    // 混ざっても (12芯の 9→10 など) 列が割れないよう、中心ではなく端で比べる
     const alignBias = (c) => {
-      let best = 0;
+      let best = Infinity;
       (placed || []).forEach(r => {
-        const rc = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
-        const v = horiz ? c[0] : c[1];
-        const d = Math.abs(v - rc);
-        best = best === 0 ? d : Math.min(best, d);
+        const v0 = (horiz ? c[0] : c[1]) - size / 2, v1 = (horiz ? c[0] : c[1]) + size / 2;
+        const r0 = horiz ? r.x : r.y, r1 = horiz ? r.x + r.w : r.y + r.h;
+        best = Math.min(best, Math.abs(v0 - r0), Math.abs(v1 - r1));
       });
-      return best;
+      return best === Infinity ? 0 : best;
     };
     const rank2 = (p1, p2) => (alignBias(p1) - alignBias(p2)) || rank(p1, p2);
     cands = [...all.filter(inSeg).sort(near),
@@ -330,6 +338,40 @@ function wireLabelPosCalc(w, page, placed) {
       if (ok) return ok;
     }
   }
+  // 空いている導体が無く、線から大きく外れた位置しか残らない図 (囲みが心線の
+  // ほぼ全長を占める) では、線番を囲みの上に載せる。白紙へ飛ばすより、自分の
+  // 心線の上にあるほうが読める。重なりは検図が「図記号と重なる」と知らせるので、
+  // 使う人は心線を伸ばすなり囲みを縮めるなりを判断できる
+  {
+    const hard = obst.filter(r => !r.soft);
+    const ok = [];
+    for (const sg of segs) {
+      const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
+      const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
+      for (const t of TS) {
+        for (const side of [1, -1]) {
+          const res = posOf(at(t), horiz, side, 0);
+          const bx = boxOf(res[0], res[1], horiz);
+          if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) ok.push({ res, bx, horiz });
+        }
+      }
+    }
+    if (ok.length) {
+      // ここでも既に置いた線番と端で揃える (ケーブルの中で列が割れないように)
+      const bias = (o) => {
+        let best = Infinity;
+        (placed || []).forEach(r => {
+          const [v0, v1] = o.horiz ? [o.bx.x, o.bx.x + o.bx.w] : [o.bx.y, o.bx.y + o.bx.h];
+          const [r0, r1] = o.horiz ? [r.x, r.x + r.w] : [r.y, r.y + r.h];
+          best = Math.min(best, Math.abs(v0 - r0), Math.abs(v1 - r1));
+        });
+        return best === Infinity ? 0 : best;
+      };
+      ok.sort((a2, b2) => bias(a2) - bias(b2));
+      return ok[0].res;
+    }
+  }
+
   // それでも空かないときだけ、線から法線方向へ離す
   for (const extra of [3, 6]) {
     for (const sg of segs) {
@@ -2016,17 +2058,24 @@ function runDRC() {
           const through = horiz
             ? (a[1] > y0 - 0.01 && a[1] < y1 + 0.01 && Math.min(a[0], b2[0]) <= x0 + 0.01 && Math.max(a[0], b2[0]) >= x1 - 0.01)
             : (a[0] > x0 - 0.01 && a[0] < x1 + 0.01 && Math.min(a[1], b2[1]) <= y0 + 0.01 && Math.max(a[1], b2[1]) >= y1 - 0.01);
-          const drain = (sym.pins || []).some(pn => {
-            const pa = pinAbs(dev, pn);
-            return horiz && Math.abs(a[1] - pa.y) < 0.01;
+          // ドレン線 (遮へいの引出し行) は心線として数えない。重ねてある遮へいの
+          // 引出し行も見る。回転していても機器座標で比べる
+          const drain = page.devices.some(d3 => {
+            const s3 = symOf(d3.sym);
+            if (!((s3.stretchOf || s3.id) === "shield")) return false;
+            if (Math.hypot(d3.x - dev.x, d3.y - dev.y) > 20) return false;
+            return (s3.pins || []).some(pn => {
+              const pa = pinAbs(d3, pn);
+              return Math.abs(a[0] - pa.x) < 0.01 || Math.abs(a[1] - pa.y) < 0.01;
+            });
           });
           if (through && !drain) { cross++; break; }
         }
       });
       // 囲みに掛かっているのに中で終わっている導体 (行き止まり) も拾う
       let deadEnd = 0;
+      const bd1 = devBounds(dev);
       condWires(page).forEach(w => {
-        const bd1 = devBounds(dev);
         const inside = pt => pt[0] > bd1.x + 1 && pt[0] < bd1.x + bd1.w - 1 && pt[1] > bd1.y + 1 && pt[1] < bd1.y + bd1.h - 1;
         if (w.pts.some(inside)) deadEnd++;
       });
@@ -2034,9 +2083,11 @@ function runDRC() {
         issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
           msg: `${displayTag(dev) || sym.name} の中で終わっている配線が ${deadEnd} 本あります (心線は囲みを貫いて描いてください)` });
       }
-      if (cross && cross !== want) {
+      if (cross !== want) {
         issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
-          msg: `${displayTag(dev) || sym.name} は ${want} 芯に設定されていますが、実際に通っている心線は ${cross} 本です` });
+          msg: cross === 0
+            ? `${displayTag(dev) || sym.name} を貫いている心線がありません (${want} 芯に設定されています)`
+            : `${displayTag(dev) || sym.name} は ${want} 芯に設定されていますが、実際に通っている心線は ${cross} 本です` });
       }
     });
 
