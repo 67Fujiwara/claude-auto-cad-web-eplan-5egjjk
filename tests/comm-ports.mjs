@@ -1,10 +1,14 @@
 /* コントローラの通信ポート (EtherNet/IP・USB-A/B/C・HDMI) が、パレットでも図面でも
    一目で見分けられることを確かめる。
 
-   受け口を正面から見た識別図 + ラベルを「見出し」として記号の上に置く。実物の
-   外観図なので向きに意味があり、機器を回しても正立させないと「上下逆さまの
-   受け口」という実在しない絵になる。そこで見出しは data-upright グループにし、
-   位置だけ機器と一緒に回して姿勢は変えない (画面・DXF とも)。
+   記号は「受け口の識別図 + ラベル」の見出しと、JIS C 0617-3 03-03-05
+   「プラグおよびソケット」1極の組み合わせ。LAN・USB・HDMI は既製ケーブル 1 品目
+   なので、心線を 8 本・19 本と展開せず「機器 ─ ポート ─ ケーブル」の 1 本の
+   接続として描く。端子の割付は desc に文字で残す。
+
+   見出しは実物の外観図なので向きに意味があり、機器を回しても正立させないと
+   「上下逆さまの受け口」という実在しない絵になる。そこで data-upright グループに
+   して、位置だけ機器と一緒に回し姿勢は変えない (画面・DXF とも)。
 
    判定
    ・識別図が互いに違う形であること (外形の指紋。x・y を同じ倍率で正規化して
@@ -26,13 +30,15 @@ const p = await b.newPage();
 const errs = []; p.on("pageerror", e => errs.push(String(e)));
 await p.goto(`file://${new URL("../index.html", import.meta.url).pathname}`);
 await p.waitForTimeout(900);
+/* 1極なので接点は 1 つ = 端子は 2 つ (機器側・ケーブル側)。
+   実機の端子割付は desc に文字で残っていること (図面に何本も線を引くための
+   ものではないが、情報を捨てはしない) */
 const EXPECT = {
-  conn_rj45: ["TD+", "TD-", "RD+", "NC1", "NC2", "RD-", "NC3", "NC4"],
-  conn_usb_a: ["VBUS", "D-", "D+", "GND"],
-  conn_usb_b: ["VBUS", "D-", "D+", "GND"],
-  conn_usb_c: ["VBUS", "GND", "CC1", "CC2", "D+", "D-", "SHELL"],
-  conn_hdmi: ["D2+", "D2S", "D2-", "D1+", "D1S", "D1-", "D0+", "D0S", "D0-", "CK+",
-              "CKS", "CK-", "CEC", "RSV", "SCL", "SDA", "GND", "+5V", "HPD"],
+  conn_rj45: /端子 1=TD\+ 2=TD- 3=RD\+ 6=RD-/,
+  conn_usb_a: /端子 1=VBUS 2=D- 3=D\+ 4=GND/,
+  conn_usb_b: /端子 1=VBUS 2=D- 3=D\+ 4=GND/,
+  conn_usb_c: /A1〜A12 \/ B1〜B12/,
+  conn_hdmi: /端子 1〜9=TMDS/,
 };
 const R = await p.evaluate((EXPECT) => {
   const NS = "http://www.w3.org/2000/svg";
@@ -99,9 +105,12 @@ const R = await p.evaluate((EXPECT) => {
   IDS.forEach(id => {
     const sym = symOf(id);
     boxes.add((sym.thumbBox || []).slice(2).join(","));   // 倍率は枠の大きさで決まる
-    if (JSON.stringify((sym.pins || []).map(q => q.n)) !== JSON.stringify(EXPECT[id])) {
-      out.pins.push(`${id}: ${(sym.pins || []).map(q => q.n).join(",")}`);
-    }
+    // 1極 = 端子 2 つ (機器側・ケーブル側)。極ごとに線を引く形ではない
+    if ((sym.pins || []).length !== 2) out.pins.push(`${id}: 端子 ${(sym.pins || []).length} 個`);
+    if (!new RegExp(EXPECT[id]).test(sym.desc || "")) out.pins.push(`${id}: 端子割付が desc に無い`);
+    // プラグ (塗り潰し) とソケット (半円) が揃っているか = 03-03-05 の形
+    if (!/fill="currentColor"/.test(sym.body)) out.pins.push(`${id}: プラグ (塗り潰し) が無い`);
+    if (!/A3\.5,3\.5/.test(sym.body)) out.pins.push(`${id}: ソケット (半円) が無い`);
   });
   out.thumb = [...boxes];
   /* 画面: 4 方向で見出しが正立し、外接矩形の内側に収まるか。
@@ -176,7 +185,7 @@ const R = await p.evaluate((EXPECT) => {
   });
   out.drc = runDRC().filter(i => i.page === pg3.no && !/端点|未接続/.test(i.msg)).map(i => i.msg);
   probe.remove(); return out;
-}, EXPECT);
+}, Object.fromEntries(Object.entries(EXPECT).map(([k, v]) => [k, v.source])));
 console.log(JSON.stringify({ ...R, ports: Object.fromEntries(Object.entries(R.ports).map(([k, v]) => [k, v && { w: v.w, h: v.h, len: v.len, paths: v.paths }])) }, null, 1));
 const checks = {
   hasBlock: R.noBlock.length === 0,               // 記号本体に見出しがある
@@ -187,7 +196,7 @@ const checks = {
   dxfThin: R.dxfThin.length === 0,                // DXF でも細線レイヤ
   dxfUpright: R.dxfRot.length === 0,              // DXF でも 4 方向で同一形状
   sameThumbScale: R.thumb.length === 1,           // パレットの倍率が全記号で同じ
-  pinNames: R.pins.length === 0,
+  pole1: R.pins.length === 0,        // 1極 (端子 2 つ) + 端子割付は文字で残す
   fnDefault: R.fn === "EtherNet/IP",
   drcClean: R.drc.length === 0,
 };
