@@ -50,11 +50,13 @@ const R = await p.evaluate(() => {
   /** n芯・線番 dig 桁・vert:縦向き・半長 half の対称なケーブル。
       心線の両端に端子台、ドレン線は片端で FE へ落とす (図面として成立する形) */
   let sceneNo = 0;
-  const run = (n, dig, vert, half) => {
+  /** opt.shift: 囲みを心線方向へずらす (囲みが中央にない図)
+      opt.twin : 並び方向に離して 2 本目のケーブルを置く (隣のケーブルが障害物) */
+  const run = (n, dig, vert, half, opt = {}) => {
     const id = ++sceneNo;
     const pg = newPage(`m${id}`, App.project.pages.length + 1);
     App.project.pages.push(pg); App.pageIdx = App.project.pages.length - 1;
-    const A = 200, B = 60, L0 = A - half, L1 = A + half, E = 20;
+    const A = 200 + (opt.shift || 0), B = 60, L0 = 200 - half, L1 = 200 + half, E = 20;
     const mk = (u, v) => vert ? [v, u] : [u, v];       // u=心線方向 v=並び方向
     // 心線は端子の外側まで伸ばし、端子の 2 ピンを両方とも結線する
     const cores = [];
@@ -74,6 +76,23 @@ const R = await p.evaluate(() => {
     const dp = devPins(d2)[0], fe = pinAbs(d2, { x: 10, y: h + 10 });
     addWire(pg, [[dp.x, dp.y], [fe.x, fe.y]]);
     addDevice(pg, "func_earth", fe.x, fe.y, { tag: `-FE${id}`, rot: d2.rot || 0 });
+    if (opt.twin) {
+      // 2 本目は、1 本目のドレン線・FE 記号に掛からない距離に置く
+      const B2 = B + n * 5 + 60;
+      const c2 = [];
+      for (let i = 0; i < n; i++) c2.push(addWire(pg, [mk(L0 - E, B2 + i * 5), mk(L1 + E, B2 + i * 5)]));
+      const e1 = addDevice(pg, `cable_core@${h}`, ...mk(200, B2), { tag: `-W${id}b`, ...o });
+      const e2 = addDevice(pg, `shield@${h}`, ...mk(200, B2), { tag: `-W${id}bS`, ...o });
+      for (let i = 0; i < n; i++) {
+        addDevice(pg, "terminal", ...mk(L0, B2 + i * 5), { tag: "", rot: vert ? 180 : 90 });
+        addDevice(pg, "terminal", ...mk(L1, B2 + i * 5), { tag: "", rot: vert ? 0 : 270 });
+      }
+      const dq = devPins(e2)[0], fq = pinAbs(e2, { x: 10, y: h + 10 });
+      addWire(pg, [[dq.x, dq.y], [fq.x, fq.y]]);
+      addDevice(pg, "func_earth", fq.x, fq.y, { tag: `-FE${id}b`, rot: e2.rot || 0 });
+      c2.forEach((w, i) => { w.num = String(700 + i); w.fixed = true; w.numShow = true; });
+      void e1;
+    }
     // 線番は必ず桁上がりをまたぐ連番にして、線番の幅が混ざる場合を通す
     const base = dig === 1 ? 0 : Math.pow(10, dig - 1) - 1;
     cores.forEach((w, i) => { w.num = String(base + i); w.fixed = true; w.numShow = true; });
@@ -149,6 +168,13 @@ const R = await p.evaluate(() => {
     const V = vert ? "縦" : "横";
     out[`${n}芯/${dig}桁/${V}/長`] = run(n, dig, vert, 35);
     out[`${n}芯/${dig}桁/${V}/短`] = run(n, dig, vert, 20);
+  }
+  // 対称な図だけでは足りない。囲みが中央にない図・並んだ 2 本のケーブルも回す
+  for (const n of [4, 12]) for (const dig of [2, 5]) for (const vert of [0, 1]) {
+    const V = vert ? "縦" : "横";
+    out[`${n}芯/${dig}桁/${V}/偏り-10`] = run(n, dig, vert, 35, { shift: -10 });
+    out[`${n}芯/${dig}桁/${V}/偏り+15`] = run(n, dig, vert, 35, { shift: 15 });
+    out[`${n}芯/${dig}桁/${V}/2本並び`] = run(n, dig, vert, 35, { twin: true });
   }
   probe.remove(); return out;
 });

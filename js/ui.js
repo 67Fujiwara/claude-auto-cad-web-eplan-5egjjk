@@ -340,8 +340,11 @@ UI.showProps = (focusTag = false) => {
         const st = symStretchBase(sym).stretch;
         const span = sym.span || st.def;
         const n = symSpanToCores(span);
+        const cable = baseIdOfCable(sym);
         return `<div class="prop-row"><label>${st.label} <span class="rp-dim">(囲みの長さ ${span}mm・5mm ピッチ)</span></label>
-          <input id="pSpan" class="mono" type="number" step="1" min="${symSpanToCores(st.min)}" max="${symSpanToCores(st.max)}" value="${n}"/></div>`;
+          <input id="pSpan" class="mono" type="number" step="1" min="${symSpanToCores(st.min)}" max="${symSpanToCores(st.max)}" value="${n}"/></div>` +
+          (cable ? `<div class="prop-row"><label>長さ (m) <span class="rp-dim">(部品表の集計用)</span></label>
+          <input id="pLen" class="mono" type="number" step="0.1" min="0" value="${dev.props && dev.props.len !== undefined ? dev.props.len : ""}" placeholder="例: 12.5"/></div>` : "");
       })() : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}
     `;
@@ -373,7 +376,23 @@ UI.showProps = (focusTag = false) => {
       const span = symStretchSpan(base, symCoresToSpan(parseFloat(v)));
       symStretchVariant(base, span);      // 定義を用意してから割り当てる
       dev.sym = `${base.id}@${span}`;
+      // 心線囲みと遮へいは 1 本のケーブルなので、芯数は必ず両方に効かせる
+      // (片方だけ変わると「遮へいと心線囲みの不一致」で検図に出る)
+      const mate = cablePartner(curPage(), dev);
+      if (mate) {
+        const mb = symStretchBase(symOf(mate.sym));
+        if (mb) { symStretchVariant(mb, span); mate.sym = `${mb.id}@${span}`; }
+      }
       App.labelRev++;
+      // 範囲外の入力は丸めた値を欄に書き戻す (打った数字が残ると誤解を招く)
+      const el = pane.querySelector("#pSpan");
+      if (el) el.value = String(symSpanToCores(span));
+    });
+    bind("#pLen", v => {
+      const n2 = parseFloat(v);
+      if (isNaN(n2) || n2 <= 0) delete dev.props.len; else dev.props.len = n2;
+      const mate = cablePartner(curPage(), dev);      // 長さも 1 本ぶんとして共有する
+      if (mate) { mate.props = mate.props || {}; if (isNaN(n2) || n2 <= 0) delete mate.props.len; else mate.props.len = n2; }
     });
     if (focusTag) { const t = pane.querySelector("#pTag"); if (t && !t.disabled) { t.focus(); t.select(); } }
     pane.querySelectorAll(".xref-item").forEach(el => {
@@ -604,10 +623,11 @@ UI.showBOM = () => {
   const esc = s => String(s).replace(/</g, "&lt;");
   pane.innerHTML = `
     <table class="bom-table">
-      <thead><tr><th>デバイスタグ</th><th>名称</th><th>型式</th><th>数</th></tr></thead>
+      <thead><tr><th>デバイスタグ</th><th>名称</th><th>型式</th><th>数</th><th>長さ(m)</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td class="mono clip" title="${esc(r.tags.join(", "))}">${esc(r.tags.length > 2 ? r.tags.slice(0, 2).join(" ") + "…" : r.tags.join(" "))}</td>
-        <td class="clip" title="${esc(r.name)}">${esc(r.name)}</td><td class="mono clip" title="${esc(r.typeRef)}">${esc(r.typeRef)}</td><td>${r.tags.length}</td></tr>`).join("")}</tbody>
+        <td class="clip" title="${esc(r.name)}">${esc(r.name)}</td><td class="mono clip" title="${esc(r.typeRef)}">${esc(r.typeRef)}</td><td>${r.tags.length}</td>
+        <td class="mono">${r.cable ? (r.len ? +r.len.toFixed(1) : "—") : ""}</td></tr>`).join("")}</tbody>
     </table>
     ${plc.length ? `
     <div class="prop-sect" style="margin-top:16px">PLC アドレス一覧</div>

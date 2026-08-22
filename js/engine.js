@@ -1074,8 +1074,10 @@ function symStretchVariant(base, span) {
   return v;
 }
 /** 伸縮シンボルの長さ ⇔ 心線の本数 (囲みは 1本目の 1ピッチ上から最終心線の 1ピッチ下まで) */
-function symSpanToCores(span) { return Math.max(2, Math.round((span - 5) / GRID)); }
-function symCoresToSpan(n) { return Math.max(2, Math.round(n)) * GRID + GRID; }
+// 1 芯は遮へい単体 (シールド線・同軸) で使う。心線囲み (多芯ケーブル) の側は
+// stretch.min = 15 なので 2 芯より小さくならない
+function symSpanToCores(span) { return Math.max(1, Math.round((span - 5) / GRID)); }
+function symCoresToSpan(n) { return Math.max(1, Math.round(n)) * GRID + GRID; }
 /** 伸縮シンボルの基本形 (寸法違いなら元の定義) */
 function symStretchBase(sym) {
   if (sym && sym.stretch) return sym;
@@ -2263,14 +2265,25 @@ function runDRC() {
       }
       // 遮へいは心線囲みに重ねて使う。位置や本数が食い違うと、どの心線を
       // 遮へいしているのか図面から読めない
-      const core = page.devices.find(d2 => (symOf(d2.sym).stretchOf || d2.sym) === "cable_core" &&
-        Math.abs(d2.x - dev.x) < 0.01 && Math.abs(d2.y - dev.y) < 0.01 && (d2.rot || 0) === (dev.rot || 0));
+      // 心線が並ぶ範囲 (ドレン線の引出し行と上下の余白は除く) を機器座標から作る。
+      // 長円の直線部だけを見るので、ドレン線の引出し行 (y=span-5) は入らない
+      const base0 = symStretchBase(sym);
+      const span0 = sym.span || (base0 && base0.stretch.def) || 25;
+      // 心線の行は y = 0 〜 (芯数-1)×5。ドレン線の引出し行 (y = span-5) は入れない
+      const yLast = (symSpanToCores(span0) - 1) * GRID + 2;
+      const cs0 = [[-6, -2], [6, -2], [6, yLast], [-6, yLast]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
+      const xs0 = cs0.map(q => q.x), ys0 = cs0.map(q => q.y);
+      const inner = { x: Math.min(...xs0), y: Math.min(...ys0), w: Math.max(...xs0) - Math.min(...xs0), h: Math.max(...ys0) - Math.min(...ys0) };
+      const coreWires = condWires(page).filter(w => w.pts.some((pt, i) => i > 0 && segCrossesRect(w.pts[i - 1], pt, inner)));
+      const core = cablePartner(page, dev);
       if (!core) {
         const near = page.devices.find(d2 => (symOf(d2.sym).stretchOf || d2.sym) === "cable_core" &&
           Math.hypot(d2.x - dev.x, d2.y - dev.y) < 20);
-        issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
+        // 遮へいだけを導体に掛ける図 (シールド線・同軸) も実務にはある。
+        // 導体が 1 本も通っていないときだけ「囲む対象がない」と知らせる
+        if (near || !coreWires.length) issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
           msg: near ? `${displayTag(dev) || sym.name} と心線囲みの位置がずれています (同じ位置に重ねてください)`
-                    : `${displayTag(dev) || sym.name} に囲まれる心線囲み (多芯ケーブル) がありません` });
+                    : `${displayTag(dev) || sym.name} に囲まれる導体がありません (心線か心線囲みを重ねてください)` });
       } else if ((symOf(core.sym).span || 0) !== (sym.span || 0)) {
         issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
           msg: `${displayTag(dev) || sym.name} と心線囲みの心線本数が違います (${symSpanToCores(symOf(core.sym).span || 25)} 芯 / ${symSpanToCores(sym.span || 25)} 芯)` });
@@ -2278,15 +2291,7 @@ function runDRC() {
 
       // 遮へいの中を通る心線とドレン線が同じネットになっていたら短絡 (遮へいの意味が失われる)
       if (net) {
-        // 心線が並ぶ範囲 (ドレン線の引出し行と上下の余白は除く) を機器座標から作る
-        const base0 = symStretchBase(sym);
-        const span = sym.span || (base0 && base0.stretch.def) || 25;
-        // 長円の直線部 (心線が並ぶ範囲)。引出し行 (y=span-5) は含めない
-        const cs = [[-6, -2], [6, -2], [6, span - 12], [-6, span - 12]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
-        const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
-        const inner = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
-        const hit = condWires(page).find(w => closed.wireNet.get(w.id) === net &&
-          w.pts.some((pt, i) => i > 0 && segCrossesRect(w.pts[i - 1], pt, inner)));
+        const hit = coreWires.find(w => closed.wireNet.get(w.id) === net);
         if (hit) {
           issues.push({ sev: "err", msg: `${displayTag(dev) || sym.name} のドレン線が中の心線と同じネットになっています (遮へいと心線は分けてください)`,
             page: page.no, target: dev.id, loc: devLocation(dev) });
@@ -2457,6 +2462,15 @@ function baseIdOfCable(sym) {
   const id = sym.stretchOf || sym.id;
   return id === "cable_core" || id === "shield";
 }
+/** 心線囲み ⇔ 遮へい の相方 (同じ位置・同じ向きに重ねてあるもの)。
+    検図・部品表・プロパティ (芯数の連動) で同じ判定を使う */
+function cablePartner(page, dev) {
+  const id = symOf(dev.sym).stretchOf || symOf(dev.sym).id;
+  const want = id === "shield" ? "cable_core" : id === "cable_core" ? "shield" : null;
+  if (!want || !page) return null;
+  return page.devices.find(d2 => d2 !== dev && (symOf(d2.sym).stretchOf || d2.sym) === want &&
+    Math.abs(d2.x - dev.x) < 0.01 && Math.abs(d2.y - dev.y) < 0.01 && (d2.rot || 0) === (dev.rot || 0)) || null;
+}
 const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth"]); // 購買部品でないもの
 function buildBOM() {
   const rows = new Map();
@@ -2469,12 +2483,25 @@ function buildBOM() {
     // 端子は本数だけ数える (タグ -X1:n を -X1 に集約)
     const baseTag = symId === "terminal" ? (dev.tag || "-X1").split(":")[0] : null;
     const key = symId === "terminal" ? "terminal|" + baseTag : symId + "|" + (dev.typeRef || "");
-    // 多芯ケーブルの囲み・遮へいは芯数が購買の属性なので、名称に出して行も分ける
-    const cableCores = (baseIdOfCable(sym) && symSpanToCores(sym.span || 25)) || null;
-    const rowKey = cableCores ? key + "|" + cableCores : key;
-    const rowName = cableCores ? `${sym.name} ${cableCores}芯` : sym.name;
-    if (!rows.has(rowKey)) rows.set(rowKey, { name: rowName, typeRef: dev.typeRef || "—", tags: [] });
-    rows.get(rowKey).tags.push(displayTag(dev) || "—");
+    // 多芯ケーブルは 1 本の物理ケーブルなので、心線囲みと遮へいを 1 行にまとめる
+    // (現場は CVVS-1.25sq-6C を 1 品目として拾う)。芯数と遮へいの有無は購買の属性
+    let cableCores = null, shielded = false;
+    if (baseIdOfCable(sym)) {
+      const mate = cablePartner(page, dev);
+      // 遮へい側は相方がいれば行を作らない (心線囲み側にまとめる)
+      if ((sym.stretchOf || sym.id) === "shield" && mate) return;
+      cableCores = symSpanToCores(sym.span || 25);
+      shielded = (sym.stretchOf || sym.id) === "shield" || !!mate;
+    }
+    const rowKey = cableCores ? key + "|" + cableCores + "|" + (shielded ? "S" : "") + (sym.stretchOf || sym.id) : key;
+    const solo = cableCores && (sym.stretchOf || sym.id) === "shield";   // 遮へいだけを掛けた図
+    const rowName = !cableCores ? sym.name
+      : solo ? `シールド線 ${cableCores}芯`
+      : `多芯ケーブル ${cableCores}芯${shielded ? " (遮へい付)" : ""}`;
+    if (!rows.has(rowKey)) rows.set(rowKey, { name: rowName, typeRef: dev.typeRef || "—", tags: [], len: 0, cable: !!cableCores });
+    const row = rows.get(rowKey);
+    row.tags.push(displayTag(dev) || "—");
+    row.len += cableCores ? (parseFloat(dev.props && dev.props.len) || 0) : 0;
   }));
   return [...rows.values()].sort((a, b) => (a.tags[0] || "").localeCompare(b.tags[0] || ""));
 }
@@ -2482,8 +2509,9 @@ function buildBOM() {
 function bomCSV() {
   const rows = buildBOM();
   const esc = s => `"${String(s).replace(/"/g, '""')}"`;
-  return "﻿名称,型式,数量,デバイスタグ\n" +
-    rows.map(r => [esc(r.name), esc(r.typeRef), r.tags.length, esc(r.tags.join(" "))].join(",")).join("\n");
+  return "﻿名称,型式,数量,長さ (m),デバイスタグ\n" +
+    rows.map(r => [esc(r.name), esc(r.typeRef), r.tags.length,
+      esc(r.cable ? (r.len ? +r.len.toFixed(1) : "—") : ""), esc(r.tags.join(" "))].join(",")).join("\n");
 }
 
 /** PLC アドレス一覧 */
