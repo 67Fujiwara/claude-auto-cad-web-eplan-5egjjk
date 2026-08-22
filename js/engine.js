@@ -604,6 +604,65 @@ function symBodyRects(sym) {
 }
 
 /** 端子番号ラベルの外接矩形 (画面・検図・ラベル配置で共通) */
+/* 記号ごとの文字倍率。用紙の尺度に合わせて 2 倍で作った記号 (PLC の入出力
+   結線図など) は、端子番号やタグも一緒に大きくしないと紙の上で 1.25mm になる。
+   記号が textK を持つときだけ効く (既定は 1 倍) */
+function symTextK(sym) { return (sym && sym.textK) || 1; }
+
+/* 用紙に合わせて作った記号 (PLC の入出力結線図など) が持つ「想定する用紙」。
+   "A3 縦 1:2" のような表記を、ページの設定と同じ形に読み替える */
+function symSheetSpec(sym) {
+  if (!sym || !sym.sheet) return null;
+  const m = /^(\S+)\s*(縦|横)?\s*(\S+)?$/.exec(String(sym.sheet).trim());
+  if (!m) return null;
+  return { paper: m[1], orient: m[2] === "縦" ? "portrait" : "landscape", scale: m[3] || "1:1" };
+}
+/** 記号の想定する用紙と、そのページの用紙が食い違っていないか */
+function symSheetMismatch(page, sym) {
+  const want = symSheetSpec(sym);
+  if (!want) return null;
+  const now = pageSheetMeta(page);
+  const same = now.paper === want.paper && (now.orient || "landscape") === want.orient && now.scale === want.scale;
+  return same ? null : { want, now };
+}
+
+/* 記号の body に実際に書かれている文字高さ (data-h) と線の太さの最小値。
+   記号ごとに一度だけ数える */
+const _symMinCache = new Map();
+function symDrawnMinima(sym) {
+  if (_symMinCache.has(sym.id)) return _symMinCache.get(sym.id);
+  let h = Infinity, w = Infinity;
+  String(sym.body || "").replace(/data-h="([\d.]+)"/g, (_, v) => { h = Math.min(h, parseFloat(v)); return ""; });
+  const hasStroke = /stroke-width="([\d.]+)"/.test(String(sym.body || ""));
+  String(sym.body || "").replace(/stroke-width="([\d.]+)"/g, (_, v) => { w = Math.min(w, parseFloat(v)); return ""; });
+  // stroke-width を書いていない要素は既定 (図記号線 0.5mm)
+  if (!hasStroke || /<(path|rect|circle|line|polyline)(?![^>]*stroke-width)/.test(String(sym.body || ""))) {
+    w = Math.min(w, LINE_W.thick);
+  }
+  const r = { h, w };
+  _symMinCache.set(sym.id, r);
+  return r;
+}
+/** そのページに実際に描かれる文字高さ・線の太さの最小値 (作図領域の mm) */
+function pageDrawnMinima(page) {
+  let h = Infinity, w = LINE_W.thick;
+  const f = contentScale();
+  page.devices.forEach(dev => {
+    const sym = symOf(dev.sym);
+    const k = symTextK(sym);
+    const m = symDrawnMinima(sym);
+    if (isFinite(m.h)) h = Math.min(h, m.h * f);
+    w = Math.min(w, m.w * f);
+    // アプリが描くラベル (端子番号・タグ) も記号の倍率で描かれる
+    if ((sym.pins || []).some((p, i) => pinLabelVisible(page, dev, i))) h = Math.min(h, TEXT_H.small * f * k);
+    if (displayTag(dev) || dev.desc) h = Math.min(h, TEXT_H.normal * f * k);
+  });
+  condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f); });
+  (page.texts || []).forEach(t => { h = Math.min(h, (t.size || TEXT_H.normal) * f); });
+  if (!isFinite(h)) h = TEXT_H.small * f;
+  return { h, w };
+}
+
 function pinLabelBoxes(page) {
   const f = contentScale();
   const out = [];
@@ -622,7 +681,7 @@ function pinLabelBoxes(page) {
     (s2.pins || []).forEach((p, pi) => {
       const vis = pinLabelVisible(page, d2, pi);
       if (!vis) return;
-      const h = TEXT_H.small * f, w2 = textWidthMM(vis.name, h, false, true);
+      const h = TEXT_H.small * f * symTextK(s2), w2 = textWidthMM(vis.name, h, false, true);
       const rotated = (d2.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (s2.horizontalPins && p.y <= s2.bounds[1] + 2));
       // 端子番号もピンの左右・上下を試して、他の端子番号や図記号を避ける
@@ -667,7 +726,7 @@ function pinLabelPosMap(page) {
     (s2.pins || []).forEach((p, pi) => {
       if (!pinLabelVisible(page, d2, pi)) return;
       const b = boxes[i++];
-      if (b) map.set(`${d2.id}#${pi}`, { x: b.x, y: b.y + b.h, box: b });
+      if (b) map.set(`${d2.id}#${pi}`, { x: b.x, y: b.y + b.h, box: b, size: b.h });
     });
   });
   _pinPosCache.set(page, { rev: App.labelRev, map });
@@ -681,6 +740,20 @@ const OBST_INSET = { label: 1.2, wireNum: 1.5, drc: 1.5 };
 
 /** 機器1台ぶんの「文字を置いてはいけない領域」。
     画面の機器ラベルも線番も検図も同じ規則を使う (定義元を1か所にする)。 */
+/* 記号が実際に線を引いている範囲 (複数の箱)。列を並べた記号 (PLC の入出力
+   結線図など) は外接矩形の中に大きな空きがあるので、図枠や表題欄との
+   重なりを外接矩形で見ると、何も描いていない所で「重なっている」と出る。
+   sym.parts があるときはその箱で見る (回転にも追従させる) */
+function devPartBoxes(dev) {
+  const sym = symOf(dev.sym);
+  if (!sym || !sym.parts || !sym.parts.length) return [devBounds(dev)];
+  return sym.parts.map(([px, py, pw, ph]) => {
+    const cs = [[px, py], [px + pw, py], [px, py + ph], [px + pw, py + ph]].map(([x, y]) => pinAbs(dev, { x, y }));
+    const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  });
+}
+
 function deviceObstacleBoxes(dev, inset) {
   // 囲み記号 (多芯ケーブル・シールド) の中は「ケーブルそのもの」なので、
   // 心線の線番は囲みの外 — 囲みと端子の間の導体の上 — に置く (図面の作法)。
@@ -740,7 +813,7 @@ function placeDeviceLabels(page, dev, obstacles) {
   const b = devBounds(dev);
   const tag = displayTag(dev), desc = dev.desc;
   const horizontal = (dev.rot || 0) % 180 !== 0;
-  const H = TEXT_H.normal * f;
+  const H = TEXT_H.normal * f * symTextK(sym);
   const mk = (text, x, y, anchor, isTag) => {
     const hh = textHeightMM(text, H);
     const o = { text, x, y, w: textWidthMM(text, hh, !!isTag, !!isTag), h: hh, anchor, size: H, isTag: !!isTag };
@@ -2132,7 +2205,7 @@ const DRC_RULES = [
   "線番の重複", "図番の重複", "線番と導体の重なり",
   "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
   "行き先の図番が入らない", "行き先どうしの重なり", "行き先の対が定まらない",
-  "行き先とリンクの不一致", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
+  "行き先とリンクの不一致", "尺度と用紙上の寸法", "記号の想定用紙と違う", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
 /** 接地記号につながっているネット (遮へいの接地判定に使う) */
@@ -2220,12 +2293,13 @@ function runDRC() {
     const outOfFrame = b => b.x < fr.x || b.y < fr.y || b.x + b.w > fr.x + fr.w || b.y + b.h > fr.y + fr.h;
     const overlaps = (b, r) => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y;
     page.devices.forEach(dev => {
+      const boxes = devPartBoxes(dev);        // 実際に線を引いている範囲で見る
       const b = devBounds(dev);
       const tag = displayTag(dev) || symOf(dev.sym).name;
       if (outOfFrame(b)) {
         issues.push({ sev: "err", msg: `${tag} が図枠 (輪郭線) の外にはみ出しています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
       } else {
-        const hitR = blocks.find(r => overlaps(b, r));
+        const hitR = blocks.find(r => boxes.some(bx => overlaps(bx, r)));
         if (hitR) issues.push({ sev: "err", msg: `${tag} が${blockName(hitR)}に重なっています`, page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(dev.x)}` });
       }
     });
@@ -2388,20 +2462,26 @@ function runDRC() {
       });
     }
 
-    // 縮小尺度では図記号だけが用紙上小さくなるため、回路図ページでは必ず知らせる
+    /* 縮小尺度では、作図領域の座標がそのまま用紙上で 1/f に縮む。
+       この図に実際に置かれている文字と線を測って、用紙の上で読める寸法に
+       なっているかを見る (尺度に合わせて大きく作った記号 — PLC の入出力結線図
+       など — は縮んでもちょうど良い大きさになるので、決め打ちでは判定しない) */
     if (sheetScale() > 1 && page.devices.length) {
       const f3 = sheetScale();
-      const minH = TEXT_H.small / f3;   // 用紙上の最小文字高
-      const minW = LINE_W.thin / f3;    // 用紙上の最細線 (受け口の識別図など)
+      const m3 = pageDrawnMinima(page);
+      const minH = m3.h / f3;           // 用紙上の最小文字高
+      const minW = m3.w / f3;           // 用紙上の最細線
       const bad2 = [];
-      if (minH < 2.5) bad2.push(`最小文字高 ${minH.toFixed(2)}mm は JIS Z 8313 の 2.5mm を下回ります`);
-      if (minW < 0.13) bad2.push(`最細線 ${minW.toFixed(3)}mm は JIS Z 8312 の線幅列 (最細 0.13mm) を下回ります`);
-      issues.push({
-        sev: bad2.length ? "err" : "warn",
-        msg: `尺度 ${pageSheetMeta(page).scale} では図記号・文字が用紙上 1/${f3} になります` +
-             (bad2.length ? ` — ${bad2.join("、")} (回路図は NS または 1:1 を推奨)` : ""),
-        page: page.no, target: null, loc: `${page.no}.-`,
-      });
+      if (minH < 2.5 - 0.001) bad2.push(`最小文字高 ${minH.toFixed(2)}mm は JIS Z 8313 の 2.5mm を下回ります`);
+      if (minW < 0.13 - 0.0001) bad2.push(`最細線 ${minW.toFixed(3)}mm は JIS Z 8312 の線幅列 (最細 0.13mm) を下回ります`);
+      if (bad2.length) {
+        issues.push({
+          sev: "err", rule: "尺度と用紙上の寸法",
+          msg: `尺度 ${pageSheetMeta(page).scale} では図記号・文字が用紙上 1/${f3} になります` +
+               ` — ${bad2.join("、")} (この用紙に合わせて作った記号を使うか、尺度を 1:1 にしてください)`,
+          page: page.no, target: null, loc: `${page.no}.-`,
+        });
+      }
     }
 
     // 注記テキスト・破線枠も同じ検査にかける
@@ -2547,6 +2627,17 @@ function runDRC() {
             page: page.no, target: dev.id, loc: devLocation(dev) });
         }
       }
+    });
+
+    /* 用紙に合わせて作った記号 (入出力結線図など) は、想定の用紙でないと
+       紙の上の寸法が変わってしまう。プロパティの「この用紙にする」で直せる */
+    page.devices.forEach(dev => {
+      const sy = symOf(dev.sym);
+      const mm = symSheetMismatch(page, sy);
+      if (!mm) return;
+      const lab = (m2) => `${m2.paper} ${m2.orient === "portrait" ? "縦" : "横"} ${m2.scale}`;
+      issues.push({ sev: "warn", rule: "記号の想定用紙と違う", page: page.no, target: dev.id, loc: devLocation(dev),
+        msg: `${displayTag(dev) || sy.name} は ${lab(mm.want)} 用の記号です (このページは ${lab({ paper: mm.now.paper, orient: mm.now.orient || "landscape", scale: mm.now.scale })})` });
     });
 
     /* 行き先 (継続先)。相互参照は「指し先が一意に決まる」ことと「往復で対に

@@ -340,7 +340,7 @@ function devicesSVG(page, opts = {}) {
       const pos = pinLabelPos(page, dev, pi);      // 位置は検図・DXF と同じ探索結果
       if (!pos) return;
       const tx = pos.x, ty = pos.y;
-      out += `<text x="${tx}" y="${ty}" font-size="${svgFontSizeFor(name, TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
+      out += `<text x="${tx}" y="${ty}" font-size="${svgFontSizeFor(name, pos.size || TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
     out += devLabelsSVG(dev, sym, page);

@@ -346,6 +346,16 @@ UI.showProps = (focusTag = false) => {
           (cable ? `<div class="prop-row"><label>長さ (m) <span class="rp-dim">(部品表の集計用)</span></label>
           <input id="pLen" class="mono" type="number" step="0.1" min="0" value="${dev.props && dev.props.len !== undefined ? dev.props.len : ""}" placeholder="例: 12.5"/></div>` : "");
       })() : ""}
+      ${sym.sheet ? (() => {
+        // 用紙に合わせて作った記号 (入出力結線図)。今の用紙と違えば 1 押しで直せる
+        const mm = symSheetMismatch(curPage(), sym);
+        return `<div class="prop-row"><label>この記号の用紙 <span class="rp-dim">(結線図は用紙 1 枚 = 記号 1 個)</span></label>
+          <div class="mono" style="display:flex;align-items:center;gap:8px">
+            <span>${escAttr(sym.sheet)}</span>
+            ${mm ? `<button class="btn-solid primary" id="pSheetFix" style="padding:3px 10px;font-size:11px">この用紙にする</button>`
+                 : `<span class="rp-dim">✓ このページはこの用紙です</span>`}
+          </div></div>`;
+      })() : ""}
       ${sym.gotoRef ? (() => {
         // 行き先はページ id を持つ。図番はページの現在の値を描くたびに引くので、
         // ページを並べ替えても図番を振り直しても表示が追従する
@@ -377,6 +387,29 @@ UI.showProps = (focusTag = false) => {
     bind("#pX", v => dev.x = num(v, dev.x));
     bind("#pY", v => dev.y = num(v, dev.y));
     bind("#pLink", v => dev.linkTo = v || null);
+    // 「この用紙にする」— ページの用紙を記号に合わせ、図枠の中へ入れ直す
+    const fix = pane.querySelector("#pSheetFix");
+    if (fix) fix.addEventListener("click", () => {
+      const want = symSheetSpec(sym);
+      if (!want) return;
+      commit();
+      const page = curPage();
+      page.paper = want.paper; page.orient = want.orient; page.scale = want.scale;
+      applySheet(page);
+      /* 図枠の中へ収める (用紙が変わると原点も余白も変わるので置き直しが要る)。
+         格子へ丸めるときに図枠の外へ半目こぼれないよう、下限は切り上げ・
+         上限は切り捨てで丸める */
+      const fr = frameRect(), bb = devBounds(dev);
+      const put = (v, lo, hi) => {
+        const l = Math.ceil(lo / GRID) * GRID, h2 = Math.floor(hi / GRID) * GRID;
+        return Math.min(Math.max(snap(v), l), Math.max(l, h2));
+      };
+      dev.x = put(dev.x, fr.x + (dev.x - bb.x), fr.x + fr.w - (bb.x + bb.w - dev.x));
+      dev.y = put(dev.y, fr.y + (dev.y - bb.y), fr.y + fr.h - (bb.y + bb.h - dev.y));
+      App.labelRev++;
+      UI.refresh(); zoomFit();
+      UI.toast(`用紙を ${sym.sheet} にしました`, 2600);
+    });
     bind("#pGoto", v => {
       dev.props = dev.props || {};
       if (v) dev.props.toPage = v; else delete dev.props.toPage;

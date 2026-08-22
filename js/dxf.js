@@ -532,7 +532,7 @@ function pageToDXF(page) {
       if (!vis) return;
       const pos = pinLabelPos(page, dev, pi);      // 位置は画面・検図と同じ探索結果
       if (!pos) return;
-      ents += dxfText(pos.x, pos.y, C(TEXT_H.small), vis.name, "PIN");
+      ents += dxfText(pos.x, pos.y, pos.size || C(TEXT_H.small), vis.name, "PIN");
     });
     // タグ / 機能テキスト (配置は画面と同じ deviceLabelBoxes に従う)
     const b = devBounds(dev);
