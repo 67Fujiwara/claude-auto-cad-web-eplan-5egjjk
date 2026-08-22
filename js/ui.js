@@ -334,6 +334,12 @@ UI.showProps = (focusTag = false) => {
         ${coils.map(c => `<option value="${c.id}" ${dev.linkTo === c.id ? "selected" : ""}>${c.tag} (${symOf(c.sym).name})</option>`).join("")}
         </select></div>` : ""}
       ${sym.timer ? `<div class="prop-row"><label>遅延時間 (秒)</label><input id="pDelay" class="mono" type="number" step="0.5" min="0" value="${dev.props.delay || 2}"/></div>` : ""}
+      ${symStretchBase(sym) ? (() => {
+        const st = symStretchBase(sym).stretch;
+        const cur = sym.span || st.def;
+        return `<div class="prop-row"><label>${st.label} <span class="rp-dim">(心線の本数に合わせる)</span></label>
+          <input id="pSpan" class="mono" type="number" step="${st.step}" min="${st.min}" max="${st.max}" value="${cur}"/></div>`;
+      })() : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}
     `;
     const bind = (id, fn) => {
@@ -357,6 +363,15 @@ UI.showProps = (focusTag = false) => {
     bind("#pY", v => dev.y = num(v, dev.y));
     bind("#pLink", v => dev.linkTo = v || null);
     bind("#pDelay", v => { const n = parseFloat(v); dev.props.delay = isNaN(n) ? 2 : n; });
+    // 伸縮シンボル: 長さを変えると "base@長さ" の寸法違いに差し替える
+    bind("#pSpan", v => {
+      const base = symStretchBase(symOf(dev.sym));
+      if (!base) return;
+      const span = symStretchSpan(base, v);
+      symStretchVariant(base, span);      // 定義を用意してから割り当てる
+      dev.sym = `${base.id}@${span}`;
+      App.labelRev++;
+    });
     if (focusTag) { const t = pane.querySelector("#pTag"); if (t && !t.disabled) { t.focus(); t.select(); } }
     pane.querySelectorAll(".xref-item").forEach(el => {
       el.addEventListener("click", () => UI.jumpToDevice(el.dataset.target));

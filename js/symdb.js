@@ -7,7 +7,7 @@
 "use strict";
 
 const DB_DEFAULT_PINNED = [
-  "cable_core", "plug_socket", "insul_end", "prot_earth", "func_earth",
+  "cable_core", "shield", "plug_socket", "insul_end", "prot_earth", "func_earth",
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
   "cp1", "cp2", "cont_no_main", "cont_nc_main",
   "conn_rj45", "conn_usb_a", "conn_hdmi",
@@ -56,9 +56,29 @@ const DB_SYMBOLS = [
   /* ── 導体・接続部品 (JIS C 0617-3) ── */
   {
     id: "cable_core", db: true, group: "導体・接続", jis: "03-01-09", cat: "db", letter: "W",
-    name: "多芯ケーブル (心線囲み)", nameEn: "Cable cores", desc: "並走する心線を楕円で囲む。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
+    name: "多芯ケーブル (心線囲み)", nameEn: "Cable cores",
+    desc: "並走する心線を楕円で囲む。囲みの長さはプロパティで心線の本数に合わせて変えられる。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
     pins: [], sim: "none", bounds: [-7,0, 14, 34],
     body: `<path d="M0,2 A5,15 0 1 0 0,32 A5,15 0 1 0 0,2"/>`,
+    // 心線の本数に合わせて上下に伸縮する (既定 30mm = 心線 5mm ピッチで 4〜5 本ぶん)
+    stretch: {
+      min: 10, max: 200, step: 5, def: 30, label: "囲みの長さ (mm)",
+      bounds: (h) => [-7, 0, 14, h + 4],
+      body: (h) => `<path d="M0,2 A5,${+(h / 2).toFixed(2)} 0 1 0 0,${h + 2} A5,${+(h / 2).toFixed(2)} 0 1 0 0,2"/>`,
+    },
+  },
+  {
+    id: "shield", db: true, group: "導体・接続", jis: "03-01-07", cat: "db", letter: "W",
+    name: "シールド (遮へい)", nameEn: "Screen / shield",
+    desc: "導体・心線群を囲む遮へい (破線)。囲みの長さはプロパティで心線の本数に合わせて変えられる。ドレン線は別途接地へ落とす",
+    pins: [], sim: "none", bounds: [-7,0, 14, 34],
+    // 03-01-07: 遮へいは破線で表す。多芯ケーブルの心線囲み (03-01-09) と同じ寸法体系
+    body: `<path d="M0,2 A5,15 0 1 0 0,32 A5,15 0 1 0 0,2" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    stretch: {
+      min: 10, max: 200, step: 5, def: 30, label: "囲みの長さ (mm)",
+      bounds: (h) => [-7, 0, 14, h + 4],
+      body: (h) => `<path d="M0,2 A5,${+(h / 2).toFixed(2)} 0 1 0 0,${h + 2} A5,${+(h / 2).toFixed(2)} 0 1 0 0,2" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    },
   },
   {
     id: "twist_joint", db: true, group: "導体・接続", jis: "03-01-08", cat: "db", letter: "W",

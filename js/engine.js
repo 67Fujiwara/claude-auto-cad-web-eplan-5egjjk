@@ -759,7 +759,46 @@ const MISSING_SYM = {
   body: `<path d="M0,0 V4 M0,20 V16"/><rect x="-7" y="4" width="14" height="12" stroke-dasharray="3 0.75" stroke-width="0.25"/>` +
     `<text x="0" y="12.6" font-size="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">?</text>`,
 };
-function symOf(symId) { return SYMBOLS_BY_ID[symId] || MISSING_SYM; }
+/* 伸縮シンボル (多芯ケーブルの囲み・シールド)。
+   1つの図記号で心線の本数に合わせて長さを変えられるよう、"base@長さ" という
+   id で寸法違いを表す。定義は使われた時に作って SYMBOLS_BY_ID へ載せるので、
+   保存・再読込・DXF出力・部品表は通常のシンボルと同じ扱いで通る。
+   パレット (DB_SYMBOLS) には基本形だけを置き、寸法違いは並べない。 */
+const SYM_VARIANT_RE = /^(.+)@(\d+(?:\.\d+)?)$/;
+/** 伸縮シンボルの寸法を丸める (刻み・上下限は各シンボルの stretch 定義に従う) */
+function symStretchSpan(base, span) {
+  const st = base.stretch;
+  const step = st.step || 5;
+  const v = Math.round((parseFloat(span) || st.def) / step) * step;
+  return Math.max(st.min, Math.min(st.max, +v.toFixed(2)));
+}
+/** 基本形 + 長さ → 寸法違いのシンボル定義 */
+function symStretchVariant(base, span) {
+  const s = symStretchSpan(base, span);
+  const id = `${base.id}@${s}`;
+  const cur = SYMBOLS_BY_ID[id];
+  if (cur) return cur;
+  const v = { ...base, id, bounds: base.stretch.bounds(s), body: base.stretch.body(s), span: s, stretchOf: base.id };
+  delete v.stretch;                       // 寸法違いから更に派生させない
+  SYMBOLS_BY_ID[id] = v;                  // DB_SYMBOLS へは入れない (パレットに増やさない)
+  return v;
+}
+/** 伸縮シンボルの基本形 (寸法違いなら元の定義) */
+function symStretchBase(sym) {
+  if (sym && sym.stretch) return sym;
+  if (sym && sym.stretchOf) return SYMBOLS_BY_ID[sym.stretchOf] || null;
+  return null;
+}
+function symOf(symId) {
+  const s = SYMBOLS_BY_ID[symId];
+  if (s) return s;
+  const m = SYM_VARIANT_RE.exec(String(symId == null ? "" : symId));
+  if (m) {
+    const base = SYMBOLS_BY_ID[m[1]];
+    if (base && base.stretch) return symStretchVariant(base, parseFloat(m[2]));
+  }
+  return MISSING_SYM;
+}
 
 /* 図記号・文字・線の太さは尺度によらず常に 1:1 で描く (シンボルの大きさは
    変えない)。尺度を変えると図枠 (用紙) だけが広くなり、1枚に収められる
@@ -1956,10 +1995,12 @@ function buildBOM() {
   App.project.pages.forEach(page => page.devices.forEach(dev => {
     if (dev.linkTo) return; // 連動接点は親デバイスの一部
     const sym = symOf(dev.sym);
-    if (BOM_EXCLUDE.has(sym.id)) return;
+    // 伸縮シンボルは寸法違いでも同じ部品なので基本形の id でまとめる
+    const symId = sym.stretchOf || sym.id;
+    if (BOM_EXCLUDE.has(symId)) return;
     // 端子は本数だけ数える (タグ -X1:n を -X1 に集約)
-    const baseTag = sym.id === "terminal" ? (dev.tag || "-X1").split(":")[0] : null;
-    const key = sym.id === "terminal" ? "terminal|" + baseTag : dev.sym + "|" + (dev.typeRef || "");
+    const baseTag = symId === "terminal" ? (dev.tag || "-X1").split(":")[0] : null;
+    const key = symId === "terminal" ? "terminal|" + baseTag : symId + "|" + (dev.typeRef || "");
     if (!rows.has(key)) rows.set(key, { name: sym.name, typeRef: dev.typeRef || "—", tags: [] });
     rows.get(key).tags.push(displayTag(dev) || "—");
   }));
