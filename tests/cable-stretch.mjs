@@ -69,13 +69,11 @@ const LBL = await p.evaluate(()=>{
     ["W2-1","W2-12","W2-1234"].forEach(t=>{
       pg.wires.forEach((w,i)=>{ if(w.pts[0][1]===w.pts[1][1]){ w.num=t+i; w.fixed=true; w.numShow=true; } });
       App.labelRev++;
-      const encl=[...deviceObstacleBoxes(pg.devices[0],0), ...deviceObstacleBoxes(pg.devices[1],0)];
       let worst=0, pierce=0;
       pg.wires.forEach(w=>{ if(w.pts[0][1]!==w.pts[1][1]) return;
         const pos=wireLabelPos(w,pg); if(!pos) return;
         worst=Math.max(worst, Math.abs(pos[1]-w.pts[0][1]));
-        const bx=wireNumBox(w,pos[0],pos[1],pos[2]);
-        encl.forEach(r=>{ if(overlapArea(bx,r)>0.01) pierce++; });
+        // 図記号との重なりは検図 (drc) で見る。輪郭の貫通は wire-label-placement.mjs で
       });
       out[n+":"+t]={ worst:+worst.toFixed(1), pierce, drc: runDRC().filter(i=>/線番.*重なって/.test(i.msg)).length };
     });

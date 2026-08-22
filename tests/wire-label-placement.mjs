@@ -15,7 +15,7 @@ const R = await p.evaluate(()=>{
   };
   const run=(n,txt,X1b)=>{
     const pg=newPage("v"+n+txt,App.project.pages.length+1); App.project.pages.push(pg); App.pageIdx=App.project.pages.length-1;
-    const X0=80, X1=X1b||120;
+    const X0=X1b===28?76:80, X1=X1b===28?104:(X1b||120);
     for(let i=0;i<n;i++) addWire(pg,[[X0,60+i*5],[X1,60+i*5]]);
     const h=symCoresToSpan(n);
     const d1=addDevice(pg,`cable_core@${h}`,100,60,{tag:"-WA"});
@@ -40,11 +40,18 @@ const R = await p.evaluate(()=>{
   const out={};
   ["20","W2-1","W2-1234"].forEach(t=>{ out["4:"+t]=run(4,t); out["8:"+t]=run(8,t); });
   out["4:W2-1234(長い線)"]=run(4,"W2-1234",150);
+  ["20","W2-1","W2-1234"].forEach(t=>{ out["4:"+t+"(28mm)"]=run(4,t,28); out["8:"+t+"(28mm)"]=run(8,t,28); });
   probe.remove(); return out;
 });
 for (const [k,v] of Object.entries(R)) console.log(k.padEnd(18), "dy≤",v.worstDy, "線外",v.outSeg, "最大はみ出し",v.maxOver||0, "輪郭貫通",v.pierce, "x幅",v.xSpread);
-// 合否: 自線の脇 (|dy| <= 2.5mm) / 実輪郭を貫通しない / 線番が左右にばらけない
-const fail = Object.entries(R).filter(([k,v]) => v.worstDy > 2.5 || v.pierce > 0 || v.xSpread > 16);
+// 合否:
+//  ・線番は自分の線の脇 (|dy| <= 2.5mm)
+//  ・実際の輪郭 (長円) を貫通しない
+//  ・1本のケーブルの中で線番の x が揃う (ばらけない)
+//  ・線からのはみ出しは 6mm 以内。線番の幅が「囲みの外に残る導体の長さ」より
+//    広いときは幾何的にはみ出すので、その分だけ許す (線から離すよりは読みやすい)
+const fail = Object.entries(R).filter(([k,v]) =>
+  v.worstDy > 2.5 || v.pierce > 0 || v.xSpread > 0.6 || (v.maxOver||0) > 6);
 console.log("RESULT:", fail.length ? "FAIL " + fail.map(([k])=>k).join(",") : "ok");
 console.log("ERRORS:",errs.length);
 await b.close();

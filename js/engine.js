@@ -443,41 +443,10 @@ const OBST_INSET = { label: 1.2, wireNum: 1.5, drc: 1.5 };
     囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提なので、
     外接矩形ぜんぶではなく描いた輪郭の左右だけを避ける。 */
 function deviceObstacleBoxes(dev, inset) {
-  const sym = symOf(dev.sym);
-  const rx = sym.enclosure;
-  if (!rx) return [insetRect(devBounds(dev), inset)];
-  const [, by, , bh] = sym.bounds;
-  const band = 1.2 + inset;
-  const span = sym.span || (symStretchBase(sym) || { stretch: { def: 25 } }).stretch.def;
-  const boxOf = (x0, y0, x1, y1) => {
-    const cs = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
-    const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
-    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
-  };
-  // 機器座標で作ってから回転させる (回転しても輪郭を守る)。
-  // 塞ぐのは「輪郭の線が通っているところ」だけ — 囲みの中は心線が通る前提で
-  // 空けておかないと、心線の線番の逃げ場が無くなって囲みの外へ飛ばされる
-  const out = [
-    boxOf(-rx - band, 0, -rx + 0.2, span - 10),          // 直線部 (心線に沿う左右)
-    boxOf(rx - 0.2, 0, rx + band, span - 10),
-  ];
-  // 丸い端部は弧に沿って刻む (矩形帯のままだと弧の肩が素通しになる)
-  const N = 6;
-  for (let i = 0; i < N; i++) {
-    const t0 = (Math.PI / 2) * i / N, t1 = (Math.PI / 2) * (i + 1) / N;
-    const w0 = rx * Math.cos(t0), w1 = rx * Math.cos(t1);      // 半幅 (外側→内側)
-    const d0 = rx * Math.sin(t0), d1 = rx * Math.sin(t1);      // 端部からの深さ
-    const pad = 0.3;   // 輪郭線の太さぶん。すき間は利用側が LABEL_CLEAR で足す
-    const hi = Math.max(w0, w1) + pad, lo = Math.max(0, Math.min(w0, w1) - pad);
-    out.push(boxOf(-hi, -d1, -lo, -d0), boxOf(lo, -d1, hi, -d0));                       // 上の端部
-    out.push(boxOf(-hi, span - 10 + d0, -lo, span - 10 + d1),
-             boxOf(lo, span - 10 + d0, hi, span - 10 + d1));                            // 下の端部
-  }
-  // 端子への引出線 (遮へいのドレン線) も図記号の一部なので塞ぐ
-  (sym.pins || []).forEach(pn => {
-    out.push(boxOf(Math.min(rx - 0.2, pn.x) - band, pn.y - band, Math.max(rx, pn.x) + band, pn.y + band));
-  });
-  return out;
+  // 囲み記号 (多芯ケーブル・シールド) の中は「ケーブルそのもの」なので、
+  // 心線の線番は囲みの外 — 囲みと端子の間の導体の上 — に置く (図面の作法)。
+  // どの機器も外接矩形ぜんぶを避ける、という同じ規則でよい。
+  return [insetRect(devBounds(dev), inset)];
 }
 
 /** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */

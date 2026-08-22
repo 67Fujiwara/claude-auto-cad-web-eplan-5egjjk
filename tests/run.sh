@@ -3,6 +3,10 @@
 #   使い方: sh tests/run.sh      (Chrome の場所は CHROME で上書きできる)
 set -e
 cd "$(dirname "$0")"
+if ! node -e "import('playwright-core')" 2>/dev/null; then
+  echo "playwright-core が入っていません: tests/ で npm install してください (npm i)"
+  exit 2
+fi
 fail=0
 for t in *.mjs; do
   printf '%-28s' "$t"

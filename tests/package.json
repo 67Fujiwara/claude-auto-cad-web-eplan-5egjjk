@@ -1,0 +1,8 @@
+{
+  "name": "electracad-tests",
+  "private": true,
+  "type": "module",
+  "description": "ElectraCAD Studio の回帰テスト (アプリ本体は依存ゼロ。テストだけ Node と playwright-core を使います)",
+  "scripts": { "test": "sh run.sh" },
+  "devDependencies": { "playwright-core": "^1.49.0" }
+}
