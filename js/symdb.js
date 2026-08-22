@@ -145,12 +145,22 @@ function kvRelay(startCh, i) {
 const kvText = (x, y, h, s, anchor = "middle", mono = true) =>
   `<text x="${r1(x)}" y="${r1(y)}" data-h="${h}" text-anchor="${anchor}" fill="currentColor" stroke="none" font-family="${mono ? "monospace" : "sans-serif"}">${s}</text>`;
 
-/** 入出力結線図の記号 (1 群ぶん)。端子は箱の左、機能欄は箱の右 */
-function mkKvSheet(o) {
+/* 行ピッチは「横に倒した現場機器がぶつからない距離」で決める。
+   記号を 270° 回して行に置くと、外接矩形の幅がそのまま縦の広がりになるので、
+   いちばん背の高い単極の入出力記号 (光電センサ 29mm など) に合わせると
+   広がりすぎて紙も大きくなる。既定は 20mm — 押しボタン・非常停止・セレクタ・
+   リミットスイッチ・近接/圧力センサまで、単極の入出力機器の線どうしが 1mm 以上
+   あく最小の格子寸法で、どの群も A3 に収まる (15mm では接点どうしが接する)。
+   光電センサ (図が横に長い) や多極の機器を並べる図では、プロパティの
+   「行ピッチ」で 25〜35mm へ広げる — 用紙は自動で選び直す */
+const KV_PITCH_MIN = 15, KV_PITCH_MAX = 35, KV_PITCH_DEF = 20;
+
+/** 入出力結線図の中身を行ピッチから組み立てる (伸縮シンボルの寸法違いに使う) */
+function kvBuild(o, pitch) {
   const W = KV_BOXW, TR = KV_TERM_R;
   const rows = [];
-  o.rows.forEach((n, i) => rows.push({ n, y: KV_Y0 + i * KV_ROW, io: true }));
-  let y0 = rows.length ? rows[rows.length - 1].y + KV_AUXROW : KV_Y0;
+  o.rows.forEach((n, i) => rows.push({ n, y: KV_Y0 + i * pitch, io: true }));
+  const y0 = rows.length ? rows[rows.length - 1].y + KV_AUXROW : KV_Y0;
   (o.aux || []).forEach((n, i) => rows.push({ n, y: y0 + i * KV_AUXROW + 5, io: false }));
   const bh = rows[rows.length - 1].y + KV_BOT;
   const pins = [], parts = [];
@@ -160,35 +170,48 @@ function mkKvSheet(o) {
   parts.push(`<path d="M0,${KV_HDR - 1} H${W}"/>`);
   let prevIo = null;
   rows.forEach((r, i) => {
-    // 端子 (現場側は実際の導体で描くので、記号は端子より右だけを持つ)
     pins.push({ x: 0, y: r.y, n: r.n, noDrc: r.io, row: i });
     parts.push(`<circle cx="0" cy="${r1(r.y)}" r="${TR}" fill="#fff"/>`);
     if (prevIo === true && !r.io) parts.push(`<path d="M0,${r1(r.y - KV_AUXROW / 2)} H${W}"/>`);
     prevIo = r.io;
-    // 保護接地の端子には接地の図記号 (JIS C 0617-2 02-15-03)
-    if (r.n === "PE") {
+    if (r.n === "PE") {                      // 保護接地 (JIS C 0617-2 02-15-03)
       const gx = -8;
       parts.push(`<path d="M0,${r1(r.y)} H${gx}"/>` +
         `<path d="M${gx},${r1(r.y - 2.4)} V${r1(r.y + 2.4)}"/>` +
         `<path d="M${gx - 1.2},${r1(r.y - 1.5)} V${r1(r.y + 1.5)}"/>` +
         `<path d="M${gx - 2.4},${r1(r.y - 0.7)} V${r1(r.y + 0.7)}"/>`);
     }
-    // 機能欄 (下線)。文言は行ごとにプロパティで入れる
     parts.push(`<path d="M${W + KV_FN_X},${r1(r.y + 1.5)} H${r1(W + KV_FN_X + KV_FN_W)}" stroke-width="0.25"/>`);
   });
+  const bounds = [-11, -2, r1(W + KV_FN_X + KV_FN_W + 13), r1(bh + 4)];
+  return {
+    pins, body: parts.join(""), bounds, inkBoxes: [bounds.slice()],
+    fnRows: rows.length,
+    ioSheet: { rail: KV_RAIL, gap: KV_GAP, pitch, rows: rows.map(r => ({ y: r.y, io: r.io })) },
+    sheet: kvSheetFor({ w: KV_RAIL + bounds[2], h: bounds[3] }),
+  };
+}
+
+/** 入出力結線図の記号 (1 群ぶん)。端子は箱の左、機能欄は箱の右 */
+function mkKvSheet(o) {
+  const built = kvBuild(o, KV_PITCH_DEF);
   return {
     id: o.id, db: true, group: "PLC入出力結線図", cat: "db", letter: "A",
     nonstd: true, swapGroup: o.swapGroup,
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.model,
     stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
       "外郭 + 端子 02-02-01 + 端子名)。COM の分割・電源端子の呼びは機種の取扱説明書で確認してください",
-    sheet: o.sheet, ioSheet: { rail: KV_RAIL, gap: KV_GAP, rows: rows.map(r => ({ y: r.y, io: r.io })) },
-    fnRows: rows.length,                       // 機能欄の行数 (プロパティの編集欄に使う)
-    pins, sim: "none",
-    inkBoxes: [[-11, -2, r1(W + KV_FN_X + KV_FN_W + 13), r1(bh + 4)]],
-    thumbBox: [0, 0, W, 16],
-    bounds: [-11, -2, r1(W + KV_FN_X + KV_FN_W + 13), r1(bh + 4)],
-    body: parts.join(""),
+    sim: "none", thumbBox: [0, 0, KV_BOXW, 16],
+    ...built,
+    /* 行ピッチの寸法違い。現場機器がぶつからない距離を図ごとに選べる */
+    stretch: {
+      min: KV_PITCH_MIN, max: KV_PITCH_MAX, step: 5, def: KV_PITCH_DEF, unit: "mm",
+      label: "行ピッチ (横に倒した機器がぶつからない距離)",
+      bounds: (v) => kvBuild(o, v).bounds,
+      body: (v) => kvBuild(o, v).body,
+      pins: (v) => kvBuild(o, v).pins,
+      extra: (v) => { const k = kvBuild(o, v); return { ioSheet: k.ioSheet, sheet: k.sheet, fnRows: k.fnRows, inkBoxes: k.inkBoxes }; },
+    },
   };
 }
 
@@ -219,13 +242,13 @@ function mkKvUnit(model, nIn, nOut) {
   const groups = [];
   for (let i = 0; i < nIn; i += 16) groups.push({ kind: "入力", ch: 0, from: i, n: Math.min(16, nIn - i) });
   for (let i = 0; i < nOut; i += 16) groups.push({ kind: "出力", ch: 5, from: i, n: Math.min(16, nOut - i) });
+  const powerOn = groups.slice().sort((a, b2) => a.n - b2.n || groups.indexOf(a) - groups.indexOf(b2))[0];
   groups.forEach((g, gi) => {
     const rows = [];
     for (let i = 0; i < g.n; i++) rows.push(kvRelay(g.ch, g.from + i));
-    /* コモンは群ごと。ユニットの電源 (L/N/PE) は出力の 1 枚目にまとめる
-       (入力は点数が多く、電源 3 行を足すと A3 横に収まらなくなるため) */
-    const firstOut = g.kind === "出力" && groups.filter(x => x.kind === "出力").indexOf(g) === 0;
-    const aux = firstOut ? ["COM", "L", "N", "PE"] : ["COM"];
+    /* コモンは群ごと。ユニットの電源 (L/N/PE) は、行にいちばん余裕のある群
+       (点数のいちばん少ない枚) に載せる。点数の多い枚に足すと紙が 1 段大きくなる */
+    const aux = g === powerOn ? ["COM", "L", "N", "PE"] : ["COM"];
     const many = groups.filter(x => x.kind === g.kind).length > 1;
     const no = many ? ` (${Math.floor(g.from / 16) + 1})` : "";
     const size = { w: KV_RAIL + KV_BOXW + KV_FN_X + KV_FN_W + 13,

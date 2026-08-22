@@ -339,6 +339,11 @@ UI.showProps = (focusTag = false) => {
       ${symStretchBase(sym) ? (() => {
         const st = symStretchBase(sym).stretch;
         const span = sym.span || st.def;
+        // mm で指定する寸法違い (入出力結線図の行ピッチ) は、そのまま mm で見せる
+        if (st.unit === "mm") {
+          return `<div class="prop-row"><label>${st.label} <span class="rp-dim">(${st.min}〜${st.max}mm・5mm 刻み)</span></label>
+            <input id="pSpanMM" class="mono" type="number" step="5" min="${st.min}" max="${st.max}" value="${span}"/></div>`;
+        }
         const n = symSpanToCores(span);
         const cable = baseIdOfCable(sym);
         return `<div class="prop-row"><label>${st.label} <span class="rp-dim">(囲みの長さ ${span}mm・5mm ピッチ)</span></label>
@@ -349,7 +354,7 @@ UI.showProps = (focusTag = false) => {
       ${sym.swapGroup ? (() => {
         /* 同じ仲間の記号への差し替え (機種違いなど)。タグ・機能テキスト・位置は
            そのまま残るので、結線図を描き直さずに機種だけ変えられる */
-        const kin = Object.values(SYMBOLS_BY_ID).filter(s2 => s2.swapGroup === sym.swapGroup)
+        const kin = Object.values(SYMBOLS_BY_ID).filter(s2 => s2.swapGroup === sym.swapGroup && !s2.stretchOf)
           .sort((a2, b2) => String(a2.typ || a2.id).localeCompare(String(b2.typ || b2.id)));
         return `<div class="prop-row"><label>機種 <span class="rp-dim">(差し替えると端子構成ごと入れ替わります)</span></label>
           <select id="pSwap">${kin.map(s2 =>
@@ -470,6 +475,16 @@ UI.showProps = (focusTag = false) => {
       App.labelRev++;
     });
     bind("#pDelay", v => { const n = parseFloat(v); dev.props.delay = isNaN(n) ? 2 : n; });
+    // 行ピッチ (mm 指定の寸法違い)。下地を引き直せるよう、古い下地は消して知らせる
+    bind("#pSpanMM", v => {
+      const base = symStretchBase(symOf(dev.sym));
+      if (!base) return;
+      const span = symStretchSpan(base, Math.round(parseFloat(v) / GRID) * GRID);
+      symStretchVariant(base, span);
+      dev.sym = `${base.id}@${span}`;
+      App.labelRev++;
+      UI.toast(`行ピッチを ${span}mm にしました (下地を引き直してください)`, 3600);
+    });
     // 伸縮シンボル: 長さを変えると "base@長さ" の寸法違いに差し替える
     bind("#pSpan", v => {
       const base = symStretchBase(symOf(dev.sym));

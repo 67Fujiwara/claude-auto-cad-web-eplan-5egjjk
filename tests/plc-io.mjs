@@ -39,11 +39,11 @@ const R = await p.evaluate(() => {
   const SPEC = {
     kv_n14at_in: { io: 8, first: "R000", last: "R007", aux: "COM", paper: "A3", orient: "landscape" },
     kv_n14at_out: { io: 6, first: "R500", last: "R505", aux: "COM,L,N,PE", paper: "A3", orient: "landscape" },
-    kv_n24at_in: { io: 14, first: "R000", last: "R013", aux: "COM", paper: "A3", orient: "landscape" },
+    kv_n24at_in: { io: 14, first: "R000", last: "R013", aux: "COM", paper: "A3", orient: "portrait" },
     kv_n24at_out: { io: 10, first: "R500", last: "R509", aux: "COM,L,N,PE", paper: "A3", orient: "landscape" },
-    kv_n40at_in1: { io: 16, first: "R000", last: "R015", aux: "COM", paper: "A3", orient: "landscape" },
-    kv_n40at_in2: { io: 8, first: "R100", last: "R107", aux: "COM", paper: "A3", orient: "landscape" },
-    kv_n40at_out: { io: 16, first: "R500", last: "R515", aux: "COM,L,N,PE", paper: "A3", orient: "portrait" },
+    kv_n40at_in1: { io: 16, first: "R000", last: "R015", aux: "COM", paper: "A3", orient: "portrait" },
+    kv_n40at_in2: { io: 8, first: "R100", last: "R107", aux: "COM,L,N,PE", paper: "A3", orient: "landscape" },
+    kv_n40at_out: { io: 16, first: "R500", last: "R515", aux: "COM", paper: "A3", orient: "portrait" },
   };
   out.spec = SPEC;
 
@@ -127,6 +127,48 @@ const R = await p.evaluate(() => {
   const sw = t.pg.devices.filter(d => d.sym === "pb_no")[0];
   out.electrical = nets.pinNet(sw, 1) === nets.pinNet(t.d, 0) || nets.pinNet(sw, 0) === nets.pinNet(t.d, 0);
 
+  /* ④b 行ピッチ: 横に倒した現場機器が隣の行とぶつからないこと。
+     いちばん背の高い単極の入出力記号でも、ピッチを広げれば収まること */
+  {
+    const q = newPage("干渉の確認", App.project.pages.length + 1);
+    App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
+    q.paper = "A3"; q.orient = "landscape"; q.scale = "1:1"; applySheet(q);
+    const dd = addDevice(q, "kv_n14at_in", 120, 20, { tag: "-A9" });
+    const sp2 = symOf(dd.sym).ioSheet;
+    const put = (id) => sp2.rows.filter(r => r.io).slice(0, 3).map(r =>
+      addDevice(q, id, dd.x - sp2.rail + 5, dd.y + r.y, { tag: "", rot: 270 }));
+    /* 外接矩形は全周 2mm の余白つきなので、実際に線が引かれる範囲で測る。
+       隣の行の機器と 1mm 以上あいていなければ「干渉」 */
+    const ink = (d2) => { const b3 = devBounds(d2); return { y0: b3.y + 2, y1: b3.y + b3.h - 2 }; };
+    const clash = (ds) => { let n = 0;
+      for (let i = 0; i < ds.length - 1; i++) {
+        const a = ink(ds[i]), b2 = ink(ds[i + 1]);
+        if (b2.y0 - a.y1 < 0.5) n++;      // 線どうしが 0.5mm 未満なら干渉
+      }
+      return n; };
+    const gapOf = (ds) => Math.min(...ds.slice(1).map((d2, i) => ink(d2).y0 - ink(ds[i]).y1));
+    const kinds = ["pb_no", "estop", "float_sw", "limit_sw", "selector", "prox", "press_sw"]
+      .filter(id => symOf(id) && ["input", "output"].includes(symOf(id).cat));
+    out.pitch = { def: sp2.pitch, clash: {} };
+    out.pitch.gap = {};
+    kinds.forEach(id => { const ds = put(id); out.pitch.clash[id] = clash(ds); out.pitch.gap[id] = +gapOf(ds).toFixed(2); ds.forEach(d2 => q.devices.splice(q.devices.indexOf(d2), 1)); });
+    // 背の高い記号 (光電センサ) は既定ピッチではぶつかるが、広げれば収まる
+    const tall = put("photo");
+    out.pitch.tallAtDef = clash(tall);
+    tall.forEach(d2 => q.devices.splice(q.devices.indexOf(d2), 1));
+    const base = symStretchBase(symOf(dd.sym));
+    symStretchVariant(base, 30); dd.sym = `${base.id}@30`;
+    App.labelRev++;
+    const sp3 = symOf(dd.sym).ioSheet;
+    const tall2 = sp3.rows.filter(r => r.io).slice(0, 3).map(r =>
+      addDevice(q, "photo", dd.x - sp3.rail + 5, dd.y + r.y, { tag: "", rot: 270 }));
+    out.pitch.tallAtWide = clash(tall2);
+    out.pitch.wide = sp3.pitch;
+    out.pitch.sheetGrew = JSON.stringify(symSheetSpec(symOf(dd.sym))) !== JSON.stringify(symSheetSpec(symOf("kv_n14at_in")));
+    App.project.pages.pop();
+    App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
+  }
+
   // ⑤ 機能欄 (行ごとの文言) が画面と DXF に出る
   t.d.props = { fn: ["操作電源 入", "タンク1本選択", "", "No1タンク選択"] };
   App.labelRev++;
@@ -189,8 +231,13 @@ const checks = {
   sheetChoice: ids.every(id => (R.group[id] || {}).sheet && R.group[id].sheet.paper === R.spec[id].paper &&
     R.group[id].sheet.orient === R.spec[id].orient && R.group[id].sheet.scale === "1:1"),
   fitsSheet: ids.every(id => R.sheet[id].inFrame && !R.sheet[id].onBlock && R.sheet[id].railRoom >= 0),
+  // 横に倒した現場機器が隣の行とぶつからない (既定ピッチ)。
+  // 背の高い記号は既定では当たるが、ピッチを広げれば収まる
+  noClash: Object.values((R.pitch || {}).clash || {}).every(v => v === 0) &&
+    Object.keys((R.pitch || {}).clash || {}).length >= 6 &&
+    R.pitch.tallAtDef > 0 && R.pitch.tallAtWide === 0 && R.pitch.wide === 30,
   // 紙の上の見え方が群によらず同じ
-  printedSame: ids.every(id => (R.print[id] || {}).pitch === 15 && R.print[id].minText >= 2.5 - 0.001 &&
+  printedSame: ids.every(id => (R.print[id] || {}).pitch === 20 && R.print[id].minText >= 2.5 - 0.001 &&
     R.print[id].minLine >= 0.25 - 0.001),
   // 未使用の入出力点は黙る。電源・コモン・保護接地は知らせる
   pinLevelDrc: ids.every(id => R.group[id].ioSkipped) && R.unconnected.names === "COM,L,N,PE",

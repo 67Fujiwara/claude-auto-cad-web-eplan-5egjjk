@@ -1449,6 +1449,7 @@ function symStretchVariant(base, span) {
   if (cur) return cur;
   const v = { ...base, id, bounds: base.stretch.bounds(s), body: base.stretch.body(s), span: s, stretchOf: base.id };
   if (base.stretch.pins) v.pins = base.stretch.pins(s);      // 端子位置も長さに追従する (シールドのドレン線)
+  if (base.stretch.extra) Object.assign(v, base.stretch.extra(s));  // 用紙・下地の寸法なども寸法違いへ追従
   delete v.stretch;                       // 寸法違いから更に派生させない
   SYMBOLS_BY_ID[id] = v;                  // DB_SYMBOLS へは入れない (パレットに増やさない)
   return v;
