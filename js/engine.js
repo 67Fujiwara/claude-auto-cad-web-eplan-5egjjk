@@ -101,6 +101,22 @@ function scaleProjectGeometry(k) {
 }
 
 /** 図面の中身を平行移動する (用紙・尺度の変更で図枠の原点が動いたときに追従させる) */
+/* 機器を動かすとき、その端子につながっている配線の端点も一緒に動かす。
+   ドラッグ移動と同じ挙動を、ドラッグ以外の経路 (用紙合わせなど) でも使う */
+function moveDeviceWithWires(page, dev, dx, dy) {
+  if (!dx && !dy) return;
+  const pins = devPins(dev);
+  const hits = [];
+  page.wires.forEach(w => {
+    w.pts.forEach((p, i) => {
+      if (i !== 0 && i !== w.pts.length - 1) return;
+      if (pins.some(pn => Math.abs(pn.x - p[0]) < 0.01 && Math.abs(pn.y - p[1]) < 0.01)) hits.push([w, i]);
+    });
+  });
+  dev.x += dx; dev.y += dy;
+  hits.forEach(([w, i]) => { w.pts[i] = [w.pts[i][0] + dx, w.pts[i][1] + dy]; });
+}
+
 function shiftProjectGeometry(dx, dy, pages) {
   if (!dx && !dy) return;
   const r = v => Math.round(v * 100) / 100;
@@ -610,12 +626,15 @@ function symBodyRects(sym) {
 function symTextK(sym) { return (sym && sym.textK) || 1; }
 
 /* 用紙に合わせて作った記号 (PLC の入出力結線図など) が持つ「想定する用紙」。
-   "A3 縦 1:2" のような表記を、ページの設定と同じ形に読み替える */
+   記号が {paper, orient, scale} をそのまま持つ (表示用の文字列を読み戻さない) */
 function symSheetSpec(sym) {
-  if (!sym || !sym.sheet) return null;
-  const m = /^(\S+)\s*(縦|横)?\s*(\S+)?$/.exec(String(sym.sheet).trim());
-  if (!m) return null;
-  return { paper: m[1], orient: m[2] === "縦" ? "portrait" : "landscape", scale: m[3] || "1:1" };
+  const sh = sym && sym.sheet;
+  if (!sh || typeof sh !== "object") return null;
+  return { paper: sh.paper, orient: sh.orient || "landscape", scale: sh.scale || "1:1" };
+}
+/** 用紙の表示 ("A3 縦 1:1") */
+function sheetLabel(sp) {
+  return sp ? `${sp.paper} ${sp.orient === "portrait" ? "縦" : "横"} ${sp.scale}` : "";
 }
 /** 記号の想定する用紙と、そのページの用紙が食い違っていないか */
 function symSheetMismatch(page, sym) {
@@ -630,17 +649,25 @@ function symSheetMismatch(page, sym) {
    記号ごとに一度だけ数える */
 const _symMinCache = new Map();
 function symDrawnMinima(sym) {
-  if (_symMinCache.has(sym.id)) return _symMinCache.get(sym.id);
+  // シンボルエディタで body を編集したら測り直す (id だけでは古い値が残る)
+  const key = sym.id + "#" + String(sym.body || "").length;
+  if (_symMinCache.has(key)) return _symMinCache.get(key);
   let h = Infinity, w = Infinity;
-  String(sym.body || "").replace(/data-h="([\d.]+)"/g, (_, v) => { h = Math.min(h, parseFloat(v)); return ""; });
-  const hasStroke = /stroke-width="([\d.]+)"/.test(String(sym.body || ""));
-  String(sym.body || "").replace(/stroke-width="([\d.]+)"/g, (_, v) => { w = Math.min(w, parseFloat(v)); return ""; });
+  const body = String(sym.body || "");
+  body.replace(/data-h="([\d.]+)"/g, (_, v) => { h = Math.min(h, parseFloat(v)); return ""; });
+  /* data-h を持たない <text> (取り込んだ図面など) は、font-size から呼び高さを
+     見積もる。測れないものを「無い」と見なすと検図がすり抜ける */
+  body.replace(/<text\b(?![^>]*data-h)[^>]*font-size="([\d.]+)"/g, (_, v) => {
+    h = Math.min(h, parseFloat(v) * TEXT_CAP); return "";
+  });
+  const hasStroke = /stroke-width="([\d.]+)"/.test(body);
+  body.replace(/stroke-width="([\d.]+)"/g, (_, v) => { w = Math.min(w, parseFloat(v)); return ""; });
   // stroke-width を書いていない要素は既定 (図記号線 0.5mm)
   if (!hasStroke || /<(path|rect|circle|line|polyline)(?![^>]*stroke-width)/.test(String(sym.body || ""))) {
     w = Math.min(w, LINE_W.thick);
   }
   const r = { h, w };
-  _symMinCache.set(sym.id, r);
+  _symMinCache.set(key, r);
   return r;
 }
 /** そのページに実際に描かれる文字高さ・線の太さの最小値 (作図領域の mm) */
@@ -659,6 +686,19 @@ function pageDrawnMinima(page) {
   });
   condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f); });
   (page.texts || []).forEach(t => { h = Math.min(h, (t.size || TEXT_H.normal) * f); });
+  // アプリが描く線 — 導体は太線、作図線 (破線・一点鎖線) と破線枠は細線
+  if (page.wires && page.wires.length) w = Math.min(w, LINE_W.thick * f);
+  if ((page.wires || []).some(wr => wr.style && wr.style !== "solid")) w = Math.min(w, LINE_W.thin * f);
+  if (pageZones(page).length) {
+    w = Math.min(w, LINE_W.thin * f);
+    pageZones(page).forEach(z => { if (z.label) h = Math.min(h, TEXT_H.normal * f); });
+  }
+  // 接点ミラー表・相互参照の文字
+  page.devices.forEach(dev => {
+    const sym = symOf(dev.sym);
+    if (sym.mirror && linkedContacts(dev).length) h = Math.min(h, TEXT_H.small * f);
+    if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym));
+  });
   if (!isFinite(h)) h = TEXT_H.small * f;
   return { h, w };
 }
@@ -675,6 +715,17 @@ function pinLabelBoxes(page) {
     symBodyRects(symOf(d.sym)).forEach(([rx, ry, rw, rh]) => {
       bodyRects.push({ x: d.x + rx * f, y: d.y + ry * f, w: rw * f, h: rh * f });
     });
+  });
+  /* 導体も障害物にする。端子番号が配線の上に乗ると読めないので、
+     線番ラベルと同じ扱いで避ける (避けきれない図は検図が知らせる) */
+  const HW = LINE_W.thick / 2 * f;
+  const wireBoxes = [];
+  condWires(page).forEach(w => {
+    for (let i = 0; i < w.pts.length - 1; i++) {
+      const [x1, y1] = w.pts[i], [x2, y2] = w.pts[i + 1];
+      wireBoxes.push({ x: Math.min(x1, x2) - HW, y: Math.min(y1, y2) - HW,
+        w: Math.abs(x2 - x1) + HW * 2, h: Math.abs(y2 - y1) + HW * 2 });
+    }
   });
   page.devices.forEach((d2, di) => {
     const s2 = symOf(d2.sym);
@@ -698,6 +749,8 @@ function pinLabelBoxes(page) {
         out.forEach(o => { sc += overlapArea(box, padRect(o, LABEL_CLEAR / 2)); });
         devBoxes.forEach((r, ri) => { if (ri !== di) sc += overlapArea(box, r); });
         bodyRects.forEach(r => { sc += overlapArea(box, r); });
+        // 導体との重なりは重く見る (線の上の文字はいちばん読みにくい)
+        wireBoxes.forEach(r => { sc += overlapArea(box, r) * 6; });
         if (sc === 0) { best = box; break; }
         if (!best || sc < best.__sc) { best = box; best.__sc = sc; }
       }
@@ -743,11 +796,11 @@ const OBST_INSET = { label: 1.2, wireNum: 1.5, drc: 1.5 };
 /* 記号が実際に線を引いている範囲 (複数の箱)。列を並べた記号 (PLC の入出力
    結線図など) は外接矩形の中に大きな空きがあるので、図枠や表題欄との
    重なりを外接矩形で見ると、何も描いていない所で「重なっている」と出る。
-   sym.parts があるときはその箱で見る (回転にも追従させる) */
+   sym.inkBoxes があるときはその箱で見る (回転にも追従させる) */
 function devPartBoxes(dev) {
   const sym = symOf(dev.sym);
-  if (!sym || !sym.parts || !sym.parts.length) return [devBounds(dev)];
-  return sym.parts.map(([px, py, pw, ph]) => {
+  if (!sym || !sym.inkBoxes || !sym.inkBoxes.length) return [devBounds(dev)];
+  return sym.inkBoxes.map(([px, py, pw, ph]) => {
     const cs = [[px, py], [px + pw, py], [px, py + ph], [px + pw, py + ph]].map(([x, y]) => pinAbs(dev, { x, y }));
     const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
@@ -2635,9 +2688,10 @@ function runDRC() {
       const sy = symOf(dev.sym);
       const mm = symSheetMismatch(page, sy);
       if (!mm) return;
-      const lab = (m2) => `${m2.paper} ${m2.orient === "portrait" ? "縦" : "横"} ${m2.scale}`;
-      issues.push({ sev: "warn", rule: "記号の想定用紙と違う", page: page.no, target: dev.id, loc: devLocation(dev),
-        msg: `${displayTag(dev) || sy.name} は ${lab(mm.want)} 用の記号です (このページは ${lab({ paper: mm.now.paper, orient: mm.now.orient || "landscape", scale: mm.now.scale })})` });
+      issues.push({ sev: "err", rule: "記号の想定用紙と違う", page: page.no, target: dev.id, loc: devLocation(dev),
+        msg: `${displayTag(dev) || sy.name} は ${sheetLabel(mm.want)} 用の記号です ` +
+          `(このページは ${sheetLabel({ paper: mm.now.paper, orient: mm.now.orient || "landscape", scale: mm.now.scale })}。` +
+          `プロパティの「この用紙にする」で合わせられます)` });
     });
 
     /* 行き先 (継続先)。相互参照は「指し先が一意に決まる」ことと「往復で対に
@@ -2764,12 +2818,23 @@ function runDRC() {
         issues.push({ sev: "err", msg: `${dev.tag || "機器"} のシンボル定義 (${dev.sym}) が見つかりません — 元の図面から再取り込みが必要です`, page: page.no, target: dev.id, loc: devLocation(dev) });
       }
       // 未接続ピン (絶縁処理端末など「未接続であること」を示す記号は除外)
-      if (!sym.noDrc) devPins(dev).forEach(pin => {
+      /* 未接続ピン。記号ぜんぶを黙らせる noDrc のほかに、ピン単位の除外も見る。
+         PLC の入出力結線図のように「使わない点があるのが普通」の記号でも、
+         電源・コモン・保護接地の結び忘れは必ず知らせたい */
+      if (!sym.noDrc) devPins(dev).forEach((pin, pi) => {
+        if ((sym.pins[pi] || {}).noDrc) return;
         const onWire = wireEndpoints.has(ptKey(pin.x, pin.y)) ||
           wireSegs.some(([a, b]) => ptOnSeg(pin.x, pin.y, a[0], a[1], b[0], b[1])) ||
           page.devices.some(d2 => d2 !== dev && devPins(d2).some(p2 => Math.abs(p2.x - pin.x) < .01 && Math.abs(p2.y - pin.y) < .01));
         if (!onWire) {
-          issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のピン ${pin.name || pin.idx + 1} が未接続です`, page: page.no, target: dev.id, loc: devLocation(dev) });
+          /* 同じ名前の端子が複数ある記号 (入出力結線図の COM など) では、
+             どの端子かが分かるように区分 (列・行) を添える。飛び先も端子の位置に
+             する — 用紙 1 枚を占める記号では、記号の原点では遠すぎる */
+          const dup = sym.pins.filter(q => q.n && q.n === pin.name).length > 1;
+          const zone = `${sheetCol(pin.x)}${sheetRow(pin.y)}`;
+          issues.push({ sev: "warn",
+            msg: `${displayTag(dev) || sym.name} のピン ${pin.name || pin.idx + 1}${dup ? ` (${zone})` : ""} が未接続です`,
+            page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(pin.x)}` });
         }
       });
       // タグ重複 (電位リンクは同タグで対にするのが仕様なので除外)

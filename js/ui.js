@@ -346,6 +346,15 @@ UI.showProps = (focusTag = false) => {
           (cable ? `<div class="prop-row"><label>長さ (m) <span class="rp-dim">(部品表の集計用)</span></label>
           <input id="pLen" class="mono" type="number" step="0.1" min="0" value="${dev.props && dev.props.len !== undefined ? dev.props.len : ""}" placeholder="例: 12.5"/></div>` : "");
       })() : ""}
+      ${sym.swapGroup ? (() => {
+        /* 同じ仲間の記号への差し替え (機種違いなど)。タグ・機能テキスト・位置は
+           そのまま残るので、結線図を描き直さずに機種だけ変えられる */
+        const kin = Object.values(SYMBOLS_BY_ID).filter(s2 => s2.swapGroup === sym.swapGroup)
+          .sort((a2, b2) => String(a2.typ || a2.id).localeCompare(String(b2.typ || b2.id)));
+        return `<div class="prop-row"><label>機種 <span class="rp-dim">(差し替えると端子構成ごと入れ替わります)</span></label>
+          <select id="pSwap">${kin.map(s2 =>
+            `<option value="${s2.id}"${s2.id === sym.id ? " selected" : ""}>${escAttr(s2.typ || s2.name)}</option>`).join("")}</select></div>`;
+      })() : ""}
       ${sym.sheet ? (() => {
         // 用紙に合わせて作った記号 (入出力結線図)。今の用紙と違えば 1 押しで直せる
         const mm = symSheetMismatch(curPage(), sym);
@@ -388,27 +397,44 @@ UI.showProps = (focusTag = false) => {
     bind("#pY", v => dev.y = num(v, dev.y));
     bind("#pLink", v => dev.linkTo = v || null);
     // 「この用紙にする」— ページの用紙を記号に合わせ、図枠の中へ入れ直す
+    // 機種の差し替え。位置・タグ・機能テキストは残し、つないである配線は
+    // 端子が動いたぶんだけ知らせる (検図の未接続で拾える)
+    bind("#pSwap", v => {
+      if (!v || v === dev.sym) return;
+      const before = devPins(dev).length;
+      dev.sym = v;
+      App.labelRev++;
+      const after = symOf(v);
+      UI.toast(`${after.typ || after.name} に差し替えました (端子 ${before} → ${after.pins.length})`, 3200);
+    });
     const fix = pane.querySelector("#pSheetFix");
     if (fix) fix.addEventListener("click", () => {
       const want = symSheetSpec(sym);
       if (!want) return;
       commit();
       const page = curPage();
+      const frBefore = frameRect();
       page.paper = want.paper; page.orient = want.orient; page.scale = want.scale;
       applySheet(page);
-      /* 図枠の中へ収める (用紙が変わると原点も余白も変わるので置き直しが要る)。
+      /* 用紙が変わると図枠の原点も動く。用紙変更の正規の経路 (図枠・表題欄の
+         設定) と同じく、このページの図形ぜんぶを原点の移動ぶん平行移動する。
+         記号だけ動かすと、描いてある配線や注記だけが図枠に対してずれる */
+      shiftProjectGeometry(SHEET.marginLeft - frBefore.x, SHEET.margin - frBefore.y, [page]);
+      /* そのうえで、この記号が図枠に収まらなければ中へ入れ直す。
          格子へ丸めるときに図枠の外へ半目こぼれないよう、下限は切り上げ・
-         上限は切り捨てで丸める */
+         上限は切り捨てで丸める。つないである配線の端点も一緒に動かす
+         (置き直しで結線が外れては、用紙を合わせる意味がない) */
       const fr = frameRect(), bb = devBounds(dev);
       const put = (v, lo, hi) => {
         const l = Math.ceil(lo / GRID) * GRID, h2 = Math.floor(hi / GRID) * GRID;
         return Math.min(Math.max(snap(v), l), Math.max(l, h2));
       };
-      dev.x = put(dev.x, fr.x + (dev.x - bb.x), fr.x + fr.w - (bb.x + bb.w - dev.x));
-      dev.y = put(dev.y, fr.y + (dev.y - bb.y), fr.y + fr.h - (bb.y + bb.h - dev.y));
+      const nx = put(dev.x, fr.x + (dev.x - bb.x), fr.x + fr.w - (bb.x + bb.w - dev.x));
+      const ny = put(dev.y, fr.y + (dev.y - bb.y), fr.y + fr.h - (bb.y + bb.h - dev.y));
+      if (nx !== dev.x || ny !== dev.y) moveDeviceWithWires(page, dev, nx - dev.x, ny - dev.y);
       App.labelRev++;
       UI.refresh(); zoomFit();
-      UI.toast(`用紙を ${sym.sheet} にしました`, 2600);
+      UI.toast(`用紙を ${sheetLabel(want)} にしました`, 2600);
     });
     bind("#pGoto", v => {
       dev.props = dev.props || {};

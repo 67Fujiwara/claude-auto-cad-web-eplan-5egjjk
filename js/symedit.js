@@ -94,7 +94,8 @@ function symShapeSVG(sh, opts = {}) {
   }
   if (sh.k === "text") {
     const fam = sh.mono ? "monospace" : "sans-serif";
-    return `<text x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" font-size="${svgFontSizeFor(sh.text, sh.h || TEXT_H.normal, !!sh.mono, { noMin: true })}" text-anchor="middle" fill="currentColor" stroke="none" font-family="${fam}">${escXML(sh.text)}</text>`;
+    // data-h (文字の呼び高さ) を必ず残す。検図が用紙上の文字高を測るのに使う
+    return `<text x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" data-h="${sh.h || TEXT_H.normal}" font-size="${svgFontSizeFor(sh.text, sh.h || TEXT_H.normal, !!sh.mono, { noMin: true })}" text-anchor="middle" fill="currentColor" stroke="none" font-family="${fam}">${escXML(sh.text)}</text>`;
   }
   return "";
 }
