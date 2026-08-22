@@ -16,6 +16,7 @@ const DB_DEFAULT_PINNED = [
 /** 多極コネクタ (レセプタクル) を作る。
     ピンは左端 (列ごとに +colGap) に 5mm ピッチ。山形の開口は配線側を向く。
     sigs: 端子名の配列 / perCol: 1列あたりの極数 (超えたら右の列へ折り返す) */
+const r1 = v => Math.round(v * 10) / 10;
 function mkConn(o) {
   const pitch = 5, colGap = o.colGap || 26;
   const per = o.perCol || o.sigs.length;
@@ -36,13 +37,28 @@ function mkConn(o) {
   for (let c = 0; c < nCols; c++) parts.push(`<rect x="${c * colGap + 2}" y="-4" width="12.8" height="${h}"/>`);
   const w = (nCols - 1) * colGap + 14.8;
   parts.push(`<text x="${w / 2}" y="-6" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">${o.label}</text>`);
+  // 識別図 (受け口を正面から見た形) をラベルの上に細線で添える。電気的な意味は
+  // 下の接続器記号 (JIS C 0617-3) が持ち、この図は「どの規格の口か」を一目で
+  // 見分けるための説明図なので、図記号と紛れないよう細線 0.25mm で描く
+  let gTop = -8.6;
+  if (o.glyph) {
+    const gh = o.glyphH || 6;
+    const gy = -9.4 - gh / 2;                       // ラベルの上端からさらに離す
+    parts.push(`<g transform="translate(${r1(w / 2)},${r1(gy)})">${o.glyph}</g>`);
+    gTop = gy - gh / 2 - 0.6;
+  }
   // 外接矩形は他の記号と同じ作法で一様余白 2mm。ラベル幅は等幅 2.5mm の概算
-  const tw = String(o.label).length * 2.05;
+  const tw = Math.max(String(o.label).length * 2.05, o.glyphW || 0);
   const x0 = Math.min(0, w / 2 - tw / 2), x1 = Math.max(w, w / 2 + tw / 2);
-  const y0 = -8.6, y1 = -4 + h;
+  const y0 = gTop, y1 = -4 + h;
   const r = v => Math.round(v * 10) / 10;
+  // パレットの見出し用: 識別図とラベルだけを大きく映す (背の高い多極コネクタは
+  // 全体を 46px に収めると識別図が数 px に潰れ、どの口か分からなくなる)
+  const tb = Math.max(tw, o.glyphW || 0) + 2;
+  const thumbBox = o.glyph ? [r(w / 2 - tb / 2), r(gTop - 0.6), r(tb), r(-4.3 - gTop)] : null;
   return {
     id: o.id, db: true, group: "通信・コネクタ", cat: "db", letter: o.letter || "X",
+    ...(thumbBox ? { thumbBox } : {}),
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.typ || "",
     stdNote: o.stdNote || "接続器 (JIS C 0617-3)。極数と端子名は実機の仕様に合わせる",
     pins, sim: "none",
@@ -421,26 +437,52 @@ const DB_SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "contact_nc", linked: true, bounds: [-10,-2, 12, 24],
     body: G_NC_CONT,
   },
-  /* ── 通信・コネクタ (実機の端子配列に合わせた多極コネクタ) ── */
-  mkConn({ id: "conn_rj45", label: "RJ45", letter: "X",
-    name: "EtherNet/IP コネクタ (RJ45)", nameEn: "EtherNet/IP connector (RJ45)",
-    desc: "8極モジュラジャック。EtherNet/IP・PROFINET・産業用イーサネット共通", typ: "8P8C シールド付",
+  /* ── 通信・コネクタ (実機の端子配列に合わせた多極コネクタ) ──
+     コントローラの通信ポートは、極数だけでは EtherNet/IP・USB・HDMI を見分け
+     られない。受け口を正面から見た形を細線で添えて一目で分かるようにする。
+     細線 (0.25mm) にしてあるのは、これが電気的な意味を持つ図記号ではなく
+     「どの規格の口か」を示す説明図だから (JIS Z 8312 の細線)。 */
+  mkConn({ id: "conn_rj45", label: "EtherNet/IP", letter: "X",
+    name: "EtherNet/IP ポート (RJ45)", nameEn: "EtherNet/IP port (RJ45)",
+    desc: "8極モジュラジャック。EtherNet/IP・PROFINET など産業用イーサネット共通。ツメ (ラッチ) 付きの受け口",
+    typ: "8P8C シールド付",
+    stdNote: "接続器 (JIS C 0617-3)。上の細線は受け口の識別図で、電気的な意味は持たない",
+    // RJ45 ジャック正面: 角穴 + 下側のラッチ溝 + 接点 8 本
+    glyph: '<path d="M-5.5,-3.2 H5.5 V1.4 H1.8 V3.2 H-1.8 V1.4 H-5.5 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
+           '<path d="M-3.85,-3.2 V-0.8 M-2.75,-3.2 V-0.8 M-1.65,-3.2 V-0.8 M-0.55,-3.2 V-0.8 M0.55,-3.2 V-0.8 M1.65,-3.2 V-0.8 M2.75,-3.2 V-0.8 M3.85,-3.2 V-0.8" stroke-width="0.25"/>',
+    glyphH: 6.4, glyphW: 11,
     sigs: ["TD+", "TD-", "RD+", "NC1", "NC2", "RD-", "NC3", "NC4"] }),
   mkConn({ id: "conn_usb_a", label: "USB-A", letter: "X",
-    name: "USB コネクタ (Type-A)", nameEn: "USB connector Type-A",
-    desc: "ティーチング・パラメータ設定用。VBUS +5V / D± / GND", typ: "USB2.0 Type-A",
+    name: "USB ポート (Type-A)", nameEn: "USB port Type-A",
+    desc: "ティーチング・パラメータ設定用。VBUS +5V / D± / GND。平たい長方形の受け口", typ: "USB2.0 Type-A",
+    stdNote: "接続器 (JIS C 0617-3)。上の細線は受け口の識別図で、電気的な意味は持たない",
+    // Type-A 受け口正面: 平たい角穴 + 中の舌 (片寄り)
+    glyph: '<path d="M-5,-2.4 H5 V2.4 H-5 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
+           '<path d="M-3.6,0 H3.6 V1.4 H-3.6 Z" stroke-width="0.25" stroke-linejoin="miter"/>',
+    glyphH: 4.8, glyphW: 10,
     sigs: ["VBUS", "D-", "D+", "GND"] }),
   mkConn({ id: "conn_usb_b", label: "USB-B", letter: "X",
-    name: "USB コネクタ (Type-B)", nameEn: "USB connector Type-B",
-    desc: "機器側の受け口。コントローラのティーチングポートに多い", typ: "USB2.0 Type-B",
+    name: "USB ポート (Type-B)", nameEn: "USB port Type-B",
+    desc: "機器側の受け口。コントローラのティーチングポートに多い。上二隅を落とした角穴", typ: "USB2.0 Type-B",
+    stdNote: "接続器 (JIS C 0617-3)。上の細線は受け口の識別図で、電気的な意味は持たない",
+    glyph: '<path d="M-3.2,3 H3.2 V-1.4 L1.9,-3 H-1.9 L-3.2,-1.4 Z" stroke-width="0.25" stroke-linejoin="miter"/>',
+    glyphH: 6, glyphW: 6.4,
     sigs: ["VBUS", "D-", "D+", "GND"] }),
   mkConn({ id: "conn_usb_c", label: "USB-C", letter: "X",
-    name: "USB コネクタ (Type-C)", nameEn: "USB connector Type-C",
-    desc: "電源・信号兼用。CC で向きと給電を判定 (主要端子のみ)", typ: "USB Type-C",
+    name: "USB ポート (Type-C)", nameEn: "USB port Type-C",
+    desc: "電源・信号兼用。CC で向きと給電を判定 (主要端子のみ)。長円の受け口", typ: "USB Type-C",
+    stdNote: "接続器 (JIS C 0617-3)。上の細線は受け口の識別図で、電気的な意味は持たない",
+    glyph: '<path d="M-2.7,-1.8 H2.7 A1.8,1.8 0 0 1 2.7,1.8 H-2.7 A1.8,1.8 0 0 1 -2.7,-1.8 Z" stroke-width="0.25"/>',
+    glyphH: 3.6, glyphW: 9,
     sigs: ["VBUS", "GND", "CC1", "CC2", "D+", "D-", "SHELL"] }),
   mkConn({ id: "conn_hdmi", label: "HDMI", letter: "X",
-    name: "HDMI コネクタ (Type-A)", nameEn: "HDMI connector Type-A",
-    desc: "19極。表示器・タッチパネルの映像用", typ: "HDMI Type-A",
+    name: "HDMI ポート (Type-A)", nameEn: "HDMI port Type-A",
+    desc: "19極。表示器・タッチパネルの映像用。下辺の両隅を非対称に落とした受け口", typ: "HDMI Type-A",
+    stdNote: "接続器 (JIS C 0617-3)。上の細線は受け口の識別図で、電気的な意味は持たない",
+    // Type-A 受け口正面: 下側の隅を左右で違う角度に落とした形 (差し込みの向き決め)
+    glyph: '<path d="M-6,-2.4 H6 V0.4 L3.2,2.4 H-2.4 L-6,0.2 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
+           '<path d="M-4.4,-0.9 H4.4" stroke-width="0.25"/>',
+    glyphH: 4.8, glyphW: 12,
     perCol: 10, colGap: 30,
     sigs: ["D2+", "D2S", "D2-", "D1+", "D1S", "D1-", "D0+", "D0S", "D0-", "CK+",
            "CKS", "CK-", "CEC", "RSV", "SCL", "SDA", "GND", "+5V", "HPD"] }),
