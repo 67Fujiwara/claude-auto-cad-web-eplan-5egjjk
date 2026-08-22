@@ -205,9 +205,12 @@ function wireLabelPosCalc(w, page, placed) {
   (placed || []).forEach(b => obst.push(b));      // すでに確定した他の線番ラベル
   // 実際に印字される位置 → その文字の外接矩形 (画面・DXF・検図で同じ式を使う)。
   // side=+1 は配線の左/上、-1 は右/下に置く
+  // 縦区間の文字は rotate(-90)・text-anchor=middle で描くので、pt がそのまま
+  // 文字の中心になる。線に沿った方向へ余分にずらすと、下の候補計算 (はみ出し・
+  // 区間内判定) と実際の位置が 1.4mm ずれるので、ずらさない
   const posOf = (pt, horiz, side = 1, extra = 0) => horiz
     ? [pt[0], pt[1] + ((side > 0 ? -1.4 - extra : 4.6 + extra)) * f, horiz]
-    : [pt[0] + ((side > 0 ? -2.4 - extra : 3.6 + extra)) * f, pt[1] - 1.4 * f, horiz];
+    : [pt[0] + ((side > 0 ? -2.4 - extra : 3.6 + extra)) * f, pt[1], horiz];
   const boxOf = (mx, my, horiz) => {
     const b = wireNumBox(w, mx, my, horiz);
     const sp = wireSpecBox(w, mx, my, horiz);
@@ -216,6 +219,7 @@ function wireLabelPosCalc(w, page, placed) {
     return { x: x0, y: y0, w: Math.max(b.x + b.w, sp.x + sp.w) - x0, h: Math.max(b.y + b.h, sp.y + sp.h) - y0 };
   };
   let best = null;
+  const TS = [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
   const consider = (pt, horiz, extras = [0, 3, 6], sides = [1, -1]) => {
     // 配線の両側 × 法線方向のオフセットを試す (短い区間でも逃げ場を作る)
     for (const extra of extras) {
@@ -230,21 +234,61 @@ function wireLabelPosCalc(w, page, placed) {
     }
     return null;
   };
+  // 空いている候補のうち、まわりに余裕のある場所ほどよい。桁数で線番の幅が
+  // 変わっても (9 → 10 など) 同じケーブルの心線が同じ場所を選び、列が割れない
+  const clearOf = (bx, sg, horiz) => {
+    let m = Infinity;
+    for (const r of obst) m = Math.min(m, rectGap(bx, padRect(r, LABEL_CLEAR / 2)));
+    const lo = horiz ? Math.min(sg.a[0], sg.b[0]) : Math.min(sg.a[1], sg.b[1]);
+    const hi = horiz ? Math.max(sg.a[0], sg.b[0]) : Math.max(sg.a[1], sg.b[1]);
+    const b0 = horiz ? bx.x : bx.y, b1 = horiz ? bx.x + bx.w : bx.y + bx.h;
+    return Math.min(m, b0 - lo, hi - b1);
+  };
+  // すぐ隣を走る線 (多芯ケーブルの心線) に付いた線番と、区間方向の位置が
+  // 揃っているか。揃っていれば 0 に近い
+  const alignedTo = (bx, horiz) => {
+    let m = Infinity;
+    (placed || []).forEach(r => {
+      const perp = horiz ? Math.abs((r.y + r.h / 2) - (bx.y + bx.h / 2))
+                         : Math.abs((r.x + r.w / 2) - (bx.x + bx.w / 2));
+      if (perp > 12) return;                       // 離れた線番とは揃えない
+      const c = horiz ? bx.x + bx.w / 2 : bx.y + bx.h / 2;
+      const rc = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
+      m = Math.min(m, Math.abs(c - rc));
+    });
+    return m;
+  };
+  /** 線に沿った候補から 1つ選ぶ: 隣の心線と揃う → 余裕が大きい → 区間の中央寄り */
+  const pickAlong = (list, horiz) => {
+    list.sort((p1, p2) => ((alignedTo(p1.bx, horiz) <= 0.6 ? 0 : 1) - (alignedTo(p2.bx, horiz) <= 0.6 ? 0 : 1))
+      || (Math.round(p2.clr * 2) - Math.round(p1.clr * 2)) || (p1.i - p2.i));
+    return list[0].res;
+  };
+  /** 区間 sg の TS 位置のうち、何にも当たらないものを集める */
+  const alongFree = (sg, horiz, at, side) => {
+    const out = [];
+    TS.forEach((t, i) => {
+      const res = posOf(at(t), horiz, side, 0);
+      const bx = boxOf(res[0], res[1], horiz);
+      let sc = 0;
+      for (const r of obst) sc += overlapArea(bx, padRect(r, LABEL_CLEAR / 2));
+      if (sc === 0) out.push({ res, bx, i, clr: clearOf(bx, sg, horiz) });
+      else if (!best || sc < best.sc) best = { sc, res };
+    });
+    return out;
+  };
   // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す。
   // まず線に沿って場所を変え (線番は自分の線のすぐ脇にあるのが読みやすい)、
   // それでも空きが無いときにだけ法線方向へ逃がす — 逃がしを先に試すと、
   // 同じ線上に空きがあるのに線から離れた位置を選んでしまう
-  const TS = [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
   for (const sg of segs) {
     const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
     const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
     // まず線の片側 (上/左) で場所を探し、それから反対側。側を変えるより
     // 同じ側で線に沿って動かすほうがよい — 多芯ケーブルのように線が 5mm 間隔で
     // 並ぶ図では、反対側へ回すと隣の線のほうが近くなってどの線の番号か読めなくなる
-    for (const t of TS) {
-      const ok = consider(at(t), horiz, [0], [1]);
-      if (ok) return ok;
-    }
+    const along = alongFree(sg, horiz, at, 1);
+    if (along.length) return pickAlong(along, horiz);
     // 線上に収まらない場合は、じゃまをしている物 (囲みなど) の外側へ寄せて
     // 同じ線の上に置く。線から離すより「自分の線の続き」に置くほうが読みやすい
     const mid = at(0.5);
@@ -306,11 +350,18 @@ function wireLabelPosCalc(w, page, placed) {
       return Math.min(v + size / 2, hi) - Math.max(v - size / 2, lo) >= 0.5;
     };
     const all = [...cands, ...cands.map(shift)].filter(touches);
-    const rank = (p1, p2) => (over(p1) - over(p2)) || near(p1, p2);
-    // 既に置いた線番 (並んだ心線の線番) と同じ側へ揃える。ケーブルの中で
-    // 線番が左右にばらけると、どの心線の番号か読めなくなる
-    // 既に置いた線番と「箱の端」で揃える。連番の桁数が変わって線番の幅が
-    // 混ざっても (12芯の 9→10 など) 列が割れないよう、中心ではなく端で比べる
+    // 逃がし先も「まわりに余裕のある場所」を選ぶ。狭い隙間に入れると、同じ
+    // ケーブルの中で幅の広い線番 (桁数の多いもの) だけ入りきらず列が割れる
+    const clrAt = (c) => {
+      const r0 = posOf(c, horiz, 1, 0);
+      return clearOf(boxOf(r0[0], r0[1], horiz), sg, horiz);
+    };
+    const rank = (p1, p2) => (Math.round(over(p1) * 2) - Math.round(over(p2) * 2))
+      || (Math.round(clrAt(p2) * 2) - Math.round(clrAt(p1) * 2)) || near(p1, p2);
+    // 既に置いた線番 (並んだ心線の線番) と列を揃える。ケーブルの中で線番が
+    // ばらけると、どの心線の番号か読めなくなる。逃がし先では線番は囲みの縁に
+    // 押し当てられるので、中心ではなく「箱の端」で比べる — 連番の桁数が変わって
+    // 幅が混ざっても (12芯の 9→10 など) 縁に沿った 1列になる
     const alignBias = (c) => {
       let best = Infinity;
       (placed || []).forEach(r => {
@@ -320,7 +371,9 @@ function wireLabelPosCalc(w, page, placed) {
       });
       return best === Infinity ? 0 : best;
     };
-    const rank2 = (p1, p2) => (alignBias(p1) - alignBias(p2)) || rank(p1, p2);
+    // はみ出しの少なさが先。同程度なら、すでに置いた線番と揃う位置を選ぶ
+    const rank2 = (p1, p2) => (Math.round(over(p1) * 2) - Math.round(over(p2) * 2))
+      || ((alignBias(p1) <= 0.6 ? 0 : 1) - (alignBias(p2) <= 0.6 ? 0 : 1)) || rank(p1, p2);
     cands = [...all.filter(inSeg).sort(near),
              ...all.filter(c => !inSeg(c) && onSeg(c)).sort(rank2),
              ...all.filter(c => !onSeg(c)).sort(rank2)];
@@ -329,10 +382,8 @@ function wireLabelPosCalc(w, page, placed) {
       if (ok) return ok;
     }
     // 同じ側に置けないときだけ反対側へ (線に沿った位置 → 退避先の順)
-    for (const t of TS) {
-      const ok = consider(at(t), horiz, [0], [-1]);
-      if (ok) return ok;
-    }
+    const back = alongFree(sg, horiz, at, -1);
+    if (back.length) return pickAlong(back, horiz);
     for (const c of cands) {
       const ok = consider(c, horiz, [0], [-1]);
       if (ok) return ok;
@@ -555,6 +606,13 @@ function overlapArea(a, b) {
   const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
   const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
   return w > 0.05 && h > 0.05 ? w * h : 0;
+}
+
+/** 2つの矩形のすき間 (重なっていれば 0)。線番の「余裕」を測るのに使う */
+function rectGap(a, b) {
+  const dx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), 0);
+  const dy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h), 0);
+  return Math.hypot(dx, dy);
 }
 
 /** 1機器ぶんのラベル配置を決める。obstacles は {x,y,w,h,owner} の配列 */
