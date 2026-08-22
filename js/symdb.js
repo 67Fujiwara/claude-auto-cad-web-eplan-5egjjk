@@ -64,7 +64,9 @@ const DB_SYMBOLS = [
     stretch: {
       min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
       bounds: (h) => [-7, -7, 14, h + 4],
-      body: (h) => `<path d="M0,-5 A5,${+(h / 2).toFixed(2)} 0 1 0 0,${h - 5} A5,${+(h / 2).toFixed(2)} 0 1 0 0,-5"/>`,
+      // 長円 (両端が半径5の半円・直線部が心線に沿う)。楕円だと遮へいとの間隔が
+      // 肩で詰まるが、長円どうしなら全周で一定の 2mm を保てる
+      body: (h) => `<path d="M-5,0 A5,5 0 0 1 5,0 L5,${h - 10} A5,5 0 0 1 -5,${h - 10} Z"/>`,
     },
   },
   {
@@ -75,18 +77,21 @@ const DB_SYMBOLS = [
     desc: "導体・心線群を囲む遮へい (破線)。ドレン線は片端 (通常は盤側) のみ FE へ接続する — 両端接地は循環電流の原因になる。心線の本数はプロパティで変えられる",
     // 心線囲み (rx=5 / y=-5〜5n) の外側へ一様に 2mm 広げた楕円。
     // ドレン線は心線の無い行 (最終心線の 1 ピッチ下) から右へ引き出す
-    pins: [], enclosure: 7, sim: "none",     // enclosure = 輪郭の半幅 (文字の障害物帯を作るのに使う)
+    pins: [], enclosure: 7, sim: "none", noDrc: true,   // enclosure = 輪郭の半幅 (文字の障害物帯を作るのに使う)
+    // ドレン線の未接続は「シールド未接地」で知らせるので、端子の未接続警告は出さない
     stretch: {
       min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
       // ドレン線は囲みの下端よりさらに 1 ピッチ下へ引き出す。心線の行にも
       // 心線囲みの下端頂点にも重ならない位置で、かつ 5mm グリッド上
       pins: (h) => [{ x: 10, y: h, n: "S" }],
       bounds: (h) => [-9, -9, 21, h + 11],   // 下端はドレン線の引出し (y=h) まで
+      // 心線囲みと同じ長円を半径 7 で描く。半円の中心が同じなので、
+      // 直線部も端部も全周で一定の 2mm 間隔になる
       body: (h) => {
-        const ry = +((h + 4) / 2).toFixed(2), cy = (h - 10) / 2, yS = h - 8;
-        // 引出し口は遮へい楕円の右下から。斜めに下ろすので心線とも心線囲みとも交わらない
-        const xS = +(7 * Math.sqrt(Math.max(0, 1 - Math.pow((yS - cy) / ((h + 4) / 2), 2)))).toFixed(2);
-        return `<path d="M0,-7 A7,${ry} 0 1 0 0,${h - 3} A7,${ry} 0 1 0 0,-7" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
+        const yS = h - 8;
+        // 引出し口は下側の半円上 (中心 y=h-10, 半径7 → y=h-8 での x)
+        const xS = +Math.sqrt(49 - 4).toFixed(2);
+        return `<path d="M-7,0 A7,7 0 0 1 7,0 L7,${h - 10} A7,7 0 0 1 -7,${h - 10} Z" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
           `<path d="M${xS},${yS} L10,${h}"/>`;
       },
     },

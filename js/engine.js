@@ -299,7 +299,7 @@ function symBodyRects(sym) {
 function pinLabelBoxes(page) {
   const f = contentScale();
   const out = [];
-  const devBoxes = page.devices.map(d => insetRect(devBounds(d), 1.2 * f));
+  const devBoxes = page.devices.flatMap(d => deviceObstacleBoxes(d, 1.2 * f));
   // 図記号の箱 (rect) は自機のぶんも障害物にする — 長い端子名 (N24V 等) が
   // 検出器箱・機器ボックスの縁に乗るのを防ぐ (回転配置は bounds 側で概ね足りるため除外)
   const bodyRects = [];
@@ -376,8 +376,10 @@ function deviceObstacleBoxes(dev, inset) {
   if (!rx) return [insetRect(devBounds(dev), inset)];
   const [, by, , bh] = sym.bounds;
   const band = 1.2 + inset;
-  // 機器座標で輪郭の左右に帯を作ってから回転させる (回転しても長辺を守る)
-  return [[-rx - band, -rx + band], [rx - band, rx + band]].map(([x0, x1]) => {
+  // 機器座標で輪郭の左右に帯を作ってから回転させる (回転しても長辺を守る)。
+  // 帯は輪郭の外側だけ — 内側へ食い込ませると、中を通る心線の線番の逃げ場が
+  // 無くなり (囲みを二重に重ねると特に)、線番が囲みの外へ飛ばされる
+  return [[-rx - band, -rx + 0.2], [rx - 0.2, rx + band]].map(([x0, x1]) => {
     const cs = [[x0, by], [x1, by], [x1, by + bh], [x0, by + bh]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
     const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
@@ -522,7 +524,7 @@ function deviceXrefBox(page, dev) {
   const h = TEXT_H.small * s, w = textWidthMM(text, h, false, true);
   const obst = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
-    obst.push(insetRect(devBounds(d2), 1.2 * s));
+    deviceObstacleBoxes(d2, 1.2 * s).forEach(b => obst.push(b));
     deviceLabelBoxes(page, d2).forEach(o => obst.push(o.box));
   });
   const cands = [
@@ -1206,7 +1208,7 @@ function mirrorOrigin(coilDev) {
   const obst = [];
   page.devices.forEach(d2 => {
     if (d2.id === coilDev.id) return;
-    obst.push(insetRect(devBounds(d2), 1.2 * f));
+    deviceObstacleBoxes(d2, 1.2 * f).forEach(b => obst.push(b));
     // 先に配置が決まっている (id 順で前の) コイルのミラー表
     if (d2.id < coilDev.id) mirrorLabelBoxes(d2).forEach(b => obst.push(b));
   });
@@ -1820,7 +1822,10 @@ function runDRC() {
         if (pairSeen.has(pk)) continue;
         pairSeen.add(pk);
       }
-      const onSym = other ? null : page.devices.find(d => d !== a.dev && symHit(a, insetRect(devBounds(d), 1.5 * f4)));
+      // 文字を置いてよい範囲の判定は配置器と同じ規則を使う (囲み記号の中は心線が
+      // 通る前提で空けてあるので、外接矩形ぜんぶを「図記号」と見ない)
+      const onSym = other ? null : page.devices.find(d => d !== a.dev &&
+        deviceObstacleBoxes(d, 1.5 * f4).some(bx => symHit(a, bx)));
       if (!other && !onSym) continue;
       overlapTotal++;
       if (overlapCount >= 20) continue;
