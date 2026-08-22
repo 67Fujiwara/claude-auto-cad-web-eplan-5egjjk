@@ -379,14 +379,19 @@ const SYMBOLS = [
        形を変えれば表示と検図が一緒に動く。
        寸法モジュール M = 2.5mm (格子 5mm = 2M / 文字高さ 2.5mm = M) の整数倍で、
        全長 35mm はスナップ格子 5mm の 7 目。先端も格子節点に乗る (JIS C 0617-1)。
-       高さ 5mm (2M) は、和文の図番 (最小呼び 3.5mm / JIS Z 8313-10) を上下 0.75mm の
-       あきで収められる最小の M 整数倍。次葉へ渡る線が 5mm ピッチで並んでも
-       旗どうしが食い込まない */
+       高さ 5mm (2M) は、欧文の図番 (呼び 2.5mm) を上下 0.825mm (判読限界 0.7 +
+       輪郭のインク 0.125) のあきで収められる最小の M 整数倍。
+       和文の図番は最小呼び 3.5mm (JIS Z 8313-10) へ上がって収まらないので、
+       検図がエラーで知らせる。
+       継続線を並べるピッチは格子 2 目 (10mm)。5mm ピッチだと旗の輪郭どうしが
+       接するので、検図の「行き先どうしの重なり」で知らせる */
     gotoRef: { lead: 5, x0: 5, x1: 30, tip: 35, h: 2.5 },
     pins: [{ x: 0, y: 0, n: "" }],
     sim: "none", bounds: [-2, -4.5, 39, 9],
-    // 進行方向を示す五角形 (旗)。中に行き先の図番が入る。
-    // 白抜きにして、下を導体が通っても図番が読めるようにする
+    /* 進行方向を示す五角形 (旗)。中に行き先の図番が入る。
+       画面と印刷は白抜きにして、下を導体が通っても図番が読めるようにする。
+       DXF (R12) には塗りつぶしのマスクが無いので輪郭だけになる。導体が旗を
+       貫くと DXF では図番に重なるが、それは検図の「文字の重なり」で知らせる */
     body: `<path d="M0,0 H5"/><path d="M5,-2.5 H30 L35,0 L30,2.5 H5 Z" fill="#fff" stroke-width="0.25" stroke-linejoin="miter"/>`,
   },
   {
@@ -420,7 +425,8 @@ function symBodySVG(sym, opts = {}) {
   const sw = symStrokeWidth(sym, opts.strokeWidth);
   let body = symResolveTextSize(sym.body, opts.textScale || 1);
   body = opts.textScale ? scaleSymbolGeom(body, opts.textScale) : body;
-  // 機器を回転しても記号内の文字は図面の下辺から読める向きに保つ (JIS Z 8313-0)。
+  // 機器を回転しても記号内の文字は図面の下辺から読める向きに保つ
+  // (図面の文字の読む向き: JIS Z 8317-1 / IEC 61082-1)。
   // 回転グループの内側にあるので、文字だけ逆回転を掛けて打ち消す。
   const rot = ((opts.rot || 0) % 360 + 360) % 360;
   if (rot) body = counterRotateUpright(counterRotateText(body, rot), rot);

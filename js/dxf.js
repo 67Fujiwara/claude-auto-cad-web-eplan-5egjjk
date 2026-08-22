@@ -515,7 +515,8 @@ function pageToDXF(page) {
         const [tx2, ty2] = at(pr.x, pr.y);
         ents += dxfText(tx2, ty2, pr.size * kk, pr.text, lyr, pr.anchor || "middle", 0, { mono: pr.mono });
       } else if (pr.type === "text") {
-        // 記号内の文字は回転させない (JIS Z 8313-0: 文字は図面の下辺から読める向き)。
+        // 記号内の文字は回転させない (文字は図面の下辺から読める向き:
+        // JIS Z 8317-1 / IEC 61082-1)。
         // 位置は記号中心を回した点からの相対で置く (画面と同じ。複数行の順序を保つ)
         const [sbx, sby, sbw, sbh] = sym.bounds;
         const scx = sbx + sbw / 2, scy = sby + sbh / 2;
@@ -552,7 +553,7 @@ function pageToDXF(page) {
   // ── DXF 全体 (R12) ──
   /* R12 は線幅を持たないため、太さの区分は色番号 (ペン) で伝える。
      7=太線 0.5mm / 6=中間 / 8=細線 0.25mm / 5=輪郭 0.7mm */
-  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, XREF: 6, PIN: 8 };
+  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, XREF: 8, PIN: 8 };
   const layers = DXF_LAYERS.map(l =>
     dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, LAYER_COLOR[l] || 7], [6, "CONTINUOUS"]])).join("");
   return [

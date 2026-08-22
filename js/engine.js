@@ -844,13 +844,19 @@ function gotoFlag(sym) {
   const g = (sym && typeof sym.gotoRef === "object") ? sym.gotoRef : {};
   return { lead: g.lead || 5, x0: g.x0 || 5, x1: g.x1 || 30, tip: g.tip || 35, h: g.h || 2.5 };
 }
-/* 図番と旗の内側とのあき。JIS Z 8313-0 の字間 a = 2d (h=2.5 なら 0.5mm) より
-   広く、この図面の判読限界 0.7mm に合わせる */
+/* 図番と旗の内側とのあき。この図面の判読限界 (0.7mm) に合わせる。
+   旗の輪郭は細線 0.25mm を公称線の中心に描くので、インクの内縁までは
+   さらに半分 (0.125mm) 内側になる。両方を引いた値で判定する */
 const GOTO_TEXT_GAP = 0.7;
-/** 旗の中で図番を置ける幅 (平行部からあきを引いた値) */
+const GOTO_EDGE_INK = LINE_W.thin / 2;
+/** 旗の中で図番を置ける幅 (平行部から、あきと輪郭のインクを引いた値) */
 function gotoTextRoom(sym) {
   const fl = gotoFlag(sym);
-  return (fl.x1 - fl.x0) - GOTO_TEXT_GAP * 2;
+  return (fl.x1 - fl.x0) - (GOTO_TEXT_GAP + GOTO_EDGE_INK) * 2;
+}
+/** 旗の中で図番を置ける高さ (同上) */
+function gotoTextRoomH(sym) {
+  return gotoFlag(sym).h * 2 - (GOTO_TEXT_GAP + GOTO_EDGE_INK) * 2;
 }
 /** 行き先の旗の外接矩形 (作図領域座標)。回転にも追従する */
 function gotoFlagBox(dev) {
@@ -861,17 +867,43 @@ function gotoFlagBox(dev) {
   return { x: Math.min(...xs), y: Math.min(...ys),
     w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
-/** 行き先の対 (指した先のページからこちらを指し返している行き先)。
-    1 つに定まらなければ null — 継続先の区分 (列) はこれが決まって初めて書ける */
+/** その行き先の線に載っている電位リンクのタグ (葉をまたぐ回路の識別) */
+const _gotoNetCache = new Map();
+function gotoLinkTags(page, dev) {
+  let c = _gotoNetCache.get(page);
+  if (!c || c.rev !== App.labelRev) {
+    c = { rev: App.labelRev, nets: computeNets(page, "closed") };
+    _gotoNetCache.set(page, c);
+  }
+  const net = c.nets.pinNet(dev, 0);
+  if (!net) return [];
+  const tags = [];
+  page.devices.forEach(d => {
+    const s = symOf(d.sym);
+    if (s && s.sim === "link" && d.tag && c.nets.pinNet(d, 0) === net) tags.push(d.tag.replace(/^-/, "").toUpperCase());
+  });
+  return tags;
+}
+/** こちらを指し返している行き先 (相手の葉にあるもの) */
+function gotoBackRefs(page, dev) {
+  const to = gotoTargetPage(dev);
+  if (!to) return [];
+  return to.devices.filter(d => {
+    const s = symOf(d.sym);
+    return s && s.gotoRef && d.props && d.props.toPage === page.id;
+  });
+}
+/** 行き先の対。ページではなく信号 (同じ電位リンクのタグ) で決める。
+    ページだけで決めると、同じ 2 葉の間を別の回路が渡っているときに
+    他人の位置を指してしまう。1 つに定まらなければ null (区分は書かない) */
 function gotoCounterpart(dev) {
   const to = gotoTargetPage(dev);
   const home = findDevice(dev.id);
   if (!to || !home) return null;
-  const back = to.devices.filter(d => {
-    const s = symOf(d.sym);
-    return s && s.gotoRef && d.props && d.props.toPage === home.page.id;
-  });
-  return back.length === 1 ? back[0] : null;
+  const mine = new Set(gotoLinkTags(home.page, dev));
+  if (!mine.size) return null;                    // 信号が分からなければ位置も書けない
+  const hit = gotoBackRefs(home.page, dev).filter(d => gotoLinkTags(to, d).some(t => mine.has(t)));
+  return hit.length === 1 ? hit[0] : null;
 }
 /** 行き先 記号に表示する文字。行き先を選んでいなければ "?"。
     指し先に対の行き先があれば、その位置の区分 (列) まで書く (E-002/7)。
@@ -881,7 +913,7 @@ function gotoRefText(dev) {
   if (!pg) return "?";
   const no = pageDwgNo(pg);
   const mate = gotoCounterpart(dev);
-  return mate ? `${no}/${sheetCol(mate.x)}` : no;
+  return mate ? `${no}/${sheetCol(mate.x)}${sheetRow(mate.y)}` : no;
 }
 function deviceXrefBox(page, dev) {
   const sym0 = symOf(dev.sym);
@@ -900,17 +932,23 @@ function deviceXrefBox(page, dev) {
     const text0 = gotoRefText(dev);
     const h0 = textHeightMM(text0, TEXT_H.small * s0);
     const w0 = textWidthMM(text0, h0, false, true);
+    /* 上下の中心合わせは実インクで測る。呼び h は基準の字 (H) の高さなので、
+       "/" や和文のように基線の下へ出る字は h だけでは測れず、中心から下へ
+       ずれて旗の輪郭に接する */
+    const ink = textInkMM(text0, h0, true, false);
+    const ih = ink.up + ink.down;                       // 実際に紙へ乗る高さ
+    const base0 = (ink.up - ink.down) / 2;              // 中心から基線までの距離
     const fl0 = gotoFlag(sym0);
     const c0 = pinAbs(dev, { x: (fl0.x0 + fl0.x1) / 2, y: 0 });   // 平行部の中央 (機器と一緒に回る)
     const rot0 = (((dev.rot || 0) % 360) + 360) % 360;
     const ang0 = (rot0 === 90 || rot0 === 270) ? 90 : 0;
-    // 読む向き u と字の下向き v (画面は y 下向き)。基線は中央から v へ h/2
+    // 読む向き u と字の下向き v (画面は y 下向き)。基線は中央から v へ base0
     const ca = Math.cos(ang0 * Math.PI / 180), sa = Math.sin(ang0 * Math.PI / 180);
     const vx = sa, vy = ca;
-    return { x: c0.x + vx * h0 / 2, y: c0.y + vy * h0 / 2, text: text0, size: h0,
-      anchor: "middle", angle: ang0,
-      box: { x: c0.x - (ang0 ? h0 : w0) / 2, y: c0.y - (ang0 ? w0 : h0) / 2,
-        w: ang0 ? h0 : w0, h: ang0 ? w0 : h0 } };
+    return { x: c0.x + vx * base0, y: c0.y + vy * base0, text: text0, size: h0,
+      anchor: "middle", angle: ang0, ink: true,        // 図番は図面色で刷る (注記ではない)
+      box: { x: c0.x - (ang0 ? ih : w0) / 2, y: c0.y - (ang0 ? w0 : ih) / 2,
+        w: ang0 ? ih : w0, h: ang0 ? w0 : ih } };
   }
   if (!dev.linkTo) return null;
   const f = findDevice(dev.linkTo);
@@ -1033,6 +1071,28 @@ function svgFontSizeFor(text, h, mono, opts) {
 }
 /** 文字列が実際に占める高さ (mm)。和文は最小呼びに引き上げられる */
 function textHeightMM(text, h) { return hasCJK(text) ? Math.max(h, TEXT_H_MIN_CJK) : h; }
+/* 実際に紙へ乗るインクの上下 (mm)。呼び h は基準の字 (H・国) の高さなので、
+   "/" や仮名のように基線の下へ出る字は h だけでは測れない。枠の中へ文字を
+   きっちり収めるときは、この実測を使う (JIS Z 8313-0 の「あき」は実際の
+   線と線の間隔のこと) */
+const __inkCache = new Map();
+function textInkMM(text, h, mono, bold) {
+  const key = `${mono ? "m" : "s"}${bold ? "b" : ""}|${h}|${text}`;
+  if (__inkCache.has(key)) return __inkCache.get(key);
+  let r = { up: h, down: 0 };
+  const g = measureCtx();
+  if (g) {
+    const fs = svgFontSizeFor(String(text), h, mono, { bold });
+    const fam = hasCJK(text) ? DRAW_FONT : mono ? DRAW_FONT_MONO : DRAW_FONT;
+    g.font = `${bold ? "600 " : ""}${(fs * 100).toFixed(2)}px ${fam}`;
+    const m = g.measureText(String(text));
+    const up = (m.actualBoundingBoxAscent || 0) / 100, down = Math.max(0, m.actualBoundingBoxDescent || 0) / 100;
+    if (up > 0 && up + down < h * 3) r = { up, down };
+  }
+  if (__inkCache.size > 500) __inkCache.clear();
+  __inkCache.set(key, r);
+  return r;
+}
 
 /* 文字幅は canvas の実測を使う (推定式では表題欄の切り詰め判定や中央寄せが
    数十%ずれる)。描画に使う font-size と同じ条件で測るので、画面・DXF・検図で
@@ -2071,7 +2131,8 @@ const DRC_RULES = [
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
   "線番の重複", "図番の重複", "線番と導体の重なり",
   "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
-  "行き先の図番が入らない", "行き先どうしの重なり", "行き先とリンクの不一致", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
+  "行き先の図番が入らない", "行き先どうしの重なり", "行き先の対が定まらない",
+  "行き先とリンクの不一致", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
 /** 接地記号につながっているネット (遮へいの接地判定に使う) */
@@ -2513,13 +2574,14 @@ function runDRC() {
         return;
       }
       // 相手の葉に、こちらを指し返す行き先が無いと「どこから来たか」が追えない
-      const back = to.devices.filter(d => {
-        const s2 = symOf(d.sym);
-        return s2 && s2.gotoRef && d.props && d.props.toPage === page.id;
-      });
+      const back = gotoBackRefs(page, dev);
       if (!back.length) {
         issues.push({ sev: "warn", rule: "行き先の対が無い", page: page.no, target: dev.id, loc: devLocation(dev),
           msg: `${who} の指す ${pageDwgNo(to)} に、この葉を指し返す行き先がありません (相互参照は往復で対にしてください)` });
+      } else if (!gotoCounterpart(dev)) {
+        // 対がいくつもあって信号で選べないと、区分 (列・行) を書きようがない
+        issues.push({ sev: "warn", rule: "行き先の対が定まらない", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} の対が ${pageDwgNo(to)} で一つに定まりません (両側の線に同じタグの電位リンクを付けてください。定まるまで区分は書きません)` });
       }
       /* 電気的な継続は電位リンクが担う。行き先の線と同じネットにリンクが無い、
          あるいはリンクの相手が行き先の指す葉と食い違っていると、
@@ -2540,19 +2602,29 @@ function runDRC() {
             if (pg2.devices.some(d2 => { const s3 = symOf(d2.sym); return s3 && s3.sim === "link" && d2.tag === lk.tag; })) reach.add(pg2.id);
           }));
           if (reach.size && !reach.has(to.id)) {
+            // 端子台を介して渡す図など、リンクを別の葉にまとめる描き方もある。
+            // 断定はできないので警告にとどめる
             const names = [...reach].map(id2 => pageDwgNo(App.project.pages.find(pg2 => pg2.id === id2))).join("・");
-            issues.push({ sev: "err", rule: "行き先とリンクの不一致", page: page.no, target: dev.id, loc: devLocation(dev),
+            issues.push({ sev: "warn", rule: "行き先とリンクの不一致", page: page.no, target: dev.id, loc: devLocation(dev),
               msg: `${who} は ${pageDwgNo(to)} を指していますが、線がつながっている電位リンクの相手は ${names} です` });
           }
         }
       }
-      // 図番が旗に入りきらないと、どこへ続くのか読めない
+      /* 図番が旗に入りきらないと、どこへ続くのか読めない。幅だけでなく高さも見る
+         (和文の図番は最小呼び 3.5mm へ上がるので、旗の内側に収まらないことがある)。
+         はみ出した図番は隣の図形に重なって読めないので、警告ではなくエラー */
       const txt2 = gotoRefText(dev);
+      const h2 = textHeightMM(txt2, TEXT_H.small * contentScale());
       const room = gotoTextRoom(sy) * contentScale();
-      const tw2 = textWidthMM(txt2, textHeightMM(txt2, TEXT_H.small * contentScale()), false, true);
+      const roomH = gotoTextRoomH(sy) * contentScale();
+      const tw2 = textWidthMM(txt2, h2, false, true);
+      const ink2 = textInkMM(txt2, h2, true, false);
       if (tw2 > room + 0.01) {
-        issues.push({ sev: "warn", rule: "行き先の図番が入らない", page: page.no, target: dev.id, loc: devLocation(dev),
+        issues.push({ sev: "err", rule: "行き先の図番が入らない", page: page.no, target: dev.id, loc: devLocation(dev),
           msg: `${who} の「${txt2}」が記号に入りきりません (幅 ${tw2.toFixed(1)}mm / 旗の内側 ${room.toFixed(1)}mm)` });
+      } else if (ink2.up + ink2.down > roomH + 0.01) {
+        issues.push({ sev: "err", rule: "行き先の図番が入らない", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: `${who} の「${txt2}」は字の高さが旗に収まりません (${(ink2.up + ink2.down).toFixed(1)}mm / 旗の内側 ${roomH.toFixed(1)}mm。和文の図番は最小呼び 3.5mm になります)` });
       }
     });
     // 行き先どうしが近すぎると旗が重なって読めない (5mm ピッチで並べたとき)
@@ -2562,7 +2634,9 @@ function runDRC() {
         if (g < GOTO_TEXT_GAP) {
           issues.push({ sev: "warn", rule: "行き先どうしの重なり", page: page.no, target: gotoDevs[i].id,
             loc: devLocation(gotoDevs[i]),
-            msg: `行き先の旗どうしが近すぎます (あき ${g.toFixed(1)}mm / ${GOTO_TEXT_GAP}mm 以上あけてください)` });
+            msg: `行き先の旗 (${gotoRefText(gotoDevs[i])} @${devLocation(gotoDevs[i])}) と ` +
+              `(${gotoRefText(gotoDevs[j])} @${devLocation(gotoDevs[j])}) が近すぎます ` +
+              `(あき ${g.toFixed(1)}mm / ${GOTO_TEXT_GAP}mm 以上あけてください。継続線は 10mm ピッチで並べてください)` });
         }
       }
     }
@@ -2657,13 +2731,31 @@ function runDRC() {
   // 主回路の相名 (L1 / 1L2 / M2-U1 …) は線番ではなく相の呼称なので重複を見ない
   const RE_PHASE = /^([A-Z]+\d*-)?\d*[LUVWNRST]\d*$/;
   const numUse = new Map();               // 線番 → ネット代表の配列
+  /* 電位リンクで葉をまたいでつないだネットは、電気的には 1 本のネット。
+     継続した回路に同じ線番を振るのは正しい作法なので、リンクのタグで
+     ネットを束ねてから重複を数える (束ねないと、多葉の図で必ず誤警告になる) */
+  const seenNet = new Set();                        // 束ねたネット単位で数える
+  const netUF = UnionFind();
+  const linkNets = new Map();                       // タグ → ネットキーの配列
+  App.project.pages.forEach((page, pageIdx) => {
+    const pn = openData[pageIdx].pinNet;
+    page.devices.forEach(dev => {
+      const sy = symOf(dev.sym);
+      if (!sy || sy.sim !== "link" || !dev.tag) return;
+      const net = pn(dev, 0);
+      if (!net) return;
+      const tag = dev.tag.replace(/^-/, "").toUpperCase();
+      if (!linkNets.has(tag)) linkNets.set(tag, []);
+      linkNets.get(tag).push(`${page.no}#${net}`);
+    });
+  });
+  linkNets.forEach(keys => keys.forEach(k => netUF.union(keys[0], k)));
   App.project.pages.forEach((page, pageIdx) => {
     const wn = openData[pageIdx].wireNet;
-    const seenNet = new Set();
     condWires(page).forEach(w => {
       if (w.num == null || w.num === "") return;
       const num = String(w.num);
-      const netKey = `${page.no}#${wn.get(w.id)}`;
+      const netKey = netUF.find(`${page.no}#${wn.get(w.id)}`);
       if (seenNet.has(num + "|" + netKey)) return;
       seenNet.add(num + "|" + netKey);
       if (!numUse.has(num)) numUse.set(num, []);

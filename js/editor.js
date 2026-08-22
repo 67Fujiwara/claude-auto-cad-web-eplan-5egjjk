@@ -390,7 +390,7 @@ function devLabelsSVG(dev, sym, page) {
   // タグを右へ寄せた機器では、その下に置いて重ならないようにする
   const xr = deviceXrefBox(page || curPage(), dev);
   if (xr) {
-    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSizeFor(xr.text, xr.size, true)}" fill="#7a4ec2" font-family="monospace"${xr.anchor ? ` text-anchor="${xr.anchor}"` : ""}${xr.angle ? ` transform="rotate(${-xr.angle} ${xr.x} ${xr.y})"` : ""}>${escXML(xr.text)}</text>`;
+    out += `<text x="${xr.x}" y="${xr.y}" font-size="${svgFontSizeFor(xr.text, xr.size, true)}" fill="${xr.ink ? INK : "#7a4ec2"}" font-family="monospace"${xr.anchor ? ` text-anchor="${xr.anchor}"` : ""}${xr.angle ? ` transform="rotate(${-xr.angle} ${xr.x} ${xr.y})"` : ""}>${escXML(xr.text)}</text>`;
   }
   return out;
 }
@@ -1214,12 +1214,16 @@ function pasteClipboard() {
     App.selection.add(d.id);
   });
   // linkTo の再マップ / タグ振り直し
+  let droppedGoto = 0;
   cb.devs.forEach((d0, i) => {
     const d = page.devices[page.devices.length - cb.devs.length + i];
     if (d.linkTo && idMap[d.linkTo]) d.linkTo = idMap[d.linkTo];
     // 行き先を別ページへ貼ると、指し先が貼り付け先そのものになることがある。
     // 自分の葉を指す相互参照は意味を成さないので落とす (検図でも err)
-    if (symOf(d.sym).gotoRef && d.props && d.props.toPage === page.id) delete d.props.toPage;
+    if (symOf(d.sym).gotoRef && d.props && d.props.toPage === page.id) {
+      delete d.props.toPage;
+      droppedGoto++;
+    }
     if (d.tag && !d.linkTo) {
       const sym = symOf(d.sym);
       if (sym.letter) d.tag = nextTag(sym.letter);
@@ -1241,6 +1245,8 @@ function pasteClipboard() {
     App.selection.add(t.id);
   });
   UI.setMsg("カーソル位置に貼り付けました");
+  // 黙って行き先を消すと気づけないので知らせる
+  if (droppedGoto) UI.toast(`⚠ 行き先 ${droppedGoto} 個は自分のページを指すことになるため未設定にしました`, 4200);
   requestRender();
 }
 

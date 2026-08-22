@@ -23,9 +23,17 @@
      並べ替え後は選択肢の表示も新しい図番になること
    ・図番の文字が旗の平行部の中央にあり、五角形の 5 辺から 0.7mm 以上あくこと。
      縦置きでは 90° 倒れること (文字は下辺から/右辺から読む: JIS Z 8317-1)
-   ・和文の図番は最小呼び 3.5mm へ上がり (JIS Z 8313-10)、外接矩形も実寸で返すこと
-   ・相手の葉から指し返す対ができたら、図番に区分 (列) まで書くこと。
-     対が 2 つあって定まらないときは図番だけに戻ること (嘘の位置を書かない)
+   ・外接矩形と上下の中心合わせを、呼び寸法ではなく実際のインク (基線の下へ
+     出る分を含む) で行うこと。和文の図番は最小呼び 3.5mm へ上がって旗に
+     収まらないので、黙って輪郭に接するのではなく検図がエラーで知らせること
+   ・相手の葉から指し返す対ができたら、図番に区分 (列と行 / JIS Z 8311) まで
+     書くこと。対は葉ではなく信号 (同じ電位リンクのタグ) で決めること —
+     ページだけで決めると、同じ 2 葉の間を別の回路が渡っているときに
+     他人の位置を指してしまう。定まらないときは図番だけに戻し、警告を出すこと
+   ・図番は図面色で刷ること (注記ではなく図面の構成要素)
+   ・葉をまたいで続く回路に同じ線番を振っても「線番の重複」を出さないこと。
+     無関係な葉での重複と同一ページ内の重複は今までどおり出すこと
+   ・別ページへ貼り付けた行き先が自分の葉を指したままにならないこと (しかも黙ってやらない)
    ・検図: 未設定=エラー (紙に「?」が刷られるため) / 自己参照=エラー /
      指し先が削除済み=エラー / 対が無い=警告 / 旗どうしが近すぎる=警告 /
      図番が旗に入らない=警告 / 電位リンクが無い・相手が食い違う=警告とエラー。
@@ -96,8 +104,9 @@ const R = await p.evaluate(() => {
   const shown = () => { const xr = deviceXrefBox(p1, dev); return xr ? xr.text : "(なし)"; };
   const drawnText = () => {                     // 実際に紙へ出る文字 (この記号のぶんだけ)
     const svg = devLabelsSVG(dev, symOf(dev.sym), p1);
-    const m = svg.match(/<text[^>]*fill="#7a4ec2"[^>]*>([^<]*)<\/text>/);
-    return m ? m[1] : "(なし)";
+    // 図番は図面色 (INK) で刷る。紫はリンク接点の相互参照の色
+    const m = svg.match(/<text[^>]*fill="(#[0-9a-fA-F]{3,6})"[^>]*font-family="monospace"[^>]*>([^<]*)<\/text>/);
+    return m ? `${m[2]}|${m[1] === "#7a4ec2" ? "紫" : "図面色"}` : "(なし)";
   };
   const drc = () => runDRC().filter(i => i.target === dev.id).map(i => `${i.sev}:${i.msg}`);
 
@@ -163,13 +172,13 @@ const R = await p.evaluate(() => {
   /* 検図が「入る」と言い切る幅 (gotoTextRoom) いっぱいの図番を、実際に置いたときに
      五角形からあきが取れるか。検図の閾値と図形が食い違っていたらここで落ちる */
   {
-    const room = gotoTextRoom(sym), hh = TEXT_H.small / 2, cx = (g0.x0 + g0.x1) / 2;
-    out.roomFits = Math.min(...[[-room / 2, -hh], [room / 2, -hh], [room / 2, hh], [-room / 2, hh]]
-      .map(([dx, dy]) => distToEdges(cx + dx, dy))).toFixed(3);
-    // 和文 (3.5mm) でも上下のあきが取れるか
-    const hj = 3.5 / 2;
-    out.roomFitsCJK = Math.min(...[[-room / 2, -hj], [room / 2, -hj], [room / 2, hj], [-room / 2, hj]]
-      .map(([dx, dy]) => distToEdges(cx + dx, dy))).toFixed(3);
+    const room = gotoTextRoom(sym), roomH = gotoTextRoomH(sym), cx = (g0.x0 + g0.x1) / 2;
+    const corners = (w, h) => Math.min(...[[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]
+      .map(([dx, dy]) => distToEdges(cx + dx, dy)));
+    // 幅・高さとも許容いっぱいの図番で、輪郭の中心線まで 0.825mm
+    // (判読限界 0.7 + 輪郭のインク 0.125) 残ること
+    out.roomFits = corners(room, TEXT_H.small).toFixed(3);
+    out.roomFitsH = corners(room, roomH).toFixed(3);
   }
   out.place = {};
   [0, 90, 180, 270].forEach(rot => {
@@ -227,7 +236,8 @@ const R = await p.evaluate(() => {
   } : null;
   d3.rot = 0;
 
-  const drc2 = (rule) => runDRC().filter(i => i.target === d3.id && (!rule || i.rule === rule))
+  const touch = () => App.labelRev++;      // 実編集の commit() と同じくキャッシュを無効化
+  const drc2 = (rule) => (touch(), runDRC()).filter(i => i.target === d3.id && (!rule || i.rule === rule))
     .map(i => `${i.sev}:${i.rule}:${i.msg}`);
 
   /* ⑪ 片道だけの相互参照は追えない。相手の葉から指し返して初めて対になる
@@ -243,8 +253,9 @@ const R = await p.evaluate(() => {
      同じネットにリンクが無ければ検図が知らせる */
   const lk1 = addDevice(home, "link", 85, 60, { tag: "-W101" });
   const lk2 = addDevice(to, "link", 135, 80, { tag: "-W101" });
+  touch();
   out.paired = { drc: drc2(), shown: deviceXrefBox(home, d3).text,
-    want: `${pageDwgNo(to)}/${sheetCol(mate.x)}` };
+    want: `${pageDwgNo(to)}/${sheetCol(mate.x)}${sheetRow(mate.y)}` };
   // リンクの相手が別の葉だと、絵と回路が食い違う
   lk2.tag = "-W999";
   const lk3 = addDevice(third, "link", 60, 60, { tag: "-W101" });
@@ -252,19 +263,35 @@ const R = await p.evaluate(() => {
   third.devices.splice(third.devices.indexOf(lk3), 1);
   lk2.tag = "-W101";
   out.linkOk = drc2("行き先とリンクの不一致");
-  // 対が 2 つあると区分が定まらないので図番だけに戻る (嘘の位置を書かない)
-  const mate2 = addDevice(to, "goto_ref", 150, 100, { tag: "" });
-  mate2.props = { toPage: App.project.pages[0].id };
-  out.ambiguous = deviceXrefBox(App.project.pages[0], d3).text;
-  to.devices.splice(to.devices.indexOf(mate2), 1);
+  /* 同じ 2 葉の間を別の回路が渡っていると、ページだけでは相手を選べない。
+     信号 (電位リンクのタグ) が違えば対にしない = 他人の位置を書かない */
+  const other = addDevice(to, "goto_ref", 150, 100, { tag: "" });
+  other.props = { toPage: home.id };
+  addWire(to, [[135, 100], [150, 100]]);
+  addDevice(to, "link", 135, 100, { tag: "-W202" });   // 別回路
+  touch();
+  out.otherCircuit = { shown: deviceXrefBox(home, d3).text, drc: drc2() };
+  // 同じタグの対が 2 つあると一つに定まらない → 区分は書かず警告
+  const mate2 = addDevice(to, "goto_ref", 150, 120, { tag: "" });
+  mate2.props = { toPage: home.id };
+  addWire(to, [[135, 120], [150, 120]]);
+  const lk4 = addDevice(to, "link", 135, 120, { tag: "-W101" });
+  touch();
+  out.ambiguous = { shown: deviceXrefBox(home, d3).text, drc: drc2("行き先の対が定まらない") };
+  [mate2, lk4].forEach(d => to.devices.splice(to.devices.indexOf(d), 1));
+  touch();
+  to.wires.pop();
+  to.devices.splice(to.devices.indexOf(other), 1);
+  to.devices.splice(to.devices.findIndex(d => d.tag === "-W202"), 1);
+  to.wires.pop();
 
   // ⑫ 行き先どうしが近すぎる (5mm ピッチで並べると旗が接する)
   const near = addDevice(to, "goto_ref", 150, 85, { tag: "" });
   near.props = { toPage: App.project.pages[0].id };
   out.tooNear = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
   to.devices.splice(to.devices.indexOf(near), 1);
-  // 10mm 離せば出ない
-  const far = addDevice(to, "goto_ref", 150, 95, { tag: "" });
+  // 格子 2 目 (10mm) 離せば出ない
+  const far = addDevice(to, "goto_ref", 150, 90, { tag: "" });
   far.props = { toPage: App.project.pages[0].id };
   out.farOk = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
   to.devices.splice(to.devices.indexOf(far), 1);
@@ -287,13 +314,26 @@ const R = await p.evaluate(() => {
   projectMeta().dwgNo = "PROJECT-2026-VERYLONG-0010"; UI.renumberPages();
   out.tooWide = drc2("行き先の図番が入らない");
   projectMeta().dwgNo = ""; UI.renumberPages();
-  // ⑯ 和文の図番は最小呼び 3.5mm へ上がる。外接矩形も実際の高さで返すこと
+  /* ⑯ 和文の図番は最小呼び 3.5mm へ上がり (JIS Z 8313-10)、この旗 (内側 5mm) には
+     収まらない。黙って輪郭に接するのではなく、検図がエラーで知らせること。
+     外接矩形も呼び寸法ではなく実際のインク (基線の下へ出る分を含む) で返すこと */
   const pgTo = App.project.pages.find(pg => pg.id === d3.props.toPage);
-  pgTo.dwgNo = "制御盤一次"; pgTo.dwgNoManual = true;
+  pgTo.dwgNo = "制御盤"; pgTo.dwgNoManual = true;   // 幅は足りるが高さが足りない図番
   const xrJ = deviceXrefBox(App.project.pages[0], d3);
-  out.cjk = { size: xrJ.size, h: +xrJ.box.h.toFixed(2),
-    fits: xrJ.box.h + 0.7 * 2 <= symOf(d3.sym).gotoRef.h * 2 + 0.001 };
+  const inkJ = textInkMM(xrJ.text, xrJ.size, true, false);
+  out.cjk = { size: xrJ.size, h: +xrJ.box.h.toFixed(2), ink: +(inkJ.up + inkJ.down).toFixed(2),
+    boxIsInk: Math.abs(xrJ.box.h - (inkJ.up + inkJ.down)) < 0.001,
+    // 字の中心が旗の中心と合っているか (基線ではなく実インクの中心で見る)
+    inkCentered: Math.abs((xrJ.y - inkJ.up + (inkJ.up + inkJ.down) / 2) - (xrJ.box.y + xrJ.box.h / 2)) < 0.001,
+    drc: drc2("行き先の図番が入らない") };
   delete pgTo.dwgNoManual; UI.renumberPages();
+  /* 欧文でも "/" は基線の下へ出る。呼び 2.5mm の箱で測ると図枠・重なりの
+     検図が甘くなるので、実インクで返していることを確かめる */
+  const xrA = deviceXrefBox(App.project.pages[0], d3);
+  const inkA = textInkMM(xrA.text, xrA.size, true, false);
+  out.small = TEXT_H.small;
+  out.ascii = { text: xrA.text, h: +xrA.box.h.toFixed(3), ink: +(inkA.up + inkA.down).toFixed(3),
+    boxIsInk: Math.abs(xrA.box.h - (inkA.up + inkA.down)) < 0.001 };
 
   out.finalDrc = drc2();
   // 操作経路の検査に入る前に、対の行き先を片づけて 1 個だけの状態に戻す
@@ -303,6 +343,7 @@ const R = await p.evaluate(() => {
   return out;
 });
 console.log(JSON.stringify(R, null, 1));
+
 
 /* ここからは実際の操作経路。プルダウンで選べなければ要求を満たさない */
 await p.evaluate(() => {
@@ -396,6 +437,66 @@ const S = await p.evaluate(() => {
 });
 console.log("シミュレーション:", JSON.stringify(S, null, 1));
 
+/* 葉をまたいで続く回路の線番。継続した先で同じ線番を振るのは正しい作法なので、
+   電位リンクで束ねたネットは「別ネットの重複」と数えないこと。
+   同時に、本当に無関係な葉で同じ線番を使ったら今までどおり知らせること */
+const N = await p.evaluate(() => {
+  const o = {};
+  App.project = newProject("線番の継続");
+  const p1 = App.project.pages[0];
+  const p2 = newPage("次葉", 2); App.project.pages.push(p2);
+  const p3 = newPage("別回路", 3); App.project.pages.push(p3);
+  UI.renumberPages(); App.pageIdx = 0;
+  const w1 = addWire(p1, [[60, 60], [100, 60]]); w1.num = "101";
+  addDevice(p1, "link", 100, 60, { tag: "-W101" });
+  const g1 = addDevice(p1, "goto_ref", 100, 60, { tag: "" }); g1.props = { toPage: p2.id };
+  const w2 = addWire(p2, [[60, 60], [100, 60]]); w2.num = "101";
+  addDevice(p2, "link", 60, 60, { tag: "-W101" });
+  const g2 = addDevice(p2, "goto_ref", 100, 60, { tag: "" }); g2.props = { toPage: p1.id };
+  App.labelRev++;
+  o.continued = runDRC().filter(i => /線番 101/.test(i.msg)).map(i => i.msg);
+  // 無関係な葉で同じ 101 を使ったら警告する (束ねすぎていないこと)
+  const w3 = addWire(p3, [[60, 60], [100, 60]]); w3.num = "101";
+  App.labelRev++;
+  o.unrelated = runDRC().filter(i => /線番 101/.test(i.msg)).map(i => i.msg);
+  // 同一ページ内の別ネットの重複は今までどおりエラー
+  const w4 = addWire(p1, [[60, 100], [100, 100]]); w4.num = "101";
+  App.labelRev++;
+  o.samePage = runDRC().filter(i => /線番 101/.test(i.msg) && i.sev === "err").map(i => i.msg);
+  return o;
+});
+console.log("線番の継続:", JSON.stringify(N, null, 1));
+
+/* 別ページへ貼り付けたとき、行き先が自分の葉を指したままにならないこと。
+   ユーザのデータを黙って書き換える処理なので、知らせも出すこと */
+const P = await p.evaluate(() => {
+  App.project = newProject("貼り付け");
+  const p1 = App.project.pages[0];
+  const p2 = newPage("次葉", 2); App.project.pages.push(p2); UI.renumberPages();
+  App.pageIdx = 0;
+  const g = addDevice(p1, "goto_ref", 100, 60, { tag: "" }); g.props = { toPage: p2.id };
+  App.selection.clear(); App.selection.add(g.id);
+  copySelection();
+  // 指し先のページへ貼ると、自分の葉を指すことになる
+  App.pageIdx = 1; App.selection.clear();
+  Editor.lastWorld = { x: 100, y: 60 };
+  const msgs = [];
+  const toast0 = UI.toast; UI.toast = (m) => msgs.push(m);
+  pasteClipboard();
+  UI.toast = toast0;
+  const pasted = App.project.pages[1].devices.find(d => symOf(d.sym).gotoRef);
+  const o = { toPage: (pasted.props || {}).toPage || "(未設定)", told: msgs.join("|") };
+  App.labelRev++;
+  o.drc = runDRC().filter(i => i.target === pasted.id && i.rule === "行き先の自己参照").length;
+  // 同じページへの貼り付けでは指し先を保つ
+  App.pageIdx = 0; App.selection.clear(); Editor.lastWorld = { x: 100, y: 90 };
+  pasteClipboard();
+  const same = App.project.pages[0].devices.filter(d => symOf(d.sym).gotoRef);
+  o.keptOnSamePage = same.length === 2 && same.every(d => d.props.toPage === App.project.pages[1].id);
+  return o;
+});
+console.log("貼り付け:", JSON.stringify(P, null, 1));
+
 const checks = {
   // 記号そのもの
   symIsGoto: !!R.sym.gotoRef && R.sym.pins === 1,
@@ -407,7 +508,7 @@ const checks = {
   flagThinAndFilled: R.thin === true && R.filled === true,
   // 図番の表示 (要求①)
   showsDwgNo: R.set.shown === R.set.want && R.set.want !== "?" ,
-  drawnOnSheet: R.set.drawn === R.set.want,
+  drawnOnSheet: R.set.drawn === R.set.want + "|図面色",
   unsetShowsQ: R.unset.shown === "?",
   // 文字列を焼き付けていない (要求③の前提)
   noBakedNumber: R.storedHasNumber === false && /^\{"toPage":"[^"]+"\}$/.test(R.storedProps),
@@ -423,7 +524,7 @@ const checks = {
   // 五角形の 5 辺すべてから 0.7mm 以上あく (先端の斜辺への食い込みも見る)
   insideFlag: Object.values(R.place).every(v => parseFloat(v.gap) >= 0.7 - 0.001),
   // 検図が許す最大幅の図番を入れても、五角形から 0.7mm あくこと (和文 3.5mm も)
-  roomMatchesFlag: parseFloat(R.roomFits) >= 0.7 - 0.001 && parseFloat(R.roomFitsCJK) >= 0.7 - 0.001,
+  roomMatchesFlag: parseFloat(R.roomFits) >= 0.825 - 0.001 && parseFloat(R.roomFitsH) >= 0.825 - 0.001,
   // 横置きは水平、縦置きは 90° (読む向きは 2 通りだけ)。画面の文字も同じ角度
   textAngle: R.place[0].angle === 0 && R.place[180].angle === 0 &&
     R.place[90].angle === 90 && R.place[270].angle === 90 &&
@@ -439,15 +540,23 @@ const checks = {
     R.oneWay.some(m => m.startsWith("warn:行き先の対が無い")) &&
     R.oneWay.some(m => m.startsWith("warn:行き先とリンクの不一致") && /電位リンクがありません/.test(m)),
   // 行き先の指す葉と、電位リンクの相手の葉が食い違ったらエラー
-  drcLinkMismatch: R.linkMismatch.length === 1 && R.linkMismatch[0].startsWith("err:") &&
+  // 断定はできないので警告 (端子台経由・リンクを別葉にまとめる描き方もある)
+  drcLinkMismatch: R.linkMismatch.length === 1 && R.linkMismatch[0].startsWith("warn:") &&
     R.linkOk.length === 0,
   drcTooNear: R.tooNear === 1 && R.farOk === 0,
   drcTooWide: R.tooWide.length === 1 && /入りきりません/.test(R.tooWide[0]),
   // 対ができたら区分 (列) まで書く / 対が 2 つで定まらなければ図番だけ
-  zoneWhenPaired: R.paired.shown === R.paired.want && /\/\d+$/.test(R.paired.shown),
-  zoneOnlyWhenUnique: !/\//.test(R.ambiguous),
-  // 和文の図番は 3.5mm に上がる。外接矩形も実寸で返し、旗にも収まる
-  cjkHeight: R.cjk.size === 3.5 && R.cjk.h === 3.5 && R.cjk.fits === true,
+  // 図番 + 区分 (列と行: JIS Z 8311 の格子参照)
+  zoneWhenPaired: R.paired.shown === R.paired.want && /\/\d+[A-HJ-NP-Z]$/.test(R.paired.shown),
+  // 別回路の旗を対にしない (他人の位置を書かない) / 定まらないときは警告
+  zoneOnlyWhenUnique: R.otherCircuit.shown === R.paired.shown &&
+    R.ambiguous.shown === R.set.want && R.ambiguous.drc.length === 1 &&
+    R.ambiguous.drc[0].startsWith("warn:行き先の対が定まらない"),
+  // 和文の図番は 3.5mm に上がって旗に収まらない → エラーで知らせる。
+  // 外接矩形は呼びでなく実インク、しかも旗の中心に合っていること
+  cjkHeight: R.cjk.size === 3.5 && R.cjk.boxIsInk === true && R.cjk.inkCentered === true &&
+    R.cjk.drc.length === 1 && R.cjk.drc[0].startsWith("err:") && /字の高さ/.test(R.cjk.drc[0]),
+  inkBox: R.ascii.boxIsInk === true && R.ascii.ink > R.small,
   // DXF
   dxfText: R.dxf.has === true,
   dxfPos: parseFloat(R.dxf.dx) < 0.01 && parseFloat(R.dxf.dy) < 0.01,
@@ -469,6 +578,13 @@ const checks = {
   simNoConduct: S.pairs.every(n => n === 0) && S.visual === "{}" && S.stateUndefined === true,
   simNoCrossPage: S.crossPage === false,
   simStops: S.stoppedClean === true,
+  // 葉をまたいで続く線番は誤警告しない / 無関係な重複と同一ページの重複は今までどおり
+  wireNumContinued: N.continued.length === 0,
+  wireNumUnrelated: N.unrelated.length === 1 && /複数ページ/.test(N.unrelated[0]),
+  wireNumSamePage: N.samePage.length === 1,
+  // 貼り付けで自分の葉を指したままにしない (しかも黙ってやらない)
+  pasteDropsSelfRef: P.toPage === "(未設定)" && /行き先/.test(P.told) && P.drc === 0,
+  pasteKeepsOthers: P.keptOnSamePage === true,
   listsUnchanged: S.drcSame === true && S.bomSame === true && S.termSame === true,
 };
 const fail = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);

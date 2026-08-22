@@ -50,7 +50,7 @@ UI.buildPalette = (filter = "") => {
     const body = el.querySelector(".sym-cat-body");
     syms.forEach(sym => {
       const std = [sym.jis ? `JIS C 0617 / IEC 60617 ${sym.jis}` : "", sym.stdNote || "",
-        (!sym.jis && !sym.stdNote && sym.nonstd) ? "規格外 (実務用の枠記号)" : ""]
+        (!sym.jis && sym.nonstd) ? "規格外 (JIS C 0617 に該当図記号なし)" : ""]
         .filter(Boolean).map(t => `&#10;${t}`).join("");
       const item = h(`<div class="sym-item" title="${sym.name} (${sym.nameEn})&#10;${sym.desc}${std}">
         <div class="sym-thumb">${symThumbSVG(sym)}</div>
@@ -1465,7 +1465,7 @@ UI.openSymDB = () => {
         <div class="wc-thumb">${symThumbSVG(s, 46)}</div>
         <div class="wc-name">${s.name}</div>
         <div class="wc-desc">${[s.jis ? `JIS C 0617 ${s.jis}` : "", s.stdNote || "",
-          (!s.jis && !s.stdNote && s.nonstd) ? "規格外 (実務用の枠記号)" : ""].filter(Boolean).join(" — ") || s.group}</div>
+          (!s.jis && s.nonstd) ? "規格外 (JIS C 0617 に該当図記号なし)" : ""].filter(Boolean).join(" — ") || s.group}</div>
         <button class="btn-solid ${pinned.has(s.id) ? "" : "primary"}" data-pin="${s.id}"
           style="flex:0 0 auto;padding:4px 10px;font-size:11px;margin-top:4px">
           ${pinned.has(s.id) ? "✓ パレットから外す" : "パレットに追加"}</button>
