@@ -58,8 +58,7 @@ const DB_SYMBOLS = [
     id: "cable_core", db: true, group: "導体・接続", jis: "03-01-09", cat: "db", letter: "W",
     name: "多芯ケーブル (心線囲み)", nameEn: "Cable cores",
     desc: "並走する心線を楕円で囲む。心線の本数はプロパティで変えられる (挿入点=1本目の心線・5mm ピッチ)。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
-    pins: [], enclosure: true, sim: "none", bounds: [-7,-7, 14, 29],
-    body: `<path d="M0,-5 A5,12.5 0 1 0 0,20 A5,12.5 0 1 0 0,-5"/>`,
+    pins: [], enclosure: true, sim: "none",
     // n 本の心線 (5mm ピッチ) を上下 1 ピッチずつの余白で囲む → 長さ 5n+5mm。
     // 上端 -5 / 下端 5n はどちらも 5mm グリッド上に乗り、余白も上下対称になる。既定は 4芯
     stretch: {
@@ -70,23 +69,23 @@ const DB_SYMBOLS = [
   },
   {
     id: "shield", db: true, group: "導体・接続", jis: "03-01-07",
-    stdNote: "遮へい (図記号番号は発注仕様の指定による)。心線囲み 03-01-09 の外側に重ねて描ける",
+    stdNote: "遮へい (図記号番号は発注仕様の指定による)。心線囲み 03-01-09 の外側に 2mm 間隔で重ねて描ける",
     cat: "db", letter: "W",
     name: "シールド (遮へい)", nameEn: "Screen / shield",
     desc: "導体・心線群を囲む遮へい (破線)。ドレン線は片端 (通常は盤側) のみ FE へ接続する — 両端接地は循環電流の原因になる。心線の本数はプロパティで変えられる",
-    // 心線囲み (rx=5) の外側に重ねられるよう rx=7。ドレン線の引出し口は 5mm グリッド上
-    pins: [{x:7,y:5,n:"S"}], enclosure: true, sim: "none", bounds: [-9,-7, 18, 29],
-    body: `<path d="M0,-5 A7,12.5 0 1 0 0,20 A7,12.5 0 1 0 0,-5" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
-      `<path d="M6.4,5 H7"/>`,
+    // 心線囲み (rx=5 / y=-5〜5n) の外側へ一様に 2mm 広げた楕円。
+    // ドレン線は心線の無い行 (最終心線の 1 ピッチ下) から右へ引き出す
+    pins: [], enclosure: true, sim: "none",
     stretch: {
       min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
-      // ドレン線は囲みの中央付近から出す (5mm グリッドに乗せて配線をつなげられるように)
-      pins: (h) => [{ x: 7, y: Math.round((h - 10) / 2 / 5) * 5, n: "S" }],
-      bounds: (h) => [-9, -7, 18, h + 4],
+      pins: (h) => [{ x: 10, y: h - 5, n: "S" }],
+      bounds: (h) => [-9, -9, 21, h + 8],   // 左は楕円 (-7)、右はドレン線の引出し (10) に一様余白 2mm
       body: (h) => {
-        const cy = Math.round((h - 10) / 2 / 5) * 5;
-        return `<path d="M0,-5 A7,${+(h / 2).toFixed(2)} 0 1 0 0,${h - 5} A7,${+(h / 2).toFixed(2)} 0 1 0 0,-5" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
-          `<path d="M6.4,${cy} H7"/>`;
+        const ry = +((h + 4) / 2).toFixed(2), cy = (h - 10) / 2, yD = h - 5;
+        // 引出し口は楕円上の点から。ドレン線の行は心線の下の空き行なので心線と交わらない
+        const xE = +(7 * Math.sqrt(Math.max(0, 1 - Math.pow((yD - cy) / ((h + 4) / 2), 2)))).toFixed(2);
+        return `<path d="M0,-7 A7,${ry} 0 1 0 0,${h - 3} A7,${ry} 0 1 0 0,-7" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
+          `<path d="M${xE},${yD} H10"/>`;
       },
     },
   },
@@ -460,6 +459,17 @@ const DB_SYMBOLS = [
     desc: "アクチュエータの検出器線",
     sigs: ["A+", "A-", "B+", "B-", "+5V", "GND"] }),
 ];
+
+/* 伸縮シンボルの基本形 (パレットに出る姿) は、寸法違いと同じ定義から作る。
+   静的に書いた図形と伸縮側の式が食い違い、既定長を選び直しただけで端子が
+   ずれる — といった事故を防ぐため、定義元は stretch 側に一本化する。 */
+DB_SYMBOLS.forEach(sym => {
+  const st = sym.stretch;
+  if (!st) return;
+  sym.body = st.body(st.def);
+  sym.bounds = st.bounds(st.def);
+  if (st.pins) sym.pins = st.pins(st.def);
+});
 
 /* パレットに引き出されているDBシンボル (localStorage) */
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から

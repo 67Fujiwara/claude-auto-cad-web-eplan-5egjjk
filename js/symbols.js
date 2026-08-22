@@ -485,8 +485,13 @@ function scaleSymbolGeom(body, f) {
     let e = base[0] || 3 * f, g = base[1] || 0.75 * f;
     if (len > 0) {
       const per = e + g;
-      const n = Math.max(1, Math.round((len - e) / per));
-      const k = len / (n * per + e);
+      // 閉じた線 (囲み・rect・circle) は始点と終点が同じ場所なので、
+      // 「線素で終わる」補正を掛けると継ぎ目で線素が2つ繋がって長くなる。
+      // 閉曲線は周期で割り切り、開いた線だけ線素で終わらせる
+      const d = /\bd="([^"]*)"/.exec(attrs);
+      const closed = el !== "path" || (d ? /[Zz]\s*$/.test(d[1].trim()) || pathIsClosed(d[1]) : false);
+      const n = Math.max(1, Math.round(closed ? len / per : (len - e) / per));
+      const k = len / (closed ? n * per : n * per + e);
       e *= k; g *= k;                       // 比を保ったまま端数をゼロにする
     }
     return `<${el}${a}stroke-dasharray="${+e.toFixed(3)} ${+g.toFixed(3)}"${b}/>`;
@@ -556,6 +561,23 @@ function svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2) {
     pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
   }
   return pts;
+}
+
+/** path が閉じているか (始点と終点が同じ位置に戻るか) */
+function pathIsClosed(d) {
+  const t = String(d).match(/[MLHVAmlhvaZz]|-?\d*\.?\d+/g) || [];
+  let i = 0, x = 0, y = 0, sx = 0, sy = 0, started = false;
+  const num = () => parseFloat(t[i++]);
+  while (i < t.length) {
+    const c = t[i++];
+    if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; if (!started) { sx = x; sy = y; started = true; } }
+    else if (c === "L" || c === "l") { const nx = num(), ny = num(); x = c === "L" ? nx : x + nx; y = c === "L" ? ny : y + ny; }
+    else if (c === "H" || c === "h") { const nx = num(); x = c === "H" ? nx : x + nx; }
+    else if (c === "V" || c === "v") { const ny = num(); y = c === "V" ? ny : y + ny; }
+    else if (c === "A" || c === "a") { const rx = num(), ry = num(); num(); num(); num(); const nx = num(), ny = num(); x = c === "A" ? nx : x + nx; y = c === "A" ? ny : y + ny; }
+    else if (c === "Z" || c === "z") return true;
+  }
+  return started && Math.hypot(x - sx, y - sy) < 0.01;
 }
 
 /** path の長さ (mm)。M/L/H/V と円弧 (A) に対応 (A は折れ線近似で積む) */

@@ -366,9 +366,14 @@ function labelObstacles(page) {
   const f = contentScale();
   const out = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
-    // 囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提なので、
-    // 外接矩形ぜんぶを障害物にすると心線の線番が囲みの外へ追い出される
-    if (symOf(d2.sym).enclosure) return;
+    // 囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提。外接矩形ぜんぶを
+    // 障害物にすると心線の線番が囲みの外へ追い出されるので、輪郭の左右だけを避ける
+    if (symOf(d2.sym).enclosure) {
+      const b = devBounds(d2), band = 2.4 * f;
+      out.push({ owner: d2.id, x: b.x, y: b.y, w: band, h: b.h });
+      out.push({ owner: d2.id, x: b.x + b.w - band, y: b.y, w: band, h: b.h });
+      return;
+    }
     out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
     // 接点ミラー表 (コイル直下のクロスリファレンス表) も避ける
     mirrorLabelBoxes(d2).forEach(b => out.push({ owner: d2.id, ...b }));
@@ -1608,7 +1613,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "シールド未接地",
+  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡",
 ];
 
 function drcSources(page, pinNet) {
@@ -1853,6 +1858,20 @@ function runDRC() {
       if (!earthed) {
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が接地されていません (片端のみ FE へ接続してください)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
+      }
+      // 遮へいの中を通る心線とドレン線が同じネットになっていたら短絡 (遮へいの意味が失われる)
+      if (net) {
+        // 心線が並ぶ範囲 (ドレン線の引出し行と上下の余白は除く) を機器座標から作る
+        const span = sym.span || 25;
+        const cs = [[-6, -2], [6, -2], [6, span - 8], [-6, span - 8]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
+        const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
+        const inner = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+        const hit = condWires(page).find(w => closed.wireNet.get(w.id) === net &&
+          w.pts.some((pt, i) => i > 0 && segCrossesRect(w.pts[i - 1], pt, inner)));
+        if (hit) {
+          issues.push({ sev: "err", msg: `${displayTag(dev) || sym.name} のドレン線が中の心線と同じネットになっています (遮へいと心線は分けてください)`,
+            page: page.no, target: dev.id, loc: devLocation(dev) });
+        }
       }
     });
 
