@@ -57,27 +57,37 @@ const DB_SYMBOLS = [
   {
     id: "cable_core", db: true, group: "導体・接続", jis: "03-01-09", cat: "db", letter: "W",
     name: "多芯ケーブル (心線囲み)", nameEn: "Cable cores",
-    desc: "並走する心線を楕円で囲む。囲みの長さはプロパティで心線の本数に合わせて変えられる。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
-    pins: [], sim: "none", bounds: [-7,0, 14, 34],
-    body: `<path d="M0,2 A5,15 0 1 0 0,32 A5,15 0 1 0 0,2"/>`,
-    // 心線の本数に合わせて上下に伸縮する (既定 30mm = 心線 5mm ピッチで 4〜5 本ぶん)
+    desc: "並走する心線を楕円で囲む。心線の本数はプロパティで変えられる (挿入点=1本目の心線・5mm ピッチ)。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
+    pins: [], enclosure: true, sim: "none", bounds: [-7,-7, 14, 29],
+    body: `<path d="M0,-5 A5,12.5 0 1 0 0,20 A5,12.5 0 1 0 0,-5"/>`,
+    // n 本の心線 (5mm ピッチ) を上下 1 ピッチずつの余白で囲む → 長さ 5n+5mm。
+    // 上端 -5 / 下端 5n はどちらも 5mm グリッド上に乗り、余白も上下対称になる。既定は 4芯
     stretch: {
-      min: 10, max: 200, step: 5, def: 30, label: "囲みの長さ (mm)",
-      bounds: (h) => [-7, 0, 14, h + 4],
-      body: (h) => `<path d="M0,2 A5,${+(h / 2).toFixed(2)} 0 1 0 0,${h + 2} A5,${+(h / 2).toFixed(2)} 0 1 0 0,2"/>`,
+      min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
+      bounds: (h) => [-7, -7, 14, h + 4],
+      body: (h) => `<path d="M0,-5 A5,${+(h / 2).toFixed(2)} 0 1 0 0,${h - 5} A5,${+(h / 2).toFixed(2)} 0 1 0 0,-5"/>`,
     },
   },
   {
-    id: "shield", db: true, group: "導体・接続", jis: "03-01-07", cat: "db", letter: "W",
+    id: "shield", db: true, group: "導体・接続", jis: "03-01-07",
+    stdNote: "遮へい (図記号番号は発注仕様の指定による)。心線囲み 03-01-09 の外側に重ねて描ける",
+    cat: "db", letter: "W",
     name: "シールド (遮へい)", nameEn: "Screen / shield",
-    desc: "導体・心線群を囲む遮へい (破線)。囲みの長さはプロパティで心線の本数に合わせて変えられる。ドレン線は別途接地へ落とす",
-    pins: [], sim: "none", bounds: [-7,0, 14, 34],
-    // 03-01-07: 遮へいは破線で表す。多芯ケーブルの心線囲み (03-01-09) と同じ寸法体系
-    body: `<path d="M0,2 A5,15 0 1 0 0,32 A5,15 0 1 0 0,2" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+    desc: "導体・心線群を囲む遮へい (破線)。ドレン線は片端 (通常は盤側) のみ FE へ接続する — 両端接地は循環電流の原因になる。心線の本数はプロパティで変えられる",
+    // 心線囲み (rx=5) の外側に重ねられるよう rx=7。ドレン線の引出し口は 5mm グリッド上
+    pins: [{x:7,y:5,n:"S"}], enclosure: true, sim: "none", bounds: [-9,-7, 18, 29],
+    body: `<path d="M0,-5 A7,12.5 0 1 0 0,20 A7,12.5 0 1 0 0,-5" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
+      `<path d="M6.4,5 H7"/>`,
     stretch: {
-      min: 10, max: 200, step: 5, def: 30, label: "囲みの長さ (mm)",
-      bounds: (h) => [-7, 0, 14, h + 4],
-      body: (h) => `<path d="M0,2 A5,${+(h / 2).toFixed(2)} 0 1 0 0,${h + 2} A5,${+(h / 2).toFixed(2)} 0 1 0 0,2" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+      min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
+      // ドレン線は囲みの中央付近から出す (5mm グリッドに乗せて配線をつなげられるように)
+      pins: (h) => [{ x: 7, y: Math.round((h - 10) / 2 / 5) * 5, n: "S" }],
+      bounds: (h) => [-9, -7, 18, h + 4],
+      body: (h) => {
+        const cy = Math.round((h - 10) / 2 / 5) * 5;
+        return `<path d="M0,-5 A7,${+(h / 2).toFixed(2)} 0 1 0 0,${h - 5} A7,${+(h / 2).toFixed(2)} 0 1 0 0,-5" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
+          `<path d="M6.4,${cy} H7"/>`;
+      },
     },
   },
   {
@@ -452,15 +462,35 @@ const DB_SYMBOLS = [
 ];
 
 /* パレットに引き出されているDBシンボル (localStorage) */
+/* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
+   使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
+   記号はそのまま残す)。 */
+const DB_PINNED_VER = 2;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");
-    if (s) return JSON.parse(s);
+    if (s) {
+      const list = JSON.parse(s);
+      if (!Array.isArray(list)) return [...DB_DEFAULT_PINNED];
+      const ver = +(localStorage.getItem("electracad.dbPinnedVer") || 1);
+      if (ver >= DB_PINNED_VER) return list;
+      // 版が古い: 既定に増えた記号だけを追加する
+      const add = DB_DEFAULT_PINNED.filter(id => !list.includes(id));
+      const merged = add.length ? [...list, ...add] : list;
+      try {
+        localStorage.setItem("electracad.dbPinned", JSON.stringify(merged));
+        localStorage.setItem("electracad.dbPinnedVer", String(DB_PINNED_VER));
+      } catch (e) { /* 保存できなくても今回の一覧は正しい */ }
+      return merged;
+    }
   } catch (e) { /* 破損は既定に戻す */ }
   return [...DB_DEFAULT_PINNED];
 }
 function dbSetPinned(list) {
-  try { localStorage.setItem("electracad.dbPinned", JSON.stringify(list)); } catch (e) { }
+  try {
+    localStorage.setItem("electracad.dbPinned", JSON.stringify(list));
+    localStorage.setItem("electracad.dbPinnedVer", String(DB_PINNED_VER));
+  } catch (e) { }
 }
 
 // 全シンボル辞書へ統合 (描画・配置・部品表・DXFすべてで使える)

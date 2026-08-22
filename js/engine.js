@@ -366,6 +366,9 @@ function labelObstacles(page) {
   const f = contentScale();
   const out = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
+    // 囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提なので、
+    // 外接矩形ぜんぶを障害物にすると心線の線番が囲みの外へ追い出される
+    if (symOf(d2.sym).enclosure) return;
     out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
     // 接点ミラー表 (コイル直下のクロスリファレンス表) も避ける
     mirrorLabelBoxes(d2).forEach(b => out.push({ owner: d2.id, ...b }));
@@ -779,10 +782,14 @@ function symStretchVariant(base, span) {
   const cur = SYMBOLS_BY_ID[id];
   if (cur) return cur;
   const v = { ...base, id, bounds: base.stretch.bounds(s), body: base.stretch.body(s), span: s, stretchOf: base.id };
+  if (base.stretch.pins) v.pins = base.stretch.pins(s);      // 端子位置も長さに追従する (シールドのドレン線)
   delete v.stretch;                       // 寸法違いから更に派生させない
   SYMBOLS_BY_ID[id] = v;                  // DB_SYMBOLS へは入れない (パレットに増やさない)
   return v;
 }
+/** 伸縮シンボルの長さ ⇔ 心線の本数 (囲みは 1本目の 1ピッチ上から最終心線の 1ピッチ下まで) */
+function symSpanToCores(span) { return Math.max(2, Math.round((span - 5) / GRID)); }
+function symCoresToSpan(n) { return Math.max(2, Math.round(n)) * GRID + GRID; }
 /** 伸縮シンボルの基本形 (寸法違いなら元の定義) */
 function symStretchBase(sym) {
   if (sym && sym.stretch) return sym;
@@ -1595,11 +1602,13 @@ function simStop() {
 }
 
 /* ══════════════ DRC (設計ルールチェック) ══════════════ */
+/** 接地を表す図記号 (シールドのドレン線がここへ落ちていれば接地とみなす) */
+const EARTH_SYM_IDS = new Set(["earth", "prot_earth", "func_earth", "chassis_earth"]);
 const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複",
+  "線番の重複", "図番の重複", "シールド未接地",
 ];
 
 function drcSources(page, pinNet) {
@@ -1828,6 +1837,22 @@ function runDRC() {
                        [[z.x + z.w, z.y + z.h], [z.x, z.y + z.h]], [[z.x, z.y + z.h], [z.x, z.y]]];
         const hitR = blocks.find(r => edges.some(([a, b2]) => segCrossesRect(a, b2, r)));
         if (hitR) issues.push({ sev: "err", msg: `破線枠${z.label ? ` (${z.label})` : ""} が${blockName(hitR)}に重なっています`, page: page.no, target: z.id, loc: `${page.no}.${sheetCol(z.x)}` });
+      }
+    });
+
+    // シールドの遮へいは接地して初めて機能する。ドレン線が接地記号へ届いていなければ知らせる
+    page.devices.forEach(dev => {
+      const sym = symOf(dev.sym);
+      if ((sym.stretchOf || sym.id) !== "shield") return;
+      const net = closed.pinNet(dev, 0);
+      const earthed = net && page.devices.some(d2 => {
+        const s2 = symOf(d2.sym);
+        if (!EARTH_SYM_IDS.has(s2.stretchOf || s2.id)) return false;
+        return (s2.pins || []).some((_, i) => closed.pinNet(d2, i) === net);
+      });
+      if (!earthed) {
+        issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が接地されていません (片端のみ FE へ接続してください)`,
+          page: page.no, target: dev.id, loc: devLocation(dev) });
       }
     });
 

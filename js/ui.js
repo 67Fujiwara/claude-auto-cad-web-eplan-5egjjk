@@ -336,9 +336,10 @@ UI.showProps = (focusTag = false) => {
       ${sym.timer ? `<div class="prop-row"><label>遅延時間 (秒)</label><input id="pDelay" class="mono" type="number" step="0.5" min="0" value="${dev.props.delay || 2}"/></div>` : ""}
       ${symStretchBase(sym) ? (() => {
         const st = symStretchBase(sym).stretch;
-        const cur = sym.span || st.def;
-        return `<div class="prop-row"><label>${st.label} <span class="rp-dim">(心線の本数に合わせる)</span></label>
-          <input id="pSpan" class="mono" type="number" step="${st.step}" min="${st.min}" max="${st.max}" value="${cur}"/></div>`;
+        const span = sym.span || st.def;
+        const n = symSpanToCores(span);
+        return `<div class="prop-row"><label>${st.label} <span class="rp-dim">(囲みの長さ ${span}mm・5mm ピッチ)</span></label>
+          <input id="pSpan" class="mono" type="number" step="1" min="${symSpanToCores(st.min)}" max="${symSpanToCores(st.max)}" value="${n}"/></div>`;
       })() : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}
     `;
@@ -367,7 +368,7 @@ UI.showProps = (focusTag = false) => {
     bind("#pSpan", v => {
       const base = symStretchBase(symOf(dev.sym));
       if (!base) return;
-      const span = symStretchSpan(base, v);
+      const span = symStretchSpan(base, symCoresToSpan(parseFloat(v)));
       symStretchVariant(base, span);      // 定義を用意してから割り当てる
       dev.sym = `${base.id}@${span}`;
       App.labelRev++;

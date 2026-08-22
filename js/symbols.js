@@ -520,9 +520,47 @@ function dashTargetLength(el, attrs) {
   return d ? pathLengthMM(d) : 0;
 }
 
-/** 直線のみで構成された path の長さ (mm)。M/L/H/V に対応 */
+/** SVG 円弧 (A) を折れ線の点列にする。中心・角度は SVG 仕様の変換どおり。
+    分割数は弧の大きさに追従させ、たわみ (弦と弧の差) を 0.05mm 以下に抑える。
+    破線の端数補正 (このファイル) と DXF 出力 (dxf.js) で共用する。 */
+function svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2) {
+  if (!rx || !ry) return [[x2, y2]];
+  rx = Math.abs(rx); ry = Math.abs(ry);
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const l = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
+  if (l > 1) { const k = Math.sqrt(l); rx *= k; ry *= k; }
+  const sign = laf === sf ? -1 : 1;
+  const den = rx * rx * dy * dy + ry * ry * dx * dx;
+  const sq = den ? Math.max(0, (rx * rx * ry * ry - rx * rx * dy * dy - ry * ry * dx * dx) / den) : 0;
+  const coef = sign * Math.sqrt(sq);
+  const cx = coef * (rx * dy) / ry + (x1 + x2) / 2;
+  const cy = coef * -(ry * dx) / rx + (y1 + y2) / 2;
+  const ang = (ux, uy, vx, vy) => {
+    const dot = ux * vx + uy * vy;
+    const len = Math.sqrt((ux * ux + uy * uy) * (vx * vx + vy * vy));
+    let a = Math.acos(Math.max(-1, Math.min(1, len ? dot / len : 1)));
+    if (ux * vy - uy * vx < 0) a = -a;
+    return a;
+  };
+  const t1 = ang(1, 0, (x1 - cx) / rx, (y1 - cy) / ry);
+  let dt = ang((x1 - cx) / rx, (y1 - cy) / ry, (x2 - cx) / rx, (y2 - cy) / ry);
+  if (!sf && dt > 0) dt -= 2 * Math.PI;
+  if (sf && dt < 0) dt += 2 * Math.PI;
+  // たわみ e ≒ r(1-cos(Δ/2)) から必要分割数を求める (囲みを伸ばしても角張らせない)
+  const r = Math.max(rx, ry);
+  const need = Math.ceil(Math.abs(dt) / (2 * Math.acos(Math.max(-1, Math.min(1, 1 - 0.05 / Math.max(r, 0.1))))));
+  const N = Math.max(12, Math.min(96, need || 12));
+  const pts = [];
+  for (let k = 1; k <= N; k++) {
+    const t = t1 + dt * (k / N);
+    pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
+  }
+  return pts;
+}
+
+/** path の長さ (mm)。M/L/H/V と円弧 (A) に対応 (A は折れ線近似で積む) */
 function pathLengthMM(d) {
-  const t = d.match(/[MLHVmlhvZz]|-?\d*\.?\d+/g) || [];
+  const t = d.match(/[MLHVAmlhvaZz]|-?\d*\.?\d+/g) || [];
   let i = 0, x = 0, y = 0, len = 0;
   const num = () => parseFloat(t[i++]);
   while (i < t.length) {
@@ -531,6 +569,14 @@ function pathLengthMM(d) {
     else if (c === "L" || c === "l") { const nx = num(), ny = num(); const ax = c === "L" ? nx : x + nx, ay = c === "L" ? ny : y + ny; len += Math.hypot(ax - x, ay - y); x = ax; y = ay; }
     else if (c === "H" || c === "h") { const nx = num(); const ax = c === "H" ? nx : x + nx; len += Math.abs(ax - x); x = ax; }
     else if (c === "V" || c === "v") { const ny = num(); const ay = c === "V" ? ny : y + ny; len += Math.abs(ay - y); y = ay; }
+    else if (c === "A" || c === "a") {
+      const rx = num(), ry = num(); num(); const laf = num(), sf = num();
+      const nx = num(), ny = num();
+      const ax = c === "A" ? nx : x + nx, ay = c === "A" ? ny : y + ny;
+      let px = x, py = y;
+      svgArcPoints(x, y, rx, ry, laf, sf, ax, ay).forEach(q => { len += Math.hypot(q[0] - px, q[1] - py); px = q[0]; py = q[1]; });
+      x = ax; y = ay;
+    }
   }
   return len;
 }

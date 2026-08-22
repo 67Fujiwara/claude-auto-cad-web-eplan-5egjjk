@@ -77,33 +77,8 @@ function dxfParsePath(d) {
 
 /** SVG楕円弧の折線近似 (x軸回転なし) */
 function dxfArcToPoints(x1, y1, x2, y2, rx, ry, laf, sf) {
-  if (rx === 0 || ry === 0) return [[x2, y2]];
-  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
-  let l = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
-  if (l > 1) { const s = Math.sqrt(l); rx *= s; ry *= s; }
-  const sign = laf === sf ? -1 : 1;
-  const sq = Math.max(0, (rx * rx * ry * ry - rx * rx * dy * dy - ry * ry * dx * dx) / (rx * rx * dy * dy + ry * ry * dx * dx));
-  const coef = sign * Math.sqrt(sq);
-  const cxp = coef * (rx * dy) / ry, cyp = coef * -(ry * dx) / rx;
-  const cx = cxp + (x1 + x2) / 2, cy = cyp + (y1 + y2) / 2;
-  const ang = (ux, uy, vx, vy) => {
-    const dot = ux * vx + uy * vy;
-    const len = Math.sqrt((ux * ux + uy * uy) * (vx * vx + vy * vy));
-    let a = Math.acos(Math.max(-1, Math.min(1, dot / len)));
-    if (ux * vy - uy * vx < 0) a = -a;
-    return a;
-  };
-  // 開始角/掃引角
-  const t1 = ang(1, 0, (x1 - cx) / rx, (y1 - cy) / ry);
-  let dt = ang((x1 - cx) / rx, (y1 - cy) / ry, (x2 - cx) / rx, (y2 - cy) / ry);
-  if (!sf && dt > 0) dt -= 2 * Math.PI;
-  if (sf && dt < 0) dt += 2 * Math.PI;
-  const N = 12, pts = [];
-  for (let k = 1; k <= N; k++) {
-    const t = t1 + dt * (k / N);
-    pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
-  }
-  return pts;
+  // 弧の折れ線化は破線の端数補正と同じ実装を使う (分割数は弧の大きさに追従)
+  return svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2);
 }
 
 /** シンボルボディ → プリミティブ配列 (ローカル座標) */
