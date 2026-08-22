@@ -194,7 +194,7 @@ function wireLabelPosCalc(w, page, placed) {
   // 障害物: 機器の図記号・注記・デバイスタグ/機能テキスト (線番が図記号に被らないように)
   const obst = page ? pinLabelBoxes(page) : [];
   devs.forEach(d => {
-    deviceObstacleBoxes(d, 1.5 * f).forEach(b => obst.push(b));
+    deviceObstacleBoxes(d, OBST_INSET.wireNum * f).forEach(b => obst.push(b));
     if (page) {
       deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
       mirrorLabelBoxes(d).forEach(b => obst.push(b));
@@ -215,10 +215,10 @@ function wireLabelPosCalc(w, page, placed) {
     return { x: x0, y: y0, w: Math.max(b.x + b.w, sp.x + sp.w) - x0, h: Math.max(b.y + b.h, sp.y + sp.h) - y0 };
   };
   let best = null;
-  const consider = (pt, horiz, extras = [0, 3, 6]) => {
+  const consider = (pt, horiz, extras = [0, 3, 6], sides = [1, -1]) => {
     // 配線の両側 × 法線方向のオフセットを試す (短い区間でも逃げ場を作る)
     for (const extra of extras) {
-      for (const side of [1, -1]) {
+      for (const side of sides) {
         const res = posOf(pt, horiz, side, extra);
         const bx = boxOf(res[0], res[1], horiz);
         let sc = 0;
@@ -237,8 +237,11 @@ function wireLabelPosCalc(w, page, placed) {
   for (const sg of segs) {
     const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
     const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
+    // まず線の片側 (上/左) で場所を探し、それから反対側。側を変えるより
+    // 同じ側で線に沿って動かすほうがよい — 多芯ケーブルのように線が 5mm 間隔で
+    // 並ぶ図では、反対側へ回すと隣の線のほうが近くなってどの線の番号か読めなくなる
     for (const t of TS) {
-      const ok = consider(at(t), horiz, [0]);
+      const ok = consider(at(t), horiz, [0], [1]);
       if (ok) return ok;
     }
     // 線上に収まらない場合は、じゃまをしている物 (囲みなど) の外側へ寄せて
@@ -262,7 +265,16 @@ function wireLabelPosCalc(w, page, placed) {
     // 自分の線の近くにある候補から順に試す
     cands.sort((p1, p2) => Math.hypot(p1[0] - mid[0], p1[1] - mid[1]) - Math.hypot(p2[0] - mid[0], p2[1] - mid[1]));
     for (const c of cands) {
-      const ok = consider(c, horiz, [0]);
+      const ok = consider(c, horiz, [0], [1]);
+      if (ok) return ok;
+    }
+    // 同じ側に置けないときだけ反対側へ (線に沿った位置 → 退避先の順)
+    for (const t of TS) {
+      const ok = consider(at(t), horiz, [0], [-1]);
+      if (ok) return ok;
+    }
+    for (const c of cands) {
+      const ok = consider(c, horiz, [0], [-1]);
       if (ok) return ok;
     }
   }
@@ -332,7 +344,7 @@ function symBodyRects(sym) {
 function pinLabelBoxes(page) {
   const f = contentScale();
   const out = [];
-  const devBoxes = page.devices.flatMap(d => deviceObstacleBoxes(d, 1.2 * f));
+  const devBoxes = page.devices.flatMap(d => deviceObstacleBoxes(d, OBST_INSET.label * f));
   // 図記号の箱 (rect) は自機のぶんも障害物にする — 長い端子名 (N24V 等) が
   // 検出器箱・機器ボックスの縁に乗るのを防ぐ (回転配置は bounds 側で概ね足りるため除外)
   const bodyRects = [];
@@ -399,6 +411,11 @@ function pinLabelPosMap(page) {
   return map;
 }
 
+/* 文字を置いてはいけない領域の余白 (mm)。
+   検図は「配置器が置いてよいと判断した位置」を咎めてはいけないので、
+   検図の余白は配置器のどれよりも大きく (= 障害物としては小さく) 保つ。 */
+const OBST_INSET = { label: 1.2, wireNum: 1.5, drc: 1.5 };
+
 /** 機器1台ぶんの「文字を置いてはいけない領域」。
     画面の機器ラベルも線番も同じ規則を使う (定義元を1か所にする)。
     囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提なので、
@@ -416,17 +433,29 @@ function deviceObstacleBoxes(dev, inset) {
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
   };
   // 機器座標で作ってから回転させる (回転しても輪郭を守る)。
-  // ・左右の帯は輪郭の外側だけ — 内側へ食い込ませると、中を通る心線の線番の
-  //   逃げ場が無くなり (囲みを二重に重ねると特に) 線番が囲みの外へ飛ばされる
-  // ・上下の丸い端部には心線が無いので、幅いっぱいを塞ぐ
-  return [
-    boxOf(-rx - band, by, -rx + 0.2, by + bh),
-    boxOf(rx - 0.2, by, rx + band, by + bh),
-    // 端部は丸い輪郭が通る帯だけを塞ぐ (端部ぜんぶを塞ぐと、最初/最後の心線の
-    // すぐ上下という一番読みやすい位置まで使えなくなる)
-    boxOf(-rx - band, by, rx + band, -rx + 0.2),
-    boxOf(-rx - band, span - 10 + rx - 0.2, rx + band, by + bh),
+  // 塞ぐのは「輪郭の線が通っているところ」だけ — 囲みの中は心線が通る前提で
+  // 空けておかないと、心線の線番の逃げ場が無くなって囲みの外へ飛ばされる
+  const out = [
+    boxOf(-rx - band, 0, -rx + 0.2, span - 10),          // 直線部 (心線に沿う左右)
+    boxOf(rx - 0.2, 0, rx + band, span - 10),
   ];
+  // 丸い端部は弧に沿って刻む (矩形帯のままだと弧の肩が素通しになる)
+  const N = 6;
+  for (let i = 0; i < N; i++) {
+    const t0 = (Math.PI / 2) * i / N, t1 = (Math.PI / 2) * (i + 1) / N;
+    const w0 = rx * Math.cos(t0), w1 = rx * Math.cos(t1);      // 半幅 (外側→内側)
+    const d0 = rx * Math.sin(t0), d1 = rx * Math.sin(t1);      // 端部からの深さ
+    const pad = 0.3;   // 輪郭線の太さぶん。すき間は利用側が LABEL_CLEAR で足す
+    const hi = Math.max(w0, w1) + pad, lo = Math.max(0, Math.min(w0, w1) - pad);
+    out.push(boxOf(-hi, -d1, -lo, -d0), boxOf(lo, -d1, hi, -d0));                       // 上の端部
+    out.push(boxOf(-hi, span - 10 + d0, -lo, span - 10 + d1),
+             boxOf(lo, span - 10 + d0, hi, span - 10 + d1));                            // 下の端部
+  }
+  // 端子への引出線 (遮へいのドレン線) も図記号の一部なので塞ぐ
+  (sym.pins || []).forEach(pn => {
+    out.push(boxOf(Math.min(rx - 0.2, pn.x) - band, pn.y - band, Math.max(rx, pn.x) + band, pn.y + band));
+  });
+  return out;
 }
 
 /** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
@@ -434,7 +463,7 @@ function labelObstacles(page) {
   const f = contentScale();
   const out = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
-    deviceObstacleBoxes(d2, 1.2 * f).forEach(b => out.push({ owner: d2.id, ...b }));
+    deviceObstacleBoxes(d2, OBST_INSET.label * f).forEach(b => out.push({ owner: d2.id, ...b }));
     // 接点ミラー表 (コイル直下のクロスリファレンス表) も避ける
     mirrorLabelBoxes(d2).forEach(b => out.push({ owner: d2.id, ...b }));
   });
@@ -567,7 +596,7 @@ function deviceXrefBox(page, dev) {
   const h = TEXT_H.small * s, w = textWidthMM(text, h, false, true);
   const obst = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
-    deviceObstacleBoxes(d2, 1.2 * s).forEach(b => obst.push(b));
+    deviceObstacleBoxes(d2, OBST_INSET.label * s).forEach(b => obst.push(b));
     deviceLabelBoxes(page, d2).forEach(o => obst.push(o.box));
   });
   const cands = [
@@ -1251,7 +1280,7 @@ function mirrorOrigin(coilDev) {
   const obst = [];
   page.devices.forEach(d2 => {
     if (d2.id === coilDev.id) return;
-    deviceObstacleBoxes(d2, 1.2 * f).forEach(b => obst.push(b));
+    deviceObstacleBoxes(d2, OBST_INSET.label * f).forEach(b => obst.push(b));
     // 先に配置が決まっている (id 順で前の) コイルのミラー表
     if (d2.id < coilDev.id) mirrorLabelBoxes(d2).forEach(b => obst.push(b));
   });
@@ -1879,7 +1908,7 @@ function runDRC() {
       // 文字を置いてよい範囲の判定は配置器と同じ規則を使う (囲み記号の中は心線が
       // 通る前提で空けてあるので、外接矩形ぜんぶを「図記号」と見ない)
       const onSym = other ? null : page.devices.find(d => d !== a.dev &&
-        deviceObstacleBoxes(d, 1.5 * f4).some(bx => symHit(a, bx)));
+        deviceObstacleBoxes(d, OBST_INSET.drc * f4).some(bx => symHit(a, bx)));
       if (!other && !onSym) continue;
       overlapTotal++;
       if (overlapCount >= 20) continue;
@@ -1967,7 +1996,8 @@ function runDRC() {
         // 心線が並ぶ範囲 (ドレン線の引出し行と上下の余白は除く) を機器座標から作る
         const base0 = symStretchBase(sym);
         const span = sym.span || (base0 && base0.stretch.def) || 25;
-        const cs = [[-6, -2], [6, -2], [6, span - 8], [-6, span - 8]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
+        // 長円の直線部 (心線が並ぶ範囲)。引出し行 (y=span-5) は含めない
+        const cs = [[-6, -2], [6, -2], [6, span - 12], [-6, span - 12]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
         const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
         const inner = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
         const hit = condWires(page).find(w => closed.wireNet.get(w.id) === net &&
