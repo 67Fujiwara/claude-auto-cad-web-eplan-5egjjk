@@ -249,7 +249,7 @@ function wireLabelPosCalc(w, page, placed) {
     const mid = at(0.5);
     const box0 = boxOf(...posOf(mid, horiz, 1, 0), horiz);
     const size = horiz ? box0.w : box0.h;
-    const cands = [];
+    let cands = [];
     for (const r of obst) {
       const gap = LABEL_CLEAR + 0.4;
       if (horiz) {
@@ -262,8 +262,30 @@ function wireLabelPosCalc(w, page, placed) {
         cands.push([mid[0], r.y + r.h + gap + size / 2]);
       }
     }
-    // 自分の線の近くにある候補から順に試す
-    cands.sort((p1, p2) => Math.hypot(p1[0] - mid[0], p1[1] - mid[1]) - Math.hypot(p2[0] - mid[0], p2[1] - mid[1]));
+    // 候補は自分の線 (この区間) の上に限る。線からはみ出すと、導体の無い
+    // ところに線番が浮いてしまう
+    const lo0 = Math.min(sg.a[0], sg.b[0]), hi0 = Math.max(sg.a[0], sg.b[0]);
+    const lo1 = Math.min(sg.a[1], sg.b[1]), hi1 = Math.max(sg.a[1], sg.b[1]);
+    // 候補は「線番の箱が線の中に収まる」ものを優先し、収まらなければ
+    // 「中心が線の上にある」ものまで許す (短い線では端が少しはみ出す)
+    const inSeg = c => horiz
+      ? (c[0] - size / 2 >= lo0 - 0.01 && c[0] + size / 2 <= hi0 + 0.01)
+      : (c[1] - size / 2 >= lo1 - 0.01 && c[1] + size / 2 <= hi1 + 0.01);
+    const onSeg = c => horiz
+      ? (c[0] >= lo0 - 0.01 && c[0] <= hi0 + 0.01)
+      : (c[1] >= lo1 - 0.01 && c[1] <= hi1 + 0.01);
+    // 自分の線の近くにある候補から順に。同じ距離なら左 (縦線なら上) を選び、
+    // 並んだ心線の線番が左右にばらけないようにする
+    const near = (p1, p2) => (Math.hypot(p1[0] - mid[0], p1[1] - mid[1]) - Math.hypot(p2[0] - mid[0], p2[1] - mid[1]))
+      || (horiz ? p1[0] - p2[0] : p1[1] - p2[1]);
+    // 3段階: 線の中に収まる → 中心が線の上 → 線の端に接する (短い線での最後の手段)。
+    // どれも「自分の線のそば」で、線から離れた位置へ飛ばすよりは読みやすい
+    const nearSeg = c => horiz
+      ? (c[0] >= lo0 - size / 2 - 0.01 && c[0] <= hi0 + size / 2 + 0.01)
+      : (c[1] >= lo1 - size / 2 - 0.01 && c[1] <= hi1 + size / 2 + 0.01);
+    cands = [...cands.filter(inSeg).sort(near),
+             ...cands.filter(c => !inSeg(c) && onSeg(c)).sort(near),
+             ...cands.filter(c => !onSeg(c) && nearSeg(c)).sort(near)];
     for (const c of cands) {
       const ok = consider(c, horiz, [0], [1]);
       if (ok) return ok;
@@ -1227,6 +1249,31 @@ function linkPolarity(dev) {
  * pagesData: [{ page, pinNet, pNets, nNets, acNets }]
  * いずれかのページでリンクのネットが P/N/AC なら、同タグ全リンクのネットにも付与。
  */
+/** 電位リンク (同じタグ) で繋がるネットを (ページをまたいで) 集める。
+    片端接地・両端接地の判定を、別葉に描いた接地でも正しく数えるために使う。 */
+function linkedNetSet(pagesData, pd0, net0) {
+  const key = (pd, n) => pagesData.indexOf(pd) + "|" + n;
+  const groups = new Map();            // タグ → [{pd, net}]
+  pagesData.forEach(pd => pd.page.devices.forEach(dev => {
+    if (symOf(dev.sym).sim !== "link" || !dev.tag) return;
+    const n = pd.pinNet(dev, 0);
+    if (!n) return;
+    const t = dev.tag.replace(/^-/, "").toUpperCase();
+    if (!groups.has(t)) groups.set(t, []);
+    groups.get(t).push({ pd, net: n });
+  }));
+  const seen = new Set([key(pd0, net0)]);
+  const queue = [{ pd: pd0, net: net0 }];
+  while (queue.length) {
+    const cur = queue.shift();
+    groups.forEach(list => {
+      if (!list.some(e => e.pd === cur.pd && e.net === cur.net)) return;
+      list.forEach(e => { if (!seen.has(key(e.pd, e.net))) { seen.add(key(e.pd, e.net)); queue.push(e); } });
+    });
+  }
+  return seen;
+}
+
 function propagateLinkGroups(pagesData) {
   const groups = new Map(); // tag → [{pd, net}]
   pagesData.forEach(pd => {
@@ -1704,7 +1751,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致",
+  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
 /** 接地記号につながっているネット (遮へいの接地判定に使う) */
@@ -1950,17 +1997,59 @@ function runDRC() {
       }
     });
 
+    // 囲みを実際に横切る心線の本数と、シンボルに設定した芯数が合っているか
+    page.devices.forEach(dev => {
+      const sym = symOf(dev.sym);
+      const baseId = sym.stretchOf || sym.id;
+      if (baseId !== "cable_core" && baseId !== "shield") return;
+      const span = sym.span || (symStretchBase(sym) || { stretch: { def: 25 } }).stretch.def;
+      const want = symSpanToCores(span);
+      const rx = sym.enclosure || 5;
+      // 囲みを左右に貫く配線を数える。心線が囲みからはみ出していても気づけるよう、
+      // 判定は囲みの外形 + 1 ピッチの範囲で見る (ドレン線の引出し行は数えない)
+      let cross = 0;
+      condWires(page).forEach(w => {
+        for (let i = 0; i < w.pts.length - 1; i++) {
+          const a = w.pts[i], b2 = w.pts[i + 1];
+          const bd0 = sym.bounds;
+          const cs = [[-rx, bd0[1] - GRID], [rx, bd0[1] + bd0[3] + GRID]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
+          const x0 = Math.min(cs[0].x, cs[1].x), x1 = Math.max(cs[0].x, cs[1].x);
+          const y0 = Math.min(cs[0].y, cs[1].y), y1 = Math.max(cs[0].y, cs[1].y);
+          const horiz = Math.abs(a[1] - b2[1]) < 0.01;
+          const through = horiz
+            ? (a[1] > y0 - 0.01 && a[1] < y1 + 0.01 && Math.min(a[0], b2[0]) <= x0 + 0.01 && Math.max(a[0], b2[0]) >= x1 - 0.01)
+            : (a[0] > x0 - 0.01 && a[0] < x1 + 0.01 && Math.min(a[1], b2[1]) <= y0 + 0.01 && Math.max(a[1], b2[1]) >= y1 - 0.01);
+          const drain = (sym.pins || []).some(pn => {
+            const pa = pinAbs(dev, pn);
+            return horiz && Math.abs(a[1] - pa.y) < 0.01;
+          });
+          if (through && !drain) { cross++; break; }
+        }
+      });
+      if (cross && cross !== want) {
+        issues.push({ sev: "warn", loc: devLocation(dev), page: page.no, target: dev.id,
+          msg: `${displayTag(dev) || sym.name} は ${want} 芯に設定されていますが、実際に通っている心線は ${cross} 本です` });
+      }
+    });
+
     // シールドの遮へいは接地して初めて機能する。ドレン線が接地記号へ届いていなければ知らせる
     page.devices.forEach(dev => {
       const sym = symOf(dev.sym);
       if ((sym.stretchOf || sym.id) !== "shield") return;
       const net = closed.pinNet(dev, 0);
-      // 同じネットに落ちている接地記号を種類ごとに数える
-      const earths = !net ? [] : page.devices.filter(d2 => {
+      // 同じネットに落ちている接地記号を数える。電位リンクで繋がる他ページの
+      // 接地も数に入れる (別葉で両端接地している図を見逃さない)
+      const linked = net ? linkedNetSet(closedData, closed, net) : new Set();
+      const earths = [];
+      if (net) closedData.forEach((pd, pi) => pd.page.devices.forEach(d2 => {
         const s2 = symOf(d2.sym);
-        if (!EARTH_SYM_IDS.has(s2.stretchOf || s2.id)) return false;
-        return (s2.pins || []).some((_, i) => closed.pinNet(d2, i) === net);
-      });
+        if (!EARTH_SYM_IDS.has(s2.stretchOf || s2.id)) return;
+        const hit = (s2.pins || []).some((_, i) => {
+          const n2 = pd.pinNet(d2, i);
+          return n2 && linked.has(pi + "|" + n2);
+        });
+        if (hit) earths.push(d2);
+      }));
       // 接地の有無は電位リンク経由で他ページの接地も見る (別葉で片端接地する
       // 描き方でも誤って「未接地」と言わない)
       const earthedAnywhere = net && closed.eNets.has(net);
@@ -1971,7 +2060,7 @@ function runDRC() {
         // 遮へいを両端で接地すると接地間の電位差で循環電流が流れる
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が ${earths.length} 箇所で接地されています (片端のみにしてください — 両端接地は循環電流の原因)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
-      } else if (earths.length === 1 && (symOf(earths[0].sym).stretchOf || earths[0].sym) === "prot_earth") {
+      } else if (earths.length === 1 && (symOf(earths[0].sym).stretchOf || symOf(earths[0].sym).id) === "prot_earth") {
         // 遮へいのドレン線はノイズ用の機能接地へ落とす (保護接地母線に載せない)
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が保護接地 (PE) に接続されています (遮へいは機能接地 FE へ落としてください)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
@@ -2167,6 +2256,11 @@ function runDRC() {
 }
 
 /* ══════════════ 部品表 (BOM) ══════════════ */
+/** 芯数を部品表に出すケーブル系シンボルか */
+function baseIdOfCable(sym) {
+  const id = sym.stretchOf || sym.id;
+  return id === "cable_core" || id === "shield";
+}
 const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth"]); // 購買部品でないもの
 function buildBOM() {
   const rows = new Map();
@@ -2179,8 +2273,12 @@ function buildBOM() {
     // 端子は本数だけ数える (タグ -X1:n を -X1 に集約)
     const baseTag = symId === "terminal" ? (dev.tag || "-X1").split(":")[0] : null;
     const key = symId === "terminal" ? "terminal|" + baseTag : symId + "|" + (dev.typeRef || "");
-    if (!rows.has(key)) rows.set(key, { name: sym.name, typeRef: dev.typeRef || "—", tags: [] });
-    rows.get(key).tags.push(displayTag(dev) || "—");
+    // 多芯ケーブルの囲み・遮へいは芯数が購買の属性なので、名称に出して行も分ける
+    const cableCores = (baseIdOfCable(sym) && symSpanToCores(sym.span || 25)) || null;
+    const rowKey = cableCores ? key + "|" + cableCores : key;
+    const rowName = cableCores ? `${sym.name} ${cableCores}芯` : sym.name;
+    if (!rows.has(rowKey)) rows.set(rowKey, { name: rowName, typeRef: dev.typeRef || "—", tags: [] });
+    rows.get(rowKey).tags.push(displayTag(dev) || "—");
   }));
   return [...rows.values()].sort((a, b) => (a.tags[0] || "").localeCompare(b.tags[0] || ""));
 }
