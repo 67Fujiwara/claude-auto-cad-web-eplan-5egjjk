@@ -58,7 +58,7 @@ const DB_SYMBOLS = [
     id: "cable_core", db: true, group: "導体・接続", jis: "03-01-09", cat: "db", letter: "W",
     name: "多芯ケーブル (心線囲み)", nameEn: "Cable cores",
     desc: "並走する心線を長円で囲む。心線の本数はプロパティで変えられる (挿入点=1本目の心線・5mm ピッチ)。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
-    pins: [], enclosure: 5, sim: "none",     // enclosure = 輪郭の半幅 (文字の障害物帯を作るのに使う)
+    pins: [], enclosure: 5, sim: "none",     // enclosure = 輪郭の半幅 (芯数の検図で、囲みを貫く心線を数えるのに使う)
     // n 本の心線 (5mm ピッチ) を上下 1 ピッチずつの余白で囲む → 長さ 5n+5mm。
     // 上端 -5 / 下端 5n はどちらも 5mm グリッド上に乗り、余白も上下対称になる。既定は 4芯
     stretch: {
@@ -77,7 +77,7 @@ const DB_SYMBOLS = [
     desc: "導体・心線群を囲む遮へい (破線)。ドレン線は片端 (通常は盤側) のみ FE へ接続する — 両端接地は循環電流の原因になる。心線の本数はプロパティで変えられる",
     // 心線囲み (rx=5 / y=-5〜5n) の外側へ全周 2mm 広げた長円。
     // ドレン線は心線の無い行 (最終心線の 1 ピッチ下) から右へ引き出す
-    pins: [], enclosure: 7, sim: "none", noDrc: true,   // enclosure = 輪郭の半幅 (文字の障害物帯を作るのに使う)
+    pins: [], enclosure: 7, sim: "none", noDrc: true,   // enclosure = 輪郭の半幅 (芯数の検図で、囲みを貫く心線を数えるのに使う)
     // ドレン線の未接続は「シールド未接地」で知らせるので、端子の未接続警告は出さない
     stretch: {
       min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
