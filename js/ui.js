@@ -933,10 +933,12 @@ UI.zoomCenter = (f) => {
 };
 UI.print = () => {
   const svg = exportSheetSVG();
-  const paper = pageSheetMeta(curPage()).paper || "A3";
+  const pm = pageSheetMeta(curPage());
+  const paper = pm.paper || "A3";
+  const dir = pm.orient === "portrait" ? "portrait" : "landscape";   // 図枠の向きに合わせる
   const win = window.open("", "_blank");
   win.document.write(`<html><head><title>${App.project.name}</title><style>
-    @page { size: ${paper} landscape; margin: 0; }
+    @page { size: ${paper} ${dir}; margin: 0; }
     body { margin: 0 } svg { width: 100vw; height: 100vh }
   </style></head><body>${svg}</body></html>`);
   win.document.close();
@@ -948,8 +950,9 @@ UI.printAll = () => {
   const pages = App.project.pages.map((pg, i) =>
     `<div class="sheet sheet${i}">${exportSheetSVG(pg)}</div>`).join("");
   // ページごとに用紙が違う場合に備え、名前付き @page で1ページずつ用紙を指定する
-  const papers = App.project.pages.map(pg => pageSheetMeta(pg).paper || "A3");
-  const pageCSS = papers.map((pp, i) => `@page p${i} { size: ${pp} landscape; margin: 0 } .sheet${i} { page: p${i} }`).join("\n      ");
+  const papers = App.project.pages.map(pg => pageSheetMeta(pg));
+  const pageCSS = papers.map((pm, i) =>
+    `@page p${i} { size: ${pm.paper || "A3"} ${pm.orient === "portrait" ? "portrait" : "landscape"}; margin: 0 } .sheet${i} { page: p${i} }`).join("\n      ");
   const win = window.open("", "_blank");
   win.document.write(`<html><head><title>${App.project.name} (全${App.project.pages.length}ページ)</title>
     <style>
@@ -1525,17 +1528,20 @@ UI.sheetSetup = () => {
       「このページの図番」に直接入力すると、そのページだけ自動採番から保護されます (空欄で自動に戻る)。
     </div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="tbDwgAuto" ${meta.dwgNoAuto === false ? "" : "checked"}/><span>図番をページ順に自動採番する</span></label></div>
-    <div class="prop-sect">用紙と尺度</div>
+    <div class="prop-sect">用紙・向きと尺度</div>
     <div class="prop-grid2">
-      <div class="prop-row"><label>用紙 (横置き)</label><select id="tbPaper">
+      <div class="prop-row"><label>用紙</label><select id="tbPaper">
         ${Object.entries(PAPERS).map(([k, [pw, ph]]) => opt(k, cur.paper, `${k} (${pw}×${ph} mm)`)).join("")}
+      </select></div>
+      <div class="prop-row"><label>向き</label><select id="tbOrient">
+        ${opt("landscape", cur.orient, "横置き (長辺が左右)")}${opt("portrait", cur.orient, "縦置き (長辺が上下)")}
       </select></div>
       <div class="prop-row"><label>尺度</label><select id="tbScale">
         ${SCALES.map(s => opt(s, cur.scale)).join("")}
       </select></div>
       <div class="prop-row"><label>適用範囲</label><select id="tbScope">
-        <option value="page"${page.paper || page.scale ? " selected" : ""}>このページのみ (${page.no}. ${escAttr(page.name)})</option>
-        <option value="all"${page.paper || page.scale ? "" : " selected"}>全ページ (既定)</option>
+        <option value="page"${page.paper || page.scale || page.orient ? " selected" : ""}>このページのみ (${page.no}. ${escAttr(page.name)})</option>
+        <option value="all"${page.paper || page.scale || page.orient ? "" : " selected"}>全ページ (既定)</option>
       </select></div>
     </div>
     <div class="prop-note" id="tbInfo"></div>
@@ -1572,10 +1578,10 @@ UI.sheetSetup = () => {
 
   const q = id => body.querySelector(id);
   const info = () => {
-    const [pw, ph] = PAPERS[q("#tbPaper").value] || PAPERS.A3;
+    const [pw, ph] = paperSize(q("#tbPaper").value, q("#tbOrient").value);
     const sc = q("#tbScale").value;
     const f = scaleFactor(sc);
-    const over = countOverflow(q("#tbPaper").value, sc);
+    const over = countOverflow(q("#tbPaper").value, sc, q("#tbOrient").value);
     q("#tbInfo").innerHTML = `作図領域は <b>${Math.round(pw * f)} × ${Math.round(ph * f)} mm</b> になります` +
       (sc === "NS" ? " (非尺度)。" : f === 1 ? " (現尺)。"
         : `。用紙 ${pw}×${ph} mm に ${sc} で印刷される想定で、実物の${f > 1 ? `${f} 倍の範囲を1枚に収められます` : `${1 / f} 倍に拡大して描けます`}。`) +
@@ -1586,10 +1592,10 @@ UI.sheetSetup = () => {
         : `<br>現在の図形はすべて新しい図枠に収まります。`);
   };
   /** 指定の用紙・尺度に切り替えた場合のはみ出し数を試算する (SHEET は元に戻す) */
-  function countOverflow(paper, scale) {
-    const save = { paper: meta.paper, scale: meta.scale };
-    const saveP = { p: page.paper, s: page.scale };
-    page.paper = paper; page.scale = scale; applySheet(page);
+  function countOverflow(paper, scale, orient) {
+    const save = { paper: meta.paper, scale: meta.scale, orient: meta.orient };
+    const saveP = { p: page.paper, s: page.scale, o: page.orient };
+    page.paper = paper; page.scale = scale; page.orient = orient; applySheet(page);
     const fr2 = frameRect(), blocks = titleBlocksRects();
     const hit = (b) => b.x < fr2.x || b.y < fr2.y || b.x + b.w > fr2.x + fr2.w || b.y + b.h > fr2.y + fr2.h ||
       blocks.some(r => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y);
@@ -1604,13 +1610,15 @@ UI.sheetSetup = () => {
         if (outside || onBlk) wires++;
       });
     });
-    page.paper = saveP.p; page.scale = saveP.s;
+    page.paper = saveP.p; page.scale = saveP.s; page.orient = saveP.o;
     if (!saveP.p) delete page.paper;
     if (!saveP.s) delete page.scale;
-    meta.paper = save.paper; meta.scale = save.scale; applySheet(page);
+    if (!saveP.o) delete page.orient;
+    meta.paper = save.paper; meta.scale = save.scale; meta.orient = save.orient; applySheet(page);
     return { devs, wires, total: devs + wires };
   }
   q("#tbPaper").addEventListener("change", info);
+  q("#tbOrient").addEventListener("change", info);
   q("#tbScale").addEventListener("change", info);
   info();
 
@@ -1618,14 +1626,16 @@ UI.sheetSetup = () => {
     <button class="btn-solid" id="tbCancel">キャンセル</button>
     <button class="btn-solid primary" id="tbOk">適用</button>
   </div>`);
-  const m = UI.openModal({ title: "図枠・表題欄の設定", sub: "表題欄の記入項目と用紙サイズ・尺度", body, foot });
+  const m = UI.openModal({ title: "図枠・表題欄の設定", sub: "表題欄の記入項目と用紙サイズ・向き・尺度", body, foot });
   foot.querySelector("#tbCancel").addEventListener("click", m.close);
   foot.querySelector("#tbOk").addEventListener("click", () => {
-    const paperChanging = cur.paper !== q("#tbPaper").value || cur.scale !== q("#tbScale").value;
+    const orientName = v => v === "portrait" ? "縦置き" : "横置き";
+    const paperChanging = cur.paper !== q("#tbPaper").value || cur.scale !== q("#tbScale").value
+      || cur.orient !== q("#tbOrient").value;
     if (paperChanging) {
-      const over = countOverflow(q("#tbPaper").value, q("#tbScale").value);
+      const over = countOverflow(q("#tbPaper").value, q("#tbScale").value, q("#tbOrient").value);
       if (over.total && !confirm(
-        `新しい図枠 ${q("#tbPaper").value} / ${q("#tbScale").value} では、機器 ${over.devs} 点・配線 ${over.wires} 本が` +
+        `新しい図枠 ${q("#tbPaper").value} ${orientName(q("#tbOrient").value)} / ${q("#tbScale").value} では、機器 ${over.devs} 点・配線 ${over.wires} 本が` +
         `図枠外にはみ出すか表題欄に重なります。\n(検図 (DRC) にエラーとして表示されます)\n\n続けますか？`)) return;
     }
     commit();
@@ -1661,13 +1671,15 @@ UI.sheetSetup = () => {
       if (scope === "page") {
         page.paper = q("#tbPaper").value;
         page.scale = q("#tbScale").value;
+        page.orient = q("#tbOrient").value;
       } else {
-        const indiv = App.project.pages.filter(pg => pg.paper || pg.scale);
+        const indiv = App.project.pages.filter(pg => pg.paper || pg.scale || pg.orient);
         if (indiv.length && !confirm(
-          `${indiv.length} ページに個別の用紙・尺度が設定されています。\n全ページを ${q("#tbPaper").value} / ${q("#tbScale").value} に統一しますか？`)) return;
+          `${indiv.length} ページに個別の用紙・向き・尺度が設定されています。\n全ページを ${q("#tbPaper").value} ${orientName(q("#tbOrient").value)} / ${q("#tbScale").value} に統一しますか？`)) return;
         meta.paper = q("#tbPaper").value;
         meta.scale = q("#tbScale").value;
-        App.project.pages.forEach(pg => { delete pg.paper; delete pg.scale; });
+        meta.orient = q("#tbOrient").value;
+        App.project.pages.forEach(pg => { delete pg.paper; delete pg.scale; delete pg.orient; });
       }
     }
     UI.renumberPages();          // 図番の接頭辞・自動採番設定を全ページへ即反映
@@ -1680,7 +1692,7 @@ UI.sheetSetup = () => {
     if (nameInput) nameInput.value = App.project.name;
     m.close();
     UI.refresh();
-    if (paperChanged) { zoomFit(); UI.setMsg(`用紙 ${meta.paper} / 尺度 ${meta.scale} — 作図領域 ${SHEET.w}×${SHEET.h} mm に変更しました`); }
+    if (paperChanged) { zoomFit(); UI.setMsg(`用紙 ${paperLabel(pageSheetMeta(page))} / 尺度 ${pageSheetMeta(page).scale} — 作図領域 ${SHEET.w}×${SHEET.h} mm に変更しました`); }
     else UI.setMsg("表題欄を更新しました");
     // 図枠確定後に干渉を判定して知らせる
     const revHits = runDRC().filter(d => /改訂履歴欄/.test(d.msg)).length;

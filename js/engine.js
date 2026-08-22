@@ -6,7 +6,7 @@
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 作図領域。margin = 輪郭線の幅 c (JIS Z 8311)、marginLeft = とじ代側 (20mm) */
-const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f: 1, paper: "A3", scale: "1:1" };
+const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f: 1, paper: "A3", orient: "landscape", scale: "1:1" };
 
 /* 線の太さ (JIS Z 8312 の太さ系列。細線:太線 = 1:2) — 用紙上の mm */
 const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
@@ -40,27 +40,42 @@ function projectMeta() {
   if (!m.scale) m.scale = "1:1";
   return m;
 }
-/** ページに適用される用紙・尺度 (ページ固有の設定があればそれを優先) */
+/** 用紙の寸法 (mm)。PAPERS は横置き (長辺が左右) で持っているので、
+    縦置き (portrait) では長短を入れ替える */
+function paperSize(paper, orient) {
+  const [a, b] = PAPERS[paper] || PAPERS.A3;
+  return orient === "portrait" ? [b, a] : [a, b];
+}
+/** 表題欄の用紙欄の表記 (A3 / A3 縦)。画面・DXF で同じ文字を使う */
+function paperLabel(pm) { return pm.paper + (pm.orient === "portrait" ? " 縦" : ""); }
+/** ページに適用される用紙・向き・尺度 (ページ固有の設定があればそれを優先) */
 function pageSheetMeta(page) {
   const m = projectMeta();
   const pg = page || (App.project.pages && App.project.pages[App.pageIdx]) || {};
-  return { paper: pg.paper || m.paper, scale: pg.scale || m.scale };
+  return {
+    paper: pg.paper || m.paper,
+    orient: pg.orient || m.orient || "landscape",
+    scale: pg.scale || m.scale,
+  };
 }
 /** meta (用紙・尺度) から作図領域 SHEET を再計算する (JIS Z 8311)。
     輪郭線の幅 c は A0・A1 = 20mm / A2〜A4 = 10mm、とじ代側 (左) は 20mm。
     格子参照の区分数は偶数とし、1区分が 25〜75mm に収まるようにする。 */
 function applySheet(page) {
   const m = pageSheetMeta(page);
-  const [pw, ph] = PAPERS[m.paper] || PAPERS.A3;
+  const [pw, ph] = paperSize(m.paper, m.orient);
   const f = scaleFactor(m.scale);
   const c = (m.paper === "A0" || m.paper === "A1") ? 20 : 10;
-  SHEET.paper = m.paper; SHEET.scale = m.scale; SHEET.f = f;
+  SHEET.paper = m.paper; SHEET.orient = m.orient; SHEET.scale = m.scale; SHEET.f = f;
   SHEET.w = pw * f;
   SHEET.h = ph * f;
   SHEET.margin = c * f;
   SHEET.marginLeft = Math.max(20, c) * f;      // とじ代 20mm
   const div = SHEET_DIVISIONS[m.paper];
-  if (div) { SHEET.cols = div[0]; SHEET.rows = div[1]; }
+  if (div) {
+    const [dc, dr] = m.orient === "portrait" ? [div[1], div[0]] : div;
+    SHEET.cols = dc; SHEET.rows = dr;
+  }
   else {                                       // 表にない用紙は 25〜75mm の偶数個に分ける
     const evenDiv = (len, target) => {
       let n = 2 * Math.max(1, Math.round(len / target / 2));

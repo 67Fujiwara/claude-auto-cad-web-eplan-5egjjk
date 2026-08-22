@@ -358,7 +358,7 @@ function pageToDXF(page) {
   const f = sheetScale();
   const S = v => v * f;                      // 図枠・表題欄用 (用紙実寸 mm → 作図領域 mm)
   const C = v => v * contentScale();         // 図面内容用 (常に 1:1)
-  const [pw, ph] = PAPERS[pm.paper] || PAPERS.A3;
+  const [pw, ph] = paperSize(pm.paper, pm.orient);
 
   // ── 輪郭線 (とじ代 20mm) + 中心マーク ──
   ents += dxfPoly([[ml, mg], [w - mg, mg], [w - mg, h - mg], [ml, h - mg], [ml, mg]], "FRAME");
@@ -419,7 +419,7 @@ function pageToDXF(page) {
   tbCell(2, R, "日付", meta.date || todayStr());
   tbCell(3, R, "尺度", pm.scale || "1:1");
   tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
-  tbCell(1, R * 2, "用紙 / 投影法", `${pm.paper} / ${meta.proj || "第三角法"}`);
+  tbCell(1, R * 2, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || "第三角法"}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
   ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
