@@ -351,8 +351,8 @@ const SYMBOLS = [
       `<path d="M-20,20 H-12.75"/>`,   // 遮蔽の接地引出し (端子 S)
   },
   {
-    id: "earth", jis: "03-02-01", cat: "power", letter: "E", name: "接地 (一般)", nameEn: "Earth",
-    desc: "一般接地 (JIS C 0617 03-02-01)。保護接地はDBの保護接地(PE)を使用", pins: [{x:0,y:0,n:""}],
+    id: "earth", jis: "02-15-01", cat: "power", letter: "E", name: "接地 (一般)", nameEn: "Earth",
+    desc: "一般接地 (JIS C 0617-2 / IEC 60617 02-15-01)。保護接地はDBの保護接地(PE)を使用", pins: [{x:0,y:0,n:""}],
     sim: "none", bounds: [-8,-2, 16, 15],
     body: `<path d="M0,0 V5 M-6,5 H6 M-4,8 H4 M-2,11 H2"/>`,
   },
@@ -492,7 +492,10 @@ function scaleSymbolGeom(body, f) {
       const closed = el !== "path" || (d ? /[Zz]\s*$/.test(d[1].trim()) || pathIsClosed(d[1]) : false);
       const n = Math.max(1, Math.round(closed ? len / per : (len - e) / per));
       const k = len / (closed ? n * per : n * per + e);
-      e *= k; g *= k;                       // 比を保ったまま端数をゼロにする
+      // 線素長は公称の ±20% までしか伸縮させない (JIS Z 8312 / ISO 128-20 表2)。
+      // fitDashPattern と同じ規則にそろえる — 許容差を守る実装と守らない実装が
+      // 並存しないように
+      if (k >= 0.8 && k <= 1.2) { e *= k; g *= k; }   // 比を保ったまま端数をゼロにする
     }
     return `<${el}${a}stroke-dasharray="${+e.toFixed(3)} ${+g.toFixed(3)}"${b}/>`;
   });
@@ -528,8 +531,10 @@ function dashTargetLength(el, attrs) {
 /** SVG 円弧 (A) を折れ線の点列にする。中心・角度は SVG 仕様の変換どおり。
     分割数は弧の大きさに追従させ、たわみ (弦と弧の差) を 0.05mm 以下に抑える。
     破線の端数補正 (このファイル) と DXF 出力 (dxf.js) で共用する。 */
-function svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2) {
-  if (!rx || !ry) return [[x2, y2]];
+/** SVG の円弧パラメータ → 中心・半径・開始角・回転角。
+    折線化 (svgArcPoints) と DXF の ARC 出力で同じ式を使う */
+function svgArcCenter(x1, y1, rx, ry, laf, sf, x2, y2) {
+  if (!rx || !ry) return null;
   rx = Math.abs(rx); ry = Math.abs(ry);
   const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
   const l = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
@@ -551,6 +556,13 @@ function svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2) {
   let dt = ang((x1 - cx) / rx, (y1 - cy) / ry, (x2 - cx) / rx, (y2 - cy) / ry);
   if (!sf && dt > 0) dt -= 2 * Math.PI;
   if (sf && dt < 0) dt += 2 * Math.PI;
+  return { cx, cy, rx, ry, t1, dt };
+}
+function svgArcPoints(x1, y1, rx, ry, laf, sf, x2, y2) {
+  const a = svgArcCenter(x1, y1, rx, ry, laf, sf, x2, y2);
+  if (!a) return [[x2, y2]];
+  const { cx, cy, t1, dt } = a;
+  rx = a.rx; ry = a.ry;
   // たわみ e ≒ r(1-cos(Δ/2)) から必要分割数を求める (囲みを伸ばしても角張らせない)
   const r = Math.max(rx, ry);
   const need = Math.ceil(Math.abs(dt) / (2 * Math.acos(Math.max(-1, Math.min(1, 1 - 0.05 / Math.max(r, 0.1))))));
@@ -583,11 +595,14 @@ function pathIsClosed(d) {
 /** path の長さ (mm)。M/L/H/V と円弧 (A) に対応 (A は折れ線近似で積む) */
 function pathLengthMM(d) {
   const t = d.match(/[MLHVAmlhvaZz]|-?\d*\.?\d+/g) || [];
-  let i = 0, x = 0, y = 0, len = 0;
+  let i = 0, x = 0, y = 0, len = 0, sx = 0, sy = 0, started = false;
   const num = () => parseFloat(t[i++]);
   while (i < t.length) {
     const c = t[i++];
-    if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; }
+    // Z は始点へ戻る辺。ここを数え落とすと閉曲線の周長が実長より短くなり、
+    // 破線の「線素で始まり線素で終わる」補正が周期の整数倍にならない
+    if (c === "Z" || c === "z") { len += Math.hypot(sx - x, sy - y); x = sx; y = sy; }
+    else if (c === "M" || c === "m") { const nx = num(), ny = num(); x = c === "M" ? nx : x + nx; y = c === "M" ? ny : y + ny; if (!started) { sx = x; sy = y; started = true; } }
     else if (c === "L" || c === "l") { const nx = num(), ny = num(); const ax = c === "L" ? nx : x + nx, ay = c === "L" ? ny : y + ny; len += Math.hypot(ax - x, ay - y); x = ax; y = ay; }
     else if (c === "H" || c === "h") { const nx = num(); const ax = c === "H" ? nx : x + nx; len += Math.abs(ax - x); x = ax; }
     else if (c === "V" || c === "v") { const ny = num(); const ay = c === "V" ? ny : y + ny; len += Math.abs(ay - y); y = ay; }

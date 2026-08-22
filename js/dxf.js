@@ -19,9 +19,27 @@ const DXF_LTYPES = [
   { name: "DASHDOT", desc: "Long-dash dot (JIS Z 8312 type 04)", pat: WIRE_STYLES.dashdot.dxf },
   { name: "DIVIDE", desc: "Long-dash double-dot (JIS Z 8312 type 05)", pat: WIRE_STYLES.dashdotdot.dxf },
 ];
+/* 図記号が持つ破線 (遮へいの長円など) は、線の実長に合わせて周期をそろえた
+   固有の寸法になる。DXF でも画面と同じ寸法で出すため、使われた寸法ごとに
+   LTYPE を作って登録する — 既製の DASHED (0.25mm 線用の 3/0.75) を当てると、
+   同じ図記号が画面と DXF で別の線種になってしまう */
+const __dxfDynLtypes = new Map();
+function dxfLtypeFor(dash) {
+  const v = String(dash).trim().split(/[\s,]+/).map(Number).filter(n => isFinite(n) && n > 0);
+  if (v.length < 2) return "DASHED";
+  const key = v.map(n => n.toFixed(3)).join("_");
+  if (!__dxfDynLtypes.has(key)) {
+    const name = "DASH_" + key.replace(/\./g, "-");
+    // [線素, -すき間, 線素, -すき間 …] の DXF パターン
+    const pat = v.map((n, i) => (i % 2 ? -n : n));
+    __dxfDynLtypes.set(key, { name, desc: `Dashed ${v.join("/")}mm (JIS Z 8312 type 02)`, pat });
+  }
+  return __dxfDynLtypes.get(key).name;
+}
+function dxfLtypeList() { return DXF_LTYPES.concat([...__dxfDynLtypes.values()]); }
 function dxfLtypeTable() {
   const f = contentScale();   // 線種は図面内容と同じ倍率
-  return DXF_LTYPES.map(lt0 => {
+  return dxfLtypeList().map(lt0 => {
     const lt = { ...lt0, pat: lt0.pat.map(v => v * f) };
     const total = lt.pat.reduce((s, v) => s + Math.abs(v), 0);
     const pairs = [[0, "LTYPE"], [2, lt.name], [70, 0], [3, lt.desc], [72, 65], [73, lt.pat.length], [40, total.toFixed(3)]];
@@ -35,6 +53,53 @@ const __dxfPrimCache = new Map();
 
 function dxfParseNumbers(str) {
   return (str.match(/-?\d*\.?\d+(?:e-?\d+)?/gi) || []).map(Number);
+}
+
+/** SVG path d 属性 → 部品列。円 (rx=ry) の円弧は ARC のまま残す。
+    破線の図記号を弦の列で出すと、弦が破線の周期より短く AutoCAD が実線で
+    描いてしまう (遮へいの長円がそれ)。円弧のまま出せば線種がそのまま効く */
+function dxfParsePathParts(d) {
+  const parts = [];
+  let cur = [];
+  let x = 0, y = 0, sx = 0, sy = 0;
+  const tokens = String(d).match(/[MmLlHhVvAaZz]|-?\d*\.?\d+(?:e-?\d+)?/g) || [];
+  let i = 0;
+  const num = () => Number(tokens[i++]);
+  const flush = () => { if (cur.length > 1) parts.push({ type: "poly", pts: cur }); cur = []; };
+  while (i < tokens.length) {
+    const cmd = tokens[i++];
+    switch (cmd) {
+      case "M": case "m":
+        flush();
+        if (cmd === "M") { x = num(); y = num(); } else { x += num(); y += num(); }
+        sx = x; sy = y; cur = [[x, y]]; break;
+      case "L": x = num(); y = num(); cur.push([x, y]); break;
+      case "l": x += num(); y += num(); cur.push([x, y]); break;
+      case "H": x = num(); cur.push([x, y]); break;
+      case "h": x += num(); cur.push([x, y]); break;
+      case "V": y = num(); cur.push([x, y]); break;
+      case "v": y += num(); cur.push([x, y]); break;
+      case "A": case "a": {
+        const rx = num(), ry = num(); num(); const laf = num(), sf = num();
+        let ex = num(), ey = num();
+        if (cmd === "a") { ex += x; ey += y; }
+        const c = Math.abs(rx - ry) < 0.001 ? svgArcCenter(x, y, rx, ry, laf, sf, ex, ey) : null;
+        if (c) {
+          flush();                                   // 円弧は独立した部品にする
+          parts.push({ type: "arc", cx: c.cx, cy: c.cy, r: c.rx, t1: c.t1, dt: c.dt });
+          cur = [[ex, ey]];
+        } else {
+          dxfArcToPoints(x, y, ex, ey, rx, ry, laf, sf).forEach(q => cur.push(q));
+        }
+        x = ex; y = ey;
+        break;
+      }
+      case "Z": case "z": cur.push([sx, sy]); x = sx; y = sy; break;
+      default: break;
+    }
+  }
+  flush();
+  return parts;
 }
 
 /** SVG path d 属性 → 折線群 [[x,y],...] の配列 */
@@ -126,10 +191,14 @@ function dxfSymPrimitives(sym) {
     if (t.skip) continue; // rotate付き要素は省略 (現行ライブラリでは未使用)
     const ox = top.tx + t.tx, oy = top.ty + t.ty;
     // 破線 (機械的結合・囲い・遮蔽) は導体と区別できるよう DXF でも線種を保つ
-    const lt = attr(attrs, "stroke-dasharray") ? "DASHED" : null;
+    const da = attr(attrs, "stroke-dasharray");
+    const lt = da ? dxfLtypeFor(da) : null;
     if (tag === "path") {
       const d = attr(attrs, "d");
-      if (d) dxfParsePath(d).forEach(poly => prims.push({ type: "poly", lt, pts: poly.map(p => [p[0] + ox, p[1] + oy]) }));
+      if (d) dxfParsePathParts(d).forEach(pt2 => {
+        if (pt2.type === "arc") prims.push({ type: "arc", lt, cx: pt2.cx + ox, cy: pt2.cy + oy, r: pt2.r, t1: pt2.t1, dt: pt2.dt });
+        else prims.push({ type: "poly", lt, pts: pt2.pts.map(q => [q[0] + ox, q[1] + oy]) });
+      });
     } else if (tag === "rect") {
       const x = +attr(attrs, "x"), y = +attr(attrs, "y");
       const w = +attr(attrs, "width"), h = +attr(attrs, "height");
@@ -176,6 +245,18 @@ function dxfSolid(x0, y0, x1, y1, layer) {
     [11, x1.toFixed(3)], [21, dxfY(y0)],
     [12, x0.toFixed(3)], [22, dxfY(y1)],
     [13, x1.toFixed(3)], [23, dxfY(y1)]]);
+}
+/** 円弧。画面 (y 下向き) の開始角 t1・回転角 dt を DXF (y 上向き・反時計回り)
+    に直して書き出す。y を反転すると角度は符号が反転し、回る向きも逆になる */
+function dxfArc(cx, cy, r, t1, dt, layer, ltype) {
+  const deg = t => ((-t * 180 / Math.PI) % 360 + 360) % 360;
+  const a = deg(t1), b2 = deg(t1 + dt);
+  // 画面で角度が増える向き = DXF では減る向き。DXF の ARC は必ず反時計回り
+  const [s0, s1] = dt >= 0 ? [b2, a] : [a, b2];
+  const p = [[0, "ARC"], [8, layer]];
+  if (ltype) p.push([6, ltype]);
+  p.push([10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)], [50, s0.toFixed(3)], [51, s1.toFixed(3)]);
+  return dxfEntity(p);
 }
 function dxfCircle(cx, cy, r, layer, ltype) {
   const p = [[0, "CIRCLE"], [8, layer]];
@@ -379,8 +460,9 @@ function pageToDXF(page) {
       ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec && wr.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
-      const [mx, my, horiz] = wireLabelPos(wr, page);
-      ents += dxfText(horiz ? mx : mx + C(WIRE_SPEC_OFF), horiz ? my + C(4.6) : my, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      const [mx, my, horiz, gap] = wireLabelPos(wr, page);
+      const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap);
+      ents += dxfText(sx, sy, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
   junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, C(LINE_W.thick * 1.5), "WIRE"); });
@@ -396,6 +478,9 @@ function pageToDXF(page) {
       const lyr = symLyr;        // 破線も記号レイヤに置き、線種で区別する
       if (pr.type === "poly") {
         ents += dxfPoly(pr.pts.map(p => xf(p[0], p[1])), lyr, pr.lt);
+      } else if (pr.type === "arc") {
+        const [acx, acy] = xf(pr.cx, pr.cy);
+        ents += dxfArc(acx, acy, pr.r * contentScale(), pr.t1 + (dev.rot || 0) * Math.PI / 180, pr.dt, lyr, pr.lt);
       } else if (pr.type === "circle") {
         const [cx, cy] = xf(pr.cx, pr.cy);
         ents += dxfCircle(cx, cy, pr.r, lyr, pr.lt);
@@ -457,7 +542,7 @@ function pageToDXF(page) {
     "0", "STYLE", "2", "JP", "70", "0", "40", "0.0", "41", "1.0", "50", "0.0",
     "71", "0", "42", "2.5", "3", "msgothic.ttc", "4", "",
     "0", "ENDTAB",
-    "0", "TABLE", "2", "LTYPE", "70", String(DXF_LTYPES.length),
+    "0", "TABLE", "2", "LTYPE", "70", String(dxfLtypeList().length),
   ].join("\n") + "\n" + dxfLtypeTable() +
     ["0", "ENDTAB", "0", "TABLE", "2", "LAYER", "70", String(DXF_LAYERS.length)].join("\n") + "\n" + layers +
     ["0", "ENDTAB", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"].join("\n") + "\n" +

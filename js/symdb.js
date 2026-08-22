@@ -62,7 +62,7 @@ const DB_SYMBOLS = [
     // n 本の心線 (5mm ピッチ) を上下 1 ピッチずつの余白で囲む → 長さ 5n+5mm。
     // 上端 -5 / 下端 5n はどちらも 5mm グリッド上に乗り、余白も上下対称になる。既定は 4芯
     stretch: {
-      min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
+      min: 15, max: 125, step: 5, def: 25, label: "心線の本数",
       bounds: (h) => [-7, -7, 14, h + 4],
       // 長円 (両端が半径5の半円・直線部が心線に沿う)。楕円だと遮へいとの間隔が
       // 肩で詰まるが、長円どうしなら全周で一定の 2mm を保てる
@@ -71,7 +71,7 @@ const DB_SYMBOLS = [
   },
   {
     id: "shield", db: true, group: "導体・接続", jis: "03-01-07",
-    stdNote: "遮へい (図記号番号は発注仕様の指定による)。心線囲み 03-01-09 の外側に全周 2mm の間隔で重ねて描ける",
+    stdNote: "心線囲み 03-01-09 の外側に全周 2mm の間隔で重ねて描ける",
     cat: "db", letter: "W",
     name: "シールド (遮へい)", nameEn: "Screen / shield",
     desc: "導体・心線群を囲む遮へい (破線)。ドレン線は片端 (通常は盤側) のみ FE へ接続する — 両端接地は循環電流の原因になる。心線の本数はプロパティで変えられる",
@@ -80,7 +80,7 @@ const DB_SYMBOLS = [
     pins: [], enclosure: 7, sim: "none", noDrc: true,   // enclosure = 輪郭の半幅 (芯数の検図で、囲みを貫く心線を数えるのに使う)
     // ドレン線の未接続は「シールド未接地」で知らせるので、端子の未接続警告は出さない
     stretch: {
-      min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
+      min: 15, max: 125, step: 5, def: 25, label: "心線の本数",
       // ドレン線は囲みの下端よりさらに 1 ピッチ下へ引き出す。心線の行にも
       // 心線囲みの下端頂点にも重ならない位置で、かつ 5mm グリッド上
       pins: (h) => [{ x: 10, y: h, n: "S" }],
@@ -90,9 +90,11 @@ const DB_SYMBOLS = [
       // 破線は 6:1.5 (線素:すき間 = 4:1 を保ったまま、囲みの長さでも読める寸法)。
       // 太さは指定せず導体と同じ — 遮へい自体が導体だから
       body: (h) => {
-        const yS = h - 8;
-        // 引出し口は下側の半円上 (中心 y=h-10, 半径7 → y=h-8 での x)
-        const xS = +Math.sqrt(49 - 4).toFixed(2);
+        // 引出し口は下側の半円の 45° 位置。そこから 45° 方向へ出すと輪郭の
+        // 法線 (中心から見た向き) と一致し、長円に「接する別の線」に見えない。
+        // 7/√2 ≒ 4.95 なので、そのまま伸ばすと端点はちょうど (10, h) の格子点
+        const q = +(7 / Math.SQRT2).toFixed(2);
+        const xS = q, yS = +(h - 10 + q).toFixed(2);
         return `<path d="M-7,0 A7,7 0 0 1 7,0 L7,${h - 10} A7,7 0 0 1 -7,${h - 10} Z" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
           `<path d="M${xS},${yS} L10,${h}"/>`;
       },
@@ -118,21 +120,21 @@ const DB_SYMBOLS = [
     body: `<path d="M0,0 V5.5"/><path d="M-3.5,9 A3.5,3.5 0 0 1 3.5,9"/><path d="M0,20 V12.4"/><path d="M-2.8,12.4 L0,9.2 L2.8,12.4 Z" fill="currentColor"/>`,
   },
 
-  /* ── 接地 (JIS C 0617-3) ── */
+  /* ── 接地 (JIS C 0617-2 / IEC 60617 02-15 群) ── */
   {
-    id: "prot_earth", db: true, group: "接地", jis: "03-02-03", cat: "db", letter: "E",
+    id: "prot_earth", db: true, group: "接地", jis: "02-15-03", cat: "db", letter: "E",
     name: "保護接地 (PE)", nameEn: "Protective earth", desc: "保護接地。接地記号を円で囲む",
     pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-8,-2, 16, 20],
     body: `<path d="M0,0 V4"/><circle cx="0" cy="10" r="6"/><path d="M0,4 V7.4 M-3.6,7.4 H3.6 M-2.4,9.8 H2.4 M-1.2,12.2 H1.2"/>`,
   },
   {
-    id: "func_earth", db: true, group: "接地", jis: "03-02-02", cat: "db", letter: "E",
-    name: "機能接地 (FE)", nameEn: "Functional earth", desc: "機能接地。一般接地記号+用途注記で表す",
+    id: "func_earth", db: true, group: "接地", jis: "02-15-02", cat: "db", letter: "E",
+    name: "機能接地 (FE)", nameEn: "Functional earth", desc: "雑音のない (機能) 接地。接地記号をひし形で囲む",
     pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-9,-2, 18, 20],
     body: `<path d="M0,0 V4"/><path d="M0,4 L-7,10 L0,16 L7,10 Z"/><path d="M-3.6,8.5 H3.6 M-2.4,10.5 H2.4 M-1.2,12.5 H1.2 M0,6.5 V8.5"/>`,
   },
   {
-    id: "chassis_earth", db: true, group: "接地", jis: "03-02-04", cat: "db", letter: "E",
+    id: "chassis_earth", db: true, group: "接地", jis: "02-15-04", cat: "db", letter: "E",
     name: "フレーム接続 (FG・シャーシ)", nameEn: "Frame / chassis", desc: "機器フレーム・シャーシへの接続",
     pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-10.5,-2, 18.5, 12.5],
     body: `<path d="M0,0 V5 M-6,5 H6 M-6,5 L-8.5,8.5 M-1.5,5 L-4,8.5 M3,5 L0.5,8.5 M6,5 L3.5,8.5"/>`,
