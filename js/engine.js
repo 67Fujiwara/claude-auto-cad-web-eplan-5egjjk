@@ -194,7 +194,7 @@ function wireLabelPosCalc(w, page, placed) {
   // 障害物: 機器の図記号・注記・デバイスタグ/機能テキスト (線番が図記号に被らないように)
   const obst = page ? pinLabelBoxes(page) : [];
   devs.forEach(d => {
-    obst.push(insetRect(devBounds(d), 1.5 * f));
+    deviceObstacleBoxes(d, 1.5 * f).forEach(b => obst.push(b));
     if (page) {
       deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
       mirrorLabelBoxes(d).forEach(b => obst.push(b));
@@ -215,9 +215,9 @@ function wireLabelPosCalc(w, page, placed) {
     return { x: x0, y: y0, w: Math.max(b.x + b.w, sp.x + sp.w) - x0, h: Math.max(b.y + b.h, sp.y + sp.h) - y0 };
   };
   let best = null;
-  const consider = (pt, horiz) => {
+  const consider = (pt, horiz, extras = [0, 3, 6]) => {
     // 配線の両側 × 法線方向のオフセットを試す (短い区間でも逃げ場を作る)
-    for (const extra of [0, 3, 6]) {
+    for (const extra of extras) {
       for (const side of [1, -1]) {
         const res = posOf(pt, horiz, side, extra);
         const bx = boxOf(res[0], res[1], horiz);
@@ -229,14 +229,19 @@ function wireLabelPosCalc(w, page, placed) {
     }
     return null;
   };
-  // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す
-  for (const sg of segs) {
-    const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
-    const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
-    for (const t of [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85]) {
-      const pt = at(t);
-      const ok = consider(pt, horiz);
-      if (ok) return ok;
+  // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す。
+  // まず線に沿って場所を変え (線番は自分の線のすぐ脇にあるのが読みやすい)、
+  // それでも空きが無いときにだけ法線方向へ逃がす — 逃がしを先に試すと、
+  // 同じ線上に空きがあるのに線から離れた位置を選んでしまう
+  const TS = [0.5, 0.35, 0.65, 0.25, 0.75, 0.15, 0.85];
+  for (const extra of [0, 3, 6]) {
+    for (const sg of segs) {
+      const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
+      const at = t => [sg.a[0] + (sg.b[0] - sg.a[0]) * t, sg.a[1] + (sg.b[1] - sg.a[1]) * t];
+      for (const t of TS) {
+        const ok = consider(at(t), horiz, [extra]);
+        if (ok) return ok;
+      }
     }
   }
   // どの区間にも空きが無い場合は、配線から法線方向へ離して逃がす
@@ -361,20 +366,30 @@ function pinLabelPosMap(page) {
   return map;
 }
 
+/** 機器1台ぶんの「文字を置いてはいけない領域」。
+    画面の機器ラベルも線番も同じ規則を使う (定義元を1か所にする)。
+    囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提なので、
+    外接矩形ぜんぶではなく描いた輪郭の左右だけを避ける。 */
+function deviceObstacleBoxes(dev, inset) {
+  const sym = symOf(dev.sym);
+  const rx = sym.enclosure;
+  if (!rx) return [insetRect(devBounds(dev), inset)];
+  const [, by, , bh] = sym.bounds;
+  const band = 1.2 + inset;
+  // 機器座標で輪郭の左右に帯を作ってから回転させる (回転しても長辺を守る)
+  return [[-rx - band, -rx + band], [rx - band, rx + band]].map(([x0, x1]) => {
+    const cs = [[x0, by], [x1, by], [x1, by + bh], [x0, by + bh]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
+    const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  });
+}
+
 /** ラベル配置以外の固定障害物 (機器の図記号・端子番号・配線・注記) を集める */
 function labelObstacles(page) {
   const f = contentScale();
   const out = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
-    // 囲み記号 (多芯ケーブル・シールド) は中を心線が通るのが前提。外接矩形ぜんぶを
-    // 障害物にすると心線の線番が囲みの外へ追い出されるので、輪郭の左右だけを避ける
-    if (symOf(d2.sym).enclosure) {
-      const b = devBounds(d2), band = 2.4 * f;
-      out.push({ owner: d2.id, x: b.x, y: b.y, w: band, h: b.h });
-      out.push({ owner: d2.id, x: b.x + b.w - band, y: b.y, w: band, h: b.h });
-      return;
-    }
-    out.push({ owner: d2.id, ...insetRect(devBounds(d2), 1.2 * f) });
+    deviceObstacleBoxes(d2, 1.2 * f).forEach(b => out.push({ owner: d2.id, ...b }));
     // 接点ミラー表 (コイル直下のクロスリファレンス表) も避ける
     mirrorLabelBoxes(d2).forEach(b => out.push({ owner: d2.id, ...b }));
   });
@@ -676,6 +691,8 @@ function truncateToWidth(value, cellW, size, bold = false) {
   return out + "…";
 }
 /** 線分 a-b が矩形 r と交差する (端点が内側の場合を含む) か。直交配線前提の簡易判定 */
+/* 直交配線 (このアプリの配線はすべて水平・垂直) を前提に、線分と矩形の
+   重なりを外接矩形どうしで判定する。斜め線では余分に当たることがある。 */
 function segCrossesRect(a, b, r) {
   const inside = p => p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h;
   if (inside(a) || inside(b)) return true;
@@ -1613,7 +1630,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡",
+  "線番の重複", "図番の重複", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続",
 ];
 
 function drcSources(page, pinNet) {
@@ -1850,19 +1867,29 @@ function runDRC() {
       const sym = symOf(dev.sym);
       if ((sym.stretchOf || sym.id) !== "shield") return;
       const net = closed.pinNet(dev, 0);
-      const earthed = net && page.devices.some(d2 => {
+      // 同じネットに落ちている接地記号を種類ごとに数える
+      const earths = !net ? [] : page.devices.filter(d2 => {
         const s2 = symOf(d2.sym);
         if (!EARTH_SYM_IDS.has(s2.stretchOf || s2.id)) return false;
         return (s2.pins || []).some((_, i) => closed.pinNet(d2, i) === net);
       });
-      if (!earthed) {
+      if (!earths.length) {
         issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が接地されていません (片端のみ FE へ接続してください)`,
+          page: page.no, target: dev.id, loc: devLocation(dev) });
+      } else if (earths.length >= 2) {
+        // 遮へいを両端で接地すると接地間の電位差で循環電流が流れる
+        issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が ${earths.length} 箇所で接地されています (片端のみにしてください — 両端接地は循環電流の原因)`,
+          page: page.no, target: dev.id, loc: devLocation(dev) });
+      } else if ((symOf(earths[0].sym).stretchOf || earths[0].sym) === "prot_earth") {
+        // 遮へいのドレン線はノイズ用の機能接地へ落とす (保護接地母線に載せない)
+        issues.push({ sev: "warn", msg: `${displayTag(dev) || sym.name} のドレン線が保護接地 (PE) に接続されています (遮へいは機能接地 FE へ落としてください)`,
           page: page.no, target: dev.id, loc: devLocation(dev) });
       }
       // 遮へいの中を通る心線とドレン線が同じネットになっていたら短絡 (遮へいの意味が失われる)
       if (net) {
         // 心線が並ぶ範囲 (ドレン線の引出し行と上下の余白は除く) を機器座標から作る
-        const span = sym.span || 25;
+        const base0 = symStretchBase(sym);
+        const span = sym.span || (base0 && base0.stretch.def) || 25;
         const cs = [[-6, -2], [6, -2], [6, span - 8], [-6, span - 8]].map(q => pinAbs(dev, { x: q[0], y: q[1] }));
         const xs = cs.map(q => q.x), ys = cs.map(q => q.y);
         const inner = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };

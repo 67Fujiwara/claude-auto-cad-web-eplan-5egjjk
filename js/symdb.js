@@ -58,7 +58,7 @@ const DB_SYMBOLS = [
     id: "cable_core", db: true, group: "導体・接続", jis: "03-01-09", cat: "db", letter: "W",
     name: "多芯ケーブル (心線囲み)", nameEn: "Cable cores",
     desc: "並走する心線を楕円で囲む。心線の本数はプロパティで変えられる (挿入点=1本目の心線・5mm ピッチ)。ケーブル種別は機能テキストに (例 CVV-1.25sq-4C)",
-    pins: [], enclosure: true, sim: "none",
+    pins: [], enclosure: 5, sim: "none",     // enclosure = 輪郭の半幅 (文字の障害物帯を作るのに使う)
     // n 本の心線 (5mm ピッチ) を上下 1 ピッチずつの余白で囲む → 長さ 5n+5mm。
     // 上端 -5 / 下端 5n はどちらも 5mm グリッド上に乗り、余白も上下対称になる。既定は 4芯
     stretch: {
@@ -75,17 +75,19 @@ const DB_SYMBOLS = [
     desc: "導体・心線群を囲む遮へい (破線)。ドレン線は片端 (通常は盤側) のみ FE へ接続する — 両端接地は循環電流の原因になる。心線の本数はプロパティで変えられる",
     // 心線囲み (rx=5 / y=-5〜5n) の外側へ一様に 2mm 広げた楕円。
     // ドレン線は心線の無い行 (最終心線の 1 ピッチ下) から右へ引き出す
-    pins: [], enclosure: true, sim: "none",
+    pins: [], enclosure: 7, sim: "none",     // enclosure = 輪郭の半幅 (文字の障害物帯を作るのに使う)
     stretch: {
       min: 25, max: 125, step: 5, def: 25, label: "心線の本数",
-      pins: (h) => [{ x: 10, y: h - 5, n: "S" }],
-      bounds: (h) => [-9, -9, 21, h + 8],   // 左は楕円 (-7)、右はドレン線の引出し (10) に一様余白 2mm
+      // ドレン線は囲みの下端よりさらに 1 ピッチ下へ引き出す。心線の行にも
+      // 心線囲みの下端頂点にも重ならない位置で、かつ 5mm グリッド上
+      pins: (h) => [{ x: 10, y: h, n: "S" }],
+      bounds: (h) => [-9, -9, 21, h + 11],   // 下端はドレン線の引出し (y=h) まで
       body: (h) => {
-        const ry = +((h + 4) / 2).toFixed(2), cy = (h - 10) / 2, yD = h - 5;
-        // 引出し口は楕円上の点から。ドレン線の行は心線の下の空き行なので心線と交わらない
-        const xE = +(7 * Math.sqrt(Math.max(0, 1 - Math.pow((yD - cy) / ((h + 4) / 2), 2)))).toFixed(2);
+        const ry = +((h + 4) / 2).toFixed(2), cy = (h - 10) / 2, yS = h - 8;
+        // 引出し口は遮へい楕円の右下から。斜めに下ろすので心線とも心線囲みとも交わらない
+        const xS = +(7 * Math.sqrt(Math.max(0, 1 - Math.pow((yS - cy) / ((h + 4) / 2), 2)))).toFixed(2);
         return `<path d="M0,-7 A7,${ry} 0 1 0 0,${h - 3} A7,${ry} 0 1 0 0,-7" stroke-dasharray="6 1.5" stroke-linecap="butt"/>` +
-          `<path d="M${xE},${yD} H10"/>`;
+          `<path d="M${xS},${yS} L10,${h}"/>`;
       },
     },
   },
