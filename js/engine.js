@@ -11,6 +11,7 @@ const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f
 /* 線の太さ (JIS Z 8312 の太さ系列。細線:太線 = 1:2) — 用紙上の mm */
 const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
 /* 文字高さ (JIS Z 8313-1 の標準列) — 用紙上の mm */
+const KV_FN_TEXT_X = 36;   // 機能欄の文字の左端 (箱の右 30+5 から 1mm 内側)
 const TEXT_H = { small: 2.5, normal: 3.5, large: 5 };
 /* 格子参照の行記号。JIS Z 8311 により I と O は使用しない */
 const SHEET_ROW_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -115,6 +116,43 @@ function moveDeviceWithWires(page, dev, dx, dy) {
   });
   dev.x += dx; dev.y += dy;
   hits.forEach(([w, i]) => { w.pts[i] = [w.pts[i][0] + dx, w.pts[i][1] + dy]; });
+}
+
+/* 入出力結線図の下地を実際の導体で引く。
+   ・現場側のレール (既定 0V) を左に 1 本。各行はそこから分岐して端子へ。
+   ・機器を落とす隙間 (既定 20mm) を空けるので、そこへ接点やセンサを置ける。
+     隙間の左右は本物の導体なので、機器を置けばそのまま回路になる。
+   記号の中に線を描くのではなく導体で引くので、検図もシミュレーションも
+   絵のとおりに通る。電源・コモン・保護接地は極性が機種と用途で変わるので
+   自動では引かない (検図が未接続で知らせる)。既にある下地は引き直さない */
+function buildIoScaffold(page, dev, opts = {}) {
+  const sym = symOf(dev.sym);
+  const sp = sym && sym.ioSheet;
+  if (!sp) return 0;
+  const rows = sp.rows.filter(r => r.io).map(r => pinAbs(dev, { x: 0, y: r.y }));
+  if (!rows.length) return 0;
+  const railX = snap(dev.x - sp.rail), lead = 5, gap = sp.gap;
+  // レールの下端は最後の分岐の位置で止める (伸ばすと端点が宙に浮く)
+  const y1 = rows[0].y - 10, y2 = rows[rows.length - 1].y;
+  const same = (p, x, y) => Math.abs(p[0] - x) < .01 && Math.abs(p[1] - y) < .01;
+  const has = (x1, ya, x2, yb) => page.wires.some(w =>
+    same(w.pts[0], x1, ya) && same(w.pts[w.pts.length - 1], x2, yb));
+  let n = 0;
+  const line = (pts) => { if (addWire(page, pts)) n++; };
+  if (!has(railX, y1, railX, y2)) {
+    line([[railX, y1], [railX, y2]]);
+    // レールの電位を名前で示す (既定は 0V。現場の呼び方に合わせて変えてください)
+    if (!page.devices.some(d => symOf(d.sym).sim === "link" && Math.abs(d.x - railX) < .01 && Math.abs(d.y - y1) < .01)) {
+      addDevice(page, "link", railX, y1, { tag: opts.rail || "0V", rot: 180 });
+    }
+  }
+  rows.forEach(r => {
+    const gx = railX + lead, gr = gx + gap;
+    if (!has(railX, r.y, gx, r.y)) line([[railX, r.y], [gx, r.y]]);      // レールからの引出し
+    if (!has(gr, r.y, dev.x, r.y)) line([[gr, r.y], [dev.x, r.y]]);      // 隙間 → 端子
+  });
+  App.labelRev++;
+  return n;
 }
 
 function shiftProjectGeometry(dx, dy, pages) {
@@ -698,6 +736,7 @@ function pageDrawnMinima(page) {
     const sym = symOf(dev.sym);
     if (sym.mirror && linkedContacts(dev).length) h = Math.min(h, TEXT_H.small * f);
     if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym));
+    if (deviceRowTexts(page, dev).length) h = Math.min(h, TEXT_H.small * f * symTextK(sym));
   });
   if (!isFinite(h)) h = TEXT_H.small * f;
   return { h, w };
@@ -1041,6 +1080,26 @@ function gotoRefText(dev) {
   const mate = gotoCounterpart(dev);
   return mate ? `${no}/${sheetCol(mate.x)}${sheetRow(mate.y)}` : no;
 }
+/* 入出力結線図の機能欄。行ごとの文言 (dev.props.fn) を下線の上に置く。
+   記号の中に文字を焼き込まず機器のプロパティに持つので、同じ記号を何枚
+   置いても中身は別々に書ける (端子表 CSV・DXF・検図でも同じ配置を使う) */
+function deviceRowTexts(page, dev) {
+  const sym = symOf(dev.sym);
+  if (!sym || !sym.fnRows) return [];
+  const fn = (dev.props && dev.props.fn) || [];
+  const s = contentScale(), h = TEXT_H.small * s * symTextK(sym);
+  const out = [];
+  sym.pins.forEach((p, i) => {
+    const t = fn[p.row === undefined ? i : p.row];
+    if (!t) return;
+    const a = pinAbs(dev, { x: KV_FN_TEXT_X, y: p.y });
+    const hh = textHeightMM(String(t), h);
+    out.push({ text: String(t), x: a.x, y: a.y, size: hh, anchor: "start", row: p.row === undefined ? i : p.row,
+      box: { x: a.x, y: a.y - hh, w: textWidthMM(String(t), hh, false, false), h: hh } });
+  });
+  return out;
+}
+
 function deviceXrefBox(page, dev) {
   const sym0 = symOf(dev.sym);
   if (sym0 && sym0.gotoRef) {

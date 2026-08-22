@@ -355,6 +355,15 @@ UI.showProps = (focusTag = false) => {
           <select id="pSwap">${kin.map(s2 =>
             `<option value="${s2.id}"${s2.id === sym.id ? " selected" : ""}>${escAttr(s2.typ || s2.name)}</option>`).join("")}</select></div>`;
       })() : ""}
+      ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
+        <button class="btn-solid primary" id="pScaffold" style="padding:3px 10px;font-size:11px">結線図の下地を作る</button></div>` : ""}
+      ${sym.fnRows ? (() => {
+        // 機能欄 (行ごとの文言)。1 行 1 端子でまとめて貼り付けられる
+        const fn = (dev.props && dev.props.fn) || [];
+        const names = sym.pins.map(p2 => p2.n).join(" / ");
+        return `<div class="prop-row"><label>機能欄 <span class="rp-dim">(1 行 = 1 端子: ${escAttr(names)})</span></label>
+          <textarea id="pFn" rows="${Math.min(12, sym.fnRows)}" class="mono" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12px;padding:6px 8px;outline:none;resize:vertical">${escAttr(sym.pins.map((p2, i) => fn[i] || "").join("\n"))}</textarea></div>`;
+      })() : ""}
       ${sym.sheet ? (() => {
         // 用紙に合わせて作った記号 (入出力結線図)。今の用紙と違えば 1 押しで直せる
         const mm = symSheetMismatch(curPage(), sym);
@@ -406,6 +415,25 @@ UI.showProps = (focusTag = false) => {
       App.labelRev++;
       const after = symOf(v);
       UI.toast(`${after.typ || after.name} に差し替えました (端子 ${before} → ${after.pins.length})`, 3200);
+    });
+    // 機能欄: 1 行 1 端子でまとめて入れる
+    const fnEl = pane.querySelector("#pFn");
+    if (fnEl) fnEl.addEventListener("change", () => {
+      commit();
+      dev.props = dev.props || {};
+      const lines = fnEl.value.split("\n").map(v => v.trim());
+      while (lines.length && !lines[lines.length - 1]) lines.pop();
+      if (lines.length) dev.props.fn = lines; else delete dev.props.fn;
+      App.labelRev++;
+      UI.refresh(false);
+    });
+    // 結線図の下地 (レール + 各行の分岐) を実線で引く
+    const sc = pane.querySelector("#pScaffold");
+    if (sc) sc.addEventListener("click", () => {
+      commit();
+      const n = buildIoScaffold(curPage(), dev);
+      UI.refresh();
+      UI.toast(n ? `下地を引きました (導体 ${n} 本。隙間に現場機器を置いてください)` : "下地はすでにあります", 3200);
     });
     const fix = pane.querySelector("#pSheetFix");
     if (fix) fix.addEventListener("click", () => {

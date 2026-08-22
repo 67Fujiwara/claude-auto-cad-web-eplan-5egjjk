@@ -539,6 +539,8 @@ function pageToDXF(page) {
     const lboxes = deviceLabelBoxes(page, dev);
     lboxes.forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor); });
     const xr = deviceXrefBox(page, dev);      // 位置は画面と同じ探索結果を使う
+    // 入出力結線図の機能欄 (行ごとの文言)
+    deviceRowTexts(page, dev).forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", "start", 0, { mono: false }); });
     // 相互参照は線番ではないので専用レイヤへ (受領側で線番だけを操作しても巻き込まれない)
     if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "XREF", xr.anchor || "start", xr.angle || 0);
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)

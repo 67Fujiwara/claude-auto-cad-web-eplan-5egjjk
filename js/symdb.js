@@ -11,7 +11,7 @@ const DB_DEFAULT_PINNED = [
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
   "cp1", "cp2", "cont_no_main", "cont_nc_main",
   "conn_rj45", "conn_usb_a", "conn_hdmi",
-  "kv_n14at", "kv_n24at", "kv_n40at",
+  "kv_n14at_in", "kv_n14at_out", "kv_n24at_in", "kv_n24at_out",
 ];
 
 /** 多極コネクタ (レセプタクル) を作る。
@@ -110,21 +110,32 @@ function mkPort(o) {
 }
 
 /* ── PLC 入出力結線図 (キーエンス KV Nano シリーズ) ─────────────────────
-   1 枚の用紙 = 1 記号。機種を差し替えれば端子構成ごと入れ替わるので、
-   結線図を用紙ごとに作り直さない。
+   実務の入出力結線図の形に合わせる:
 
-   端子は 2 列 — 左が入力列、右が出力列。信号は左から右へ流れるので、
-   現場機器 (センサ・スイッチ) は左、負荷 (電磁弁・リレー) は右に並ぶ。
-   用紙は入出力の合計点数で決める:
-     ・16 点まで … A3 横 1:1
-     ・24 点以上 … A3 縦 1:1
-   尺度は 1:1。このアプリは図記号を尺度に関わらず実寸で描くので、1:2 にすると
-   線番・注記・現場機器の記号が用紙の上で半分 (1.25mm) になり、JIS Z 8313 の
-   最小呼び 2.5mm を下回る。40 点でも A3 縦 1:1 に収まるので縮小しない。
+     N24 ┃                                    ┌──────┐
+         ┣━━[ 機器 ]━━○ R000 ─────────┤QX41  │ ── 操作電源 入 ────
+         ┃                             │ 00CH │
+         ┣━━[ 機器 ]━━○ R001 ─────────┤      │ ── タンク1本選択 ──
+                                        └──────┘
+                        ↑端子と番号        ↑ユニット   ↑機能欄 (下線に書く)
+
+   ・用紙 1 枚 = 1 記号 = 1 群 (16 点まで)。16 点を超える機種は入力を 2 枚に分ける
+     (実務でも 1 チャネル = 1 枚。ユーザーの「A3 横で 16 点かける」に合わせた)。
+   ・端子の左 (現場側) は実際の導体で描く。プロパティの「結線図の下地を作る」を
+     押すと、N24/P24 のレールと各行の分岐を実線で引き、機器を落とす隙間を空ける。
+     こうすると絵と回路が一致する (記号の中に線を描いてしまうと、見た目はつながって
+     いるのに検図もシミュレーションも通らない図になる)。
+   ・右は機能欄。行ごとの文言はプロパティでまとめて貼り付けられる。
+   ・尺度は 1:1。このアプリは図記号を尺度に関わらず実寸で描くので、縮小すると
+     線番・注記・現場機器の記号が用紙の上で半分になり JIS Z 8313 の 2.5mm を割る。
 
    端子番号は KV Nano の内蔵入出力リレー (入力 R000〜 / 出力 R500〜)。
    リレー番号は「R + チャネル + 点 (00〜15)」なので、17 点目は R100 へ繰り上がる。 */
-const KV_ROW = 15, KV_AUXROW = 10, KV_LEAD = 10, KV_BOXW = 40, KV_HDR = 15;
+// 行の y は 5mm 格子の倍数にする (配線を引くとき端点が格子へ丸められるため)
+const KV_ROW = 15, KV_AUXROW = 10, KV_HDR = 12, KV_BOT = 4, KV_Y0 = 15;
+const KV_BOXW = 30;                    // ユニットの箱 (細くてよい。中は形式と CH だけ)
+const KV_FN_X = 5, KV_FN_W = 100;      // 機能欄 (箱の右)。下線の長さ
+const KV_RAIL = 70, KV_GAP = 20;       // レールまでの距離 / 機器を落とす隙間
 // 端子は JIS C 0617-2 02-02-01 (端子)。寸法モジュール M=2.5mm に合わせて Ø2.5
 const KV_TERM_R = 1.25;
 /** KV の入出力リレー番号 (16 点で次のチャネルへ繰り上がる) */
@@ -134,75 +145,53 @@ function kvRelay(startCh, i) {
 const kvText = (x, y, h, s, anchor = "middle", mono = true) =>
   `<text x="${r1(x)}" y="${r1(y)}" data-h="${h}" text-anchor="${anchor}" fill="currentColor" stroke="none" font-family="${mono ? "monospace" : "sans-serif"}">${s}</text>`;
 
-/** 端子の並び (入出力行 → あき → 電源・コモン行) の y 座標を作る */
-function kvSlots(io, aux) {
-  const rows = [];
-  io.forEach((n, i) => rows.push({ n, y: KV_HDR + 5 + i * KV_ROW, io: true }));
-  let y = rows.length ? rows[rows.length - 1].y + KV_AUXROW : KV_HDR + 5;
-  aux.forEach((n, i) => rows.push({ n, y: y + (i + 1) * KV_AUXROW - (i ? 0 : 0), io: false }));
-  return rows;
-}
-
-/** 入出力結線図の記号を作る。左列=入力・右列=出力 */
+/** 入出力結線図の記号 (1 群ぶん)。端子は箱の左、機能欄は箱の右 */
 function mkKvSheet(o) {
-  const L = KV_LEAD, W = KV_BOXW, TR = KV_TERM_R;
-  const bx = L, bw = W, rx = L + W;            // 箱の左辺 / 幅 / 右辺
-  const left = kvSlots(o.inRows, o.inAux), right = kvSlots(o.outRows, o.outAux);
-  const bh = Math.max(...left.concat(right).map(r => r.y)) + 10;
+  const W = KV_BOXW, TR = KV_TERM_R;
+  const rows = [];
+  o.rows.forEach((n, i) => rows.push({ n, y: KV_Y0 + i * KV_ROW, io: true }));
+  let y0 = rows.length ? rows[rows.length - 1].y + KV_AUXROW : KV_Y0;
+  (o.aux || []).forEach((n, i) => rows.push({ n, y: y0 + i * KV_AUXROW + 5, io: false }));
+  const bh = rows[rows.length - 1].y + KV_BOT;
   const pins = [], parts = [];
-  parts.push(`<rect x="${bx}" y="0" width="${bw}" height="${r1(bh)}"/>`);
-  // 見出し (機種名 + 点数) と、入力列 / 出力列の別
-  parts.push(kvText(bx + bw / 2, 6, 3.5, o.model, "middle"));
-  parts.push(kvText(bx + bw / 2, 12, 2.5, o.title, "middle"));
-  parts.push(`<path d="M${bx},${KV_HDR - 1} H${r1(rx)}"/>`);
-  parts.push(kvText(bx + 1.5, KV_HDR + 3.4, 2.5, "入力", "start"));
-  parts.push(kvText(rx - 1.5, KV_HDR + 3.4, 2.5, "出力", "end"));
-  const side = (rows, xPin, xTerm, dir) => {
-    let prevIo = null;
-    rows.forEach(r => {
-      // 未使用の入出力点があるのは普通なので警告しない。ただし電源・コモン・PE は
-      // 結び忘れが一番困る端子なので、未接続の検図に必ず残す
-      pins.push({ x: xPin, y: r.y, n: r.n, noDrc: r.io });
-      parts.push(`<path d="M${r1(xPin)},${r1(r.y)} H${r1(xTerm)}"/>`);
-      parts.push(`<circle cx="${r1(xTerm)}" cy="${r1(r.y)}" r="${TR}" fill="#fff"/>`);
-      // 入出力点と電源・コモンの境目に仕切り線 (どこからが電源かを一目で)
-      if (prevIo === true && !r.io) parts.push(`<path d="M${bx},${r1(r.y - KV_AUXROW / 2)} H${r1(rx)}"/>`);
-      // 保護接地の端子には接地の図記号 (JIS C 0617-2 02-15-03)。文字だけだと
-      // 接地であることが図から読めない
-      if (r.n === "PE") {
-        const gx = xPin + dir * 6;
-        parts.push(`<path d="M${r1(xPin)},${r1(r.y)} H${r1(gx)}"/>` +
-          `<path d="M${r1(gx)},${r1(r.y - 2.4)} V${r1(r.y + 2.4)}"/>` +
-          `<path d="M${r1(gx + dir * 1.2)},${r1(r.y - 1.5)} V${r1(r.y + 1.5)}"/>` +
-          `<path d="M${r1(gx + dir * 2.4)},${r1(r.y - 0.7)} V${r1(r.y + 0.7)}"/>`);
-      }
-      prevIo = r.io;
-    });
-  };
-  side(left, 0, bx, 1);
-  side(right, rx + L, rx, -1);
+  parts.push(`<rect x="0" y="0" width="${W}" height="${r1(bh)}"/>`);
+  parts.push(kvText(W / 2, 6, 3.5, o.model, "middle"));
+  parts.push(kvText(W / 2, 12, 2.5, o.title, "middle"));
+  parts.push(`<path d="M0,${KV_HDR - 1} H${W}"/>`);
+  let prevIo = null;
+  rows.forEach((r, i) => {
+    // 端子 (現場側は実際の導体で描くので、記号は端子より右だけを持つ)
+    pins.push({ x: 0, y: r.y, n: r.n, noDrc: r.io, row: i });
+    parts.push(`<circle cx="0" cy="${r1(r.y)}" r="${TR}" fill="#fff"/>`);
+    if (prevIo === true && !r.io) parts.push(`<path d="M0,${r1(r.y - KV_AUXROW / 2)} H${W}"/>`);
+    prevIo = r.io;
+    // 保護接地の端子には接地の図記号 (JIS C 0617-2 02-15-03)
+    if (r.n === "PE") {
+      const gx = -8;
+      parts.push(`<path d="M0,${r1(r.y)} H${gx}"/>` +
+        `<path d="M${gx},${r1(r.y - 2.4)} V${r1(r.y + 2.4)}"/>` +
+        `<path d="M${gx - 1.2},${r1(r.y - 1.5)} V${r1(r.y + 1.5)}"/>` +
+        `<path d="M${gx - 2.4},${r1(r.y - 0.7)} V${r1(r.y + 0.7)}"/>`);
+    }
+    // 機能欄 (下線)。文言は行ごとにプロパティで入れる
+    parts.push(`<path d="M${W + KV_FN_X},${r1(r.y + 1.5)} H${r1(W + KV_FN_X + KV_FN_W)}" stroke-width="0.25"/>`);
+  });
   return {
     id: o.id, db: true, group: "PLC入出力結線図", cat: "db", letter: "A",
-    nonstd: true, swapGroup: "kv_nano",        // プロパティで機種を差し替えられる仲間
+    nonstd: true, swapGroup: o.swapGroup,
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.model,
-    stdNote: o.stdNote,
-    sheet: o.sheet,                            // 想定する用紙 {paper, orient, scale}
+    stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
+      "外郭 + 端子 02-02-01 + 端子名)。COM の分割・電源端子の呼びは機種の取扱説明書で確認してください",
+    sheet: o.sheet, ioSheet: { rail: KV_RAIL, gap: KV_GAP, rows: rows.map(r => ({ y: r.y, io: r.io })) },
+    fnRows: rows.length,                       // 機能欄の行数 (プロパティの編集欄に使う)
     pins, sim: "none",
-    // 実際に線を引いている範囲 (保護接地の記号ぶん外へ出る右端を除く)。
-    // 図枠の隅に置いたとき、空いている所で「表題欄に重なる」と出ないように
-    inkBoxes: [[-2, -2, r1(rx + L + 4), r1(bh + 4)]],
-    // パレットでは見出し (機種名) が読めるところだけ映す
-    thumbBox: [bx, 0, bw, 16],
-    bounds: [-2, -2, r1(rx + L + 4 + 9), r1(bh + 4)],
+    inkBoxes: [[-11, -2, r1(W + KV_FN_X + KV_FN_W + 13), r1(bh + 4)]],
+    thumbBox: [0, 0, W, 16],
+    bounds: [-11, -2, r1(W + KV_FN_X + KV_FN_W + 13), r1(bh + 4)],
     body: parts.join(""),
   };
 }
 
-/* 記号の外形 (幅×高さ) を先に見積もる。用紙を選ぶのに使う */
-function mkKvSize(nIn, nOut) {
-  const last = (n, aux) => KV_HDR + 5 + (n - 1) * KV_ROW + KV_AUXROW * (aux + 1);
-  return { w: KV_LEAD * 2 + KV_BOXW + 4 + 9, h: Math.max(last(nIn, 1), last(nOut, 4)) + 10 + 4 };
-}
 /* 入るいちばん小さい用紙。作図領域から表題欄の帯を除いた高さで判定する。
    engine.js より先に読まれるので、用紙寸法はここに持つ (JIS Z 8311 の A 列) */
 const KV_PAPERS = [
@@ -212,37 +201,47 @@ const KV_PAPERS = [
   { paper: "A1", orient: "portrait", w: 594, h: 841 },
 ];
 function kvSheetFor(size) {
-  const room = 60 * 2;                          // 現場機器を並べる余地 (左右)
   for (const s of KV_PAPERS) {
     const c = s.paper === "A1" ? 20 : 10;       // 輪郭線までの余白 (とじ代は 20mm)
     const inW = s.w - Math.max(20, c) - c, inH = s.h - c * 2;
-    if (size.w + room <= inW && size.h <= inH - 35) return { paper: s.paper, orient: s.orient, scale: "1:1" };
+    /* 表題欄は右下の 160×30。記号が細くて表題欄の左に収まるなら、
+       高さは作図領域いっぱいまで使える */
+    const roomH = size.w <= inW - 160 ? inH : inH - 35;
+    if (size.w <= inW && size.h + 10 <= roomH) return { paper: s.paper, orient: s.orient, scale: "1:1" };
   }
   const l = KV_PAPERS[KV_PAPERS.length - 1];
   return { paper: l.paper, orient: l.orient, scale: "1:1" };
 }
 
-/** KV Nano 基本ユニットの結線図記号 (入力 R000〜 / 出力 R500〜) */
-function mkKvUnit(model, nIn, nOut, note) {
-  const inRows = [], outRows = [];
-  for (let i = 0; i < nIn; i++) inRows.push(kvRelay(0, i));
-  for (let i = 0; i < nOut; i++) outRows.push(kvRelay(5, i));
-  const total = nIn + nOut;
-  /* 用紙は「行が入って、現場機器を並べる余地 (左右 60mm) が残るいちばん小さい紙」。
-     16 点までは A3 横、それを超えたら A3 縦、A3 縦にも入らなければ A2 縦。
-     尺度はいずれも 1:1 (縮小すると線番や現場機器の記号が紙の上で半分になる) */
-  const sheet = kvSheetFor(mkKvSize(nIn, nOut));
-  return mkKvSheet({
-    id: model.toLowerCase().replace(/-/g, "_"), model, sheet,
-    inRows, outRows, inAux: ["COM"], outAux: ["COM", "L", "N", "PE"],
-    title: `入出力 ${total}点`,
-    name: `${model} 入出力結線図`, nameEn: `${model} I/O wiring`,
-    desc: `キーエンス KV Nano 基本ユニット ${model} (入力${nIn}点 / 出力${nOut}点) の入出力結線図。` +
-      `端子は左が入力列・右が出力列。用紙は ${sheet.paper} ${sheet.orient === "portrait" ? "縦" : "横"} ${sheet.scale}。` +
-      `端子番号は内蔵入出力リレー (入力 R000〜 / 出力 R500〜)。${note || ""}`,
-    stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617 に該当図記号なし)。" +
-      "COM の分割・電源端子の呼びは機種の取扱説明書で確認してください",
+/** KV Nano 基本ユニットの結線図記号。1 群 (16 点まで) = 1 枚 */
+function mkKvUnit(model, nIn, nOut) {
+  const out = [];
+  const groups = [];
+  for (let i = 0; i < nIn; i += 16) groups.push({ kind: "入力", ch: 0, from: i, n: Math.min(16, nIn - i) });
+  for (let i = 0; i < nOut; i += 16) groups.push({ kind: "出力", ch: 5, from: i, n: Math.min(16, nOut - i) });
+  groups.forEach((g, gi) => {
+    const rows = [];
+    for (let i = 0; i < g.n; i++) rows.push(kvRelay(g.ch, g.from + i));
+    /* コモンは群ごと。ユニットの電源 (L/N/PE) は出力の 1 枚目にまとめる
+       (入力は点数が多く、電源 3 行を足すと A3 横に収まらなくなるため) */
+    const firstOut = g.kind === "出力" && groups.filter(x => x.kind === "出力").indexOf(g) === 0;
+    const aux = firstOut ? ["COM", "L", "N", "PE"] : ["COM"];
+    const many = groups.filter(x => x.kind === g.kind).length > 1;
+    const no = many ? ` (${Math.floor(g.from / 16) + 1})` : "";
+    const size = { w: KV_RAIL + KV_BOXW + KV_FN_X + KV_FN_W + 13,
+      h: KV_Y0 + (rows.length - 1) * KV_ROW + 15 + (aux.length - 1) * KV_AUXROW + KV_BOT + 4 };
+    out.push(mkKvSheet({
+      id: `${model.toLowerCase().replace(/-/g, "_")}_${g.kind === "入力" ? "in" : "out"}${many ? Math.floor(g.from / 16) + 1 : ""}`,
+      model, title: `${g.kind}${no} ${g.n}点`, rows, aux,
+      swapGroup: `kv_nano_${g.kind === "入力" ? "in" : "out"}`,
+      sheet: kvSheetFor(size),
+      name: `${model} ${g.kind}結線図${no}`, nameEn: `${model} ${g.kind === "入力" ? "input" : "output"} wiring`,
+      desc: `キーエンス KV Nano 基本ユニット ${model} の${g.kind}結線図 (${rows[0]}〜${rows[rows.length - 1]} の${g.n}点)。` +
+        `端子の左は現場側 — プロパティの「結線図の下地を作る」で N24/P24 のレールと各行の分岐を実線で引きます。` +
+        `右は機能欄で、行ごとの文言はプロパティでまとめて入れられます。`,
+    }));
   });
+  return out;
 }
 
 const DB_SYMBOLS = [
@@ -730,11 +729,8 @@ function dbSetPinned(list) {
 
 
 /* キーエンス KV Nano 基本ユニットの入出力結線図 (機種を差し替えれば端子ごと入れ替わる) */
-DB_SYMBOLS.push(
-  mkKvUnit("KV-N14AT", 8, 6, "AC電源タイプ・トランジスタ(シンク)出力。"),
-  mkKvUnit("KV-N24AT", 14, 10, "AC電源タイプ・トランジスタ(シンク)出力。"),
-  mkKvUnit("KV-N40AT", 24, 16, "AC電源タイプ・トランジスタ(シンク)出力。"),
-);
+[["KV-N14AT", 8, 6], ["KV-N24AT", 14, 10], ["KV-N40AT", 24, 16]]
+  .forEach(([m, i, o]) => mkKvUnit(m, i, o).forEach(s2 => DB_SYMBOLS.push(s2)));
 
 // 全シンボル辞書へ統合 (描画・配置・部品表・DXFすべてで使える)
 DB_SYMBOLS.forEach(s => { SYMBOLS_BY_ID[s.id] = s; });

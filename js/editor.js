@@ -386,6 +386,10 @@ function devLabelsSVG(dev, sym, page) {
     out += `<text x="${o.x}" y="${o.y}" font-size="${svgFontSizeFor(o.text, o.size, isTag, { bold: isTag })}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
       `${isTag ? ' font-weight="600" font-family="monospace"' : ""}>${escXML(o.text)}</text>`;
   });
+  // 入出力結線図の機能欄 (行ごとの文言)
+  deviceRowTexts(page || curPage(), dev).forEach(o => {
+    out += `<text x="${o.x}" y="${o.y}" font-size="${svgFontSizeFor(o.text, o.size, false)}" fill="${INK}" stroke="none" font-family="sans-serif">${escXML(o.text)}</text>`;
+  });
   // リンク接点のクロスリファレンス (親コイル位置 /ページ.列)。
   // タグを右へ寄せた機器では、その下に置いて重ならないようにする
   const xr = deviceXrefBox(page || curPage(), dev);
