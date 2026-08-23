@@ -244,9 +244,10 @@ function buildIoScaffold(page, dev) {
     });
   };
   const tags = sp.railTags || { branch: "0V", supply: "+24V" };
-  /* コモン側だけ補助行まで下ろす。分岐レールも下ろすと、コモンを外側の
-     レールへ引く線が分岐レールを横切ってしまう (電気的には交差だけだが、
-     結線図で意味のない交差を作らないのが JIS Z 8312 の作図) */
+  /* コモン側だけ最終行まで下ろし、分岐レールは io 行の下端で止める。
+     行末のコモン (COM / C0 / 分割コモンの最後) はこれで分岐レールを横切らない。
+     分割コモンの中間の群 (C1, C2, …) は io 行の間に挟まるので横切るが、
+     接続点 (黒丸) の無い交差として描かれ、電気的にも別ネットのまま */
   rail(comX, tags.supply, yAll, true);                  // 外側 = コモン側
   rail(branchX, tags.branch, yIo, false);               // 内側 = 各行の分岐もと
   const gx = branchX - sd * lead, gr = gx - sd * gap;   // 隙間の分岐側 / 端子側の端
