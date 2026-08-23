@@ -99,10 +99,15 @@ const R = await p.evaluate(() => {
       rail: sym.ioSheet && sym.ioSheet.rail, gap: sym.ioSheet && sym.ioSheet.gap,
       /* 実機のユニットに合わせた向き: 入力は現場側が左 (レール→機器→端子→箱)、
          出力は箱が左 (箱→端子→負荷→レール→名称欄)。箱の位置と名称欄の位置で確かめる */
-      layout: { side: (sym.ioSheet || {}).side,
-        boxX: Math.min(...(sym.body.match(/<rect x="(-?[\d.]+)"/g) || ['<rect x="99"'])
-          .map(m => parseFloat(m.replace(/^<rect x="/, "")))),
-        fnTextX: (sym.ioSheet || {}).fnTextX },
+      layout: (() => {
+        const bx0 = Math.min(...(sym.body.match(/<rect x="(-?[\d.]+)"/g) || ['<rect x="99"'])
+          .map(m => parseFloat(m.replace(/^<rect x="/, ""))));
+        const c = /<circle cx="(-?[\d.]+)"[^>]*r="([\d.]+)"/.exec(sym.body) || [0, 99, 1];
+        return { side: (sym.ioSheet || {}).side, boxX: bx0,
+          fnTextX: (sym.ioSheet || {}).fnTextX,
+          // 円が外郭の中 (辺に内側から接するのは可) にあるか
+          circleInBox: +c[1] - +c[2] >= bx0 - 0.01 && +c[1] + +c[2] <= bx0 + 30 + 0.01 };
+      })(),
       /* 見出し (形式・種別) が箱の中に収まり、罫線に触れないこと。
          種別は和文なので、呼び 2.5 と書いても JIS Z 8313-0 の和文最小 3.5mm で
          描かれる — 実際に描かれる大きさで測る */
@@ -874,8 +879,10 @@ const checks = {
     const L = (R.group[id] || {}).layout || {};
     return /_out/.test(id)
       ? L.side === "right" && L.boxX < 0 && L.fnTextX > (R.group[id] || {}).rail
-      : L.side === "left" && L.boxX > 0 && L.fnTextX < (R.group[id] || {}).rail;
+      : L.side === "left" && L.boxX >= 0 && L.fnTextX < (R.group[id] || {}).rail;
   }),
+  /* 端子の丸はユニットの外郭の「中」(四角の中に丸)。円は辺に内側から接する */
+  termInBox: ids.every(id => ((R.group[id] || {}).layout || {}).circleInBox === true),
   // 出力の枚でも UI 経路 (機種差し替え・行ピッチ) が下地と負荷を壊さない
   outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out" && V2.drc.length === 0 &&
     V3.pitch === 30 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,

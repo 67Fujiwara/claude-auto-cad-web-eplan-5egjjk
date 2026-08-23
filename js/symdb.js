@@ -247,15 +247,15 @@ function kvBuild(o, pitch) {
     const c = sheet.paper === "A1" ? 20 : 10;
     const inW = pp.w - Math.max(20, c) - c;
     // 幅 = 箱 (2TR+W+2) + 現場側 + あき 10 + コメント欄 + 2。左右あわせて 8mm 残す
-    RAIL = Math.floor((inW - 8 - (TR * 2 + W + 2) - (10 + KV_FN_W + 2)) / 5) * 5;
+    RAIL = Math.floor((inW - 8 - (W + 2) - (10 + KV_FN_W + 2)) / 5) * 5;
   }
   const pins = [], parts = [];
-  /* 端子 (小円) は外郭に接して描き、導体は円の外周で終える。円の中心を外郭線
-     の上に置くと、外郭が端子を貫き、導体が円の中心まで入った図になる
-     (画面は白塗りで隠れても DXF にはそのまま出る)。
-     ピンは 5mm 格子に乗せたいので、端子をずらすのではなく外郭を箱側へ寄せる —
-     格子から外れたピンは、配線のとき端点が丸められて端子に届かない */
-  const BX = flip ? -(TR * 2 + W) : TR * 2;   // 外郭の箱側の辺 (左端の x)
+  /* 端子 (小円) はユニットの外郭の「中」に描く (取扱説明書の回路図と同じ —
+     四角の中に丸)。円は外郭の辺に内側から接し、ピンはその接点 (辺の上)。
+     導体は接点まで来て円の外周で終わり、円の中へは入らない。
+     外郭の辺は円に接するだけで貫かない (画面でも DXF でも)。
+     ピンは 5mm 格子に乗る (格子から外れると配線の端点が丸められて届かない) */
+  const BX = flip ? -W : 0;                   // 外郭の箱側の辺 (左端の x)
   parts.push(`<rect x="${r1(BX)}" y="0" width="${W}" height="${r1(bh)}"/>`);
   parts.push(kvText(BX + W / 2, 5, 3.5, o.model, "middle"));
   parts.push(kvText(BX + W / 2, 10, 3.5, o.title, "middle", false));
@@ -263,7 +263,7 @@ function kvBuild(o, pitch) {
   /* 機能欄の下線の左端。入力は箱の右、出力はレールのさらに右 (右端の名称欄)。
      出力はレールから 10mm あける — レール頭の電位名 (+24V は半幅 5.8mm) が
      下線の帯に食い込まないように */
-  const FX = flip ? RAIL + 10 : TR * 2 + W + KV_FN_X;
+  const FX = flip ? RAIL + 10 : W + KV_FN_X;
   rows.forEach((r, i) => {
     /* noDrc: 未使用でも黙る端子。入出力点とサービス電源 (0V/24V) は使わない
        図面が普通にある。コモンは黙らせない — 浮いていれば群ごと動かない */
@@ -274,7 +274,7 @@ function kvBuild(o, pitch) {
     if (i > 0 && !rows[i - 1].io && r.io) parts.push(`<path d="M${r1(BX)},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
     /* 端子名は外郭の内側 (端子の丸のすぐ隣)。外に置くと現場側の配線区画に
        文字が並び、機器のピン番号・線番と同じ帯で読み合わせることになる */
-    if (flip) parts.push(kvText(-TR * 2 - KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "end"));
+    if (flip) parts.push(kvText(-(TR * 2 + KV_TERM_X), r1(r.y + 1.25), 2.5, r.n, "end"));
     else parts.push(kvText(TR * 2 + KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "start"));
     parts.push(`<path d="M${r1(FX)},${r1(r.y + 1.5)} H${r1(FX + KV_FN_W)}" stroke-width="0.25"/>`);
   });
@@ -283,7 +283,7 @@ function kvBuild(o, pitch) {
      貫き、別に prot_earth を置けば接地記号が 2 つ並ぶ */
   const bounds = flip
     ? [r1(BX - 2), -2, r1((FX + KV_FN_W + 2) - (BX - 2)), r1(bh + 4)]
-    : [-2, -2, r1(TR * 2 + W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
+    : [-2, -2, r1(W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
   /* 実際に線を引いている帯。外接矩形 (余白つき) をそのまま「インク」として
      申告すると、記号に触れていない導体まで「貫通」になる。
      ① 端子の丸 + 外郭  ② 機能欄の下線 — その間 (出力では現場側の区画) は何も無い */
@@ -291,8 +291,8 @@ function kvBuild(o, pitch) {
      実インク (getBBox + 半幅) より 0.25mm 過小になる */
   const HW = 0.25;
   const inkBoxes = (flip
-    ? [[BX, 0, TR * 2 + W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]]
-    : [[0, 0, TR * 2 + W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]])
+    ? [[BX, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]]
+    : [[0, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]])
     .map(([x, y, w2, h2]) => [r1(x - HW), r1(y - HW), r1(w2 + HW * 2), r1(h2 + HW * 2)]);
   // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
   /* 現場機器の置き場所の目安 (内側レールから引出しぶん端子側)。
@@ -333,7 +333,7 @@ function mkKvSheet(o) {
       "(写しで確認できたのは KV-N14AR。AT 形の出力コモンの刻印と、" +
       "N24AT/N40AT の入力コモンの数・刻印は未確認 — C0 が 1 つ、は N14AR からの類推)。" +
       "ユニットの電源と接地は別紙の電源回路図に描きます",
-    sim: "none", thumbBox: flip ? [-(KV_TERM_R * 2 + KV_BOXW), 0, KV_BOXW, 16] : [0, 0, KV_BOXW, 16],
+    sim: "none", thumbBox: flip ? [-KV_BOXW, 0, KV_BOXW, 16] : [0, 0, KV_BOXW, 16],
     /* 機器タグは箱の肩 (入力=左肩・出力=右肩)。1 行目より上なので
        現場側の区画を汚さない */
     tagAnchor: flip ? { x: 2, y: 6, anchor: "start" } : { x: -2, y: 6, anchor: "end" },

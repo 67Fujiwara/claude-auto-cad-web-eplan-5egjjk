@@ -253,8 +253,34 @@ function zonesSVG(page, opts = {}) {
     if (z.label) {
       out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${svgFontSizeFor(z.label, TEXT_H.normal * fr)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
     }
+    // 選択中はつまみ (角 4 + 辺の中央 4)。マウスでつまんで幅と高さを変えられる
+    if (selected) {
+      zoneHandles(z).forEach(h => {
+        out += `<rect x="${h.x - 1.4}" y="${h.y - 1.4}" width="2.8" height="2.8" fill="#fff" stroke="${SEL}" stroke-width="0.35"/>`;
+      });
+    }
   });
   return out;
+}
+
+/** 破線枠のつまみ (角 4 + 辺の中央 4)。hx/hy は −1/0/+1 でどの縁を動かすか */
+function zoneHandles(z) {
+  const out = [];
+  [-1, 0, 1].forEach(hy => [-1, 0, 1].forEach(hx => {
+    if (hx === 0 && hy === 0) return;
+    out.push({ hx, hy, x: z.x + (hx + 1) / 2 * z.w, y: z.y + (hy + 1) / 2 * z.h });
+  }));
+  return out;
+}
+/** 選択中の破線枠のつまみが (wx,wy) の近くにあれば返す */
+function zoneHandleAt(page, wx, wy) {
+  for (const z of pageZones(page)) {
+    if (!App.selection.has(z.id)) continue;
+    for (const h of zoneHandles(z)) {
+      if (Math.abs(wx - h.x) < 2.2 && Math.abs(wy - h.y) < 2.2) return { z, h };
+    }
+  }
+  return null;
 }
 
 /* ── ワイヤ ── */
@@ -725,6 +751,16 @@ function onMouseDown(e) {
   }
 
   // 選択ツール
+  /* 選択中の破線枠のつまみが最優先 (枠線や中の機器より先に拾う)。
+     つまんだ縁だけを動かして幅・高さを変える */
+  const zh = zoneHandleAt(curPage(), w.x, w.y);
+  if (zh) {
+    Editor.drag = { type: "zoneResize", z: zh.z, hx: zh.h.hx, hy: zh.h.hy,
+      x0: zh.z.x, y0: zh.z.y, w0: zh.z.w, h0: zh.z.h, moved: false,
+      snapshot: JSON.stringify(App.project) };
+    requestRender();
+    return;
+  }
   const hit = hitTest(w.x, w.y);
   if (hit) {
     const id = hit.obj.id;
@@ -799,6 +835,13 @@ function onMouseMove(e) {
   if (!d) {
     // ホバー
     if (App.tool === "select" || App.sim.running) {
+      // 破線枠のつまみの上ではリサイズカーソルにする (向きも縁に合わせる)
+      if (App.tool === "select" && !App.sim.running) {
+        const zh2 = zoneHandleAt(curPage(), w.x, w.y);
+        Editor.svg.style.cursor = !zh2 ? "" :
+          zh2.h.hx && zh2.h.hy ? (zh2.h.hx * zh2.h.hy > 0 ? "nwse-resize" : "nesw-resize") :
+          zh2.h.hx ? "ew-resize" : "ns-resize";
+      }
       const hit = hitTest(w.x, w.y);
       const newHover = hit && hit.type === "device" ? hit.obj.id : null;
       if (newHover !== Editor.hover.devId) { Editor.hover.devId = newHover; requestRender(); }
@@ -834,6 +877,17 @@ function onMouseMove(e) {
     if (dx === 0 && dy === 0 && !d.moved) return;
     d.moved = true;
     applyMove(d.attach, dx, dy);
+    requestRender();
+  }
+  if (d.type === "zoneResize") {
+    /* つまんだ縁だけを 5mm 格子で動かす。最小 10×10mm — 裏返さない */
+    const z = d.z, MIN = 10;
+    const gx = snap(w.x), gy = snap(w.y);
+    if (d.hx < 0) { const nx = Math.min(gx, d.x0 + d.w0 - MIN); z.x = nx; z.w = d.x0 + d.w0 - nx; }
+    if (d.hx > 0) { z.w = Math.max(MIN, gx - d.x0); }
+    if (d.hy < 0) { const ny = Math.min(gy, d.y0 + d.h0 - MIN); z.y = ny; z.h = d.y0 + d.h0 - ny; }
+    if (d.hy > 0) { z.h = Math.max(MIN, gy - d.y0); }
+    d.moved = z.x !== d.x0 || z.y !== d.y0 || z.w !== d.w0 || z.h !== d.h0;
     requestRender();
   }
 }
@@ -927,6 +981,18 @@ function onMouseUp(e) {
         if (hit) App.selection.add(z.id);
       });
       UI.showProps();
+    }
+    requestRender();
+    return;
+  }
+  if (d.type === "zoneResize") {
+    if (d.moved) {
+      App.labelRev++;
+      App.undoStack.push(d.snapshot);
+      if (App.undoStack.length > 100) App.undoStack.shift();
+      App.redoStack.length = 0;
+      saveLocal();
+      UI.setMsg(`枠を ${d.z.w}×${d.z.h}mm にしました`);
     }
     requestRender();
     return;
