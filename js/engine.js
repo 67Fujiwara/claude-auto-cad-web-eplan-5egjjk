@@ -2119,8 +2119,8 @@ function conductivePairs(dev, mode = "closed") {
 /** 電位リンクのタグから極性を判定 (+24V/L+ → P極, 0V/M/N → N極) */
 function linkPolarity(dev) {
   const t = (dev.tag || "").replace(/^-/, "").toUpperCase();
-  if (["+24V", "24V", "L+", "P24"].includes(t)) return "P";
-  if (["0V", "M", "N", "-V", "GND"].includes(t)) return "N";
+  if (["+24V", "24V", "L+", "P24", "P24V"].includes(t)) return "P";
+  if (["0V", "M", "N", "-V", "GND", "N24V", "N24"].includes(t)) return "N";
   return null;
 }
 

@@ -1006,7 +1006,11 @@ function placeGhost() {
   spliceDeviceIntoWires(curPage(), dev);
   App.selection.clear();
   App.selection.add(dev.id);
-  UI.setMsg(`${symOf(g.symId).name} ${dev.tag || ""} を配置 — 続けてクリックで連続配置、Escで終了`);
+  /* 入出力結線図の枠は、置いた瞬間に P24V/N24V のレールと各行の分岐を引く
+     (下地はあらかじめ引いてある、が実務の姿。引き直しはプロパティから) */
+  const sc = dev && symOf(dev.sym).ioSheet ? buildIoScaffold(curPage(), dev) : 0;
+  UI.setMsg(`${symOf(g.symId).name} ${dev.tag || ""} を配置` +
+    (sc ? ` — P24V/N24V のレールと下地を引きました` : ` — 続けてクリックで連続配置、Escで終了`));
   // ゴーストは維持して連続配置 (EPLANの挿入モード)
   UI.showProps();
   requestRender();
