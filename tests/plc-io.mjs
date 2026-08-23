@@ -1,7 +1,11 @@
 /* キーエンス KV Nano シリーズ (KV-N14AT / KV-N24AT / KV-N40AT) の入出力結線図。
 
-   実務の結線図の形 — 左に現場側のレール、各行はそこから分岐して機器を通り、
-   端子 (○ + リレー番号) からユニットの箱へ入る。箱の右は機能欄 (下線に文言)。
+   実務の結線図の形。入力と出力は実機のユニットどおり鏡像 —
+   入力: 左に現場側のレール、各行はそこから分岐して機器を通り、端子 (○ + リレー
+   番号) からユニットの箱へ入る。箱の右は機能欄 (下線に文言)。
+   出力: 箱が左。箱 → 端子 → 負荷 → レールと右へ流れ、名称欄は右端。
+   機器は rot 270 で置けば、入力は左が電源側 (P,N)・右が信号、
+   出力は左が信号・右が電源側と、どちらも向きが合う。
 
    ・用紙 1 枚 = 1 記号 = 「A3 横に収まる行数」(最大 10 点)。チャネル (16 点) は
      またがず均等に割る。用紙は記号の大きさから選び、表題欄 (160×30) と
@@ -90,6 +94,12 @@ const R = await p.evaluate(() => {
       termInBody: sym.pins.every(q => q.inBody === true) &&
         sym.pins.every(q => sym.body.includes(`>${q.n}</text>`)),
       rail: sym.ioSheet && sym.ioSheet.rail, gap: sym.ioSheet && sym.ioSheet.gap,
+      /* 実機のユニットに合わせた向き: 入力は現場側が左 (レール→機器→端子→箱)、
+         出力は箱が左 (箱→端子→負荷→レール→名称欄)。箱の位置と名称欄の位置で確かめる */
+      layout: { side: (sym.ioSheet || {}).side,
+        boxX: Math.min(...(sym.body.match(/<rect x="(-?[\d.]+)"/g) || ['<rect x="99"'])
+          .map(m => parseFloat(m.replace(/^<rect x="/, "")))),
+        fnTextX: (sym.ioSheet || {}).fnTextX },
       /* 見出し (形式・種別) が箱の中に収まり、罫線に触れないこと。
          種別は和文なので、呼び 2.5 と書いても JIS Z 8313-0 の和文最小 3.5mm で
          描かれる — 実際に描かれる大きさで測る */
@@ -106,8 +116,8 @@ const R = await p.evaluate(() => {
         }).sort((a, b2) => a.top - b2.top);
         /* 外郭は端子の直径ぶん右にある (ピンを 5mm 格子に乗せるため)。
            見出しの文字がその内側に収まっているか */
-        const bx0 = Math.min(...(sym.body.match(/<rect x="([\d.]+)"/g) || ['<rect x="0"'])
-          .map(m => parseFloat(m.replace(/[^\d.]/g, ""))));
+        const bx0 = Math.min(...(sym.body.match(/<rect x="(-?[\d.]+)"/g) || ['<rect x="0"'])
+          .map(m => parseFloat(m.replace(/^<rect x="/, ""))));
         return { n: 2, inBox: box.every(o => o.l >= bx0 + 0.5 && o.r <= bx0 + 30 - 0.5),
           fromTop: +box[0].top.toFixed(2),          // 箱の上辺からのあき
           between: +(box[1].top - box[0].bot).toFixed(2),
@@ -136,6 +146,10 @@ const R = await p.evaluate(() => {
 
   // ② 用紙に収まるか / 紙の上の寸法
   App.project = newProject("KV Nano 入出力結線図");
+  /* 置き場所: 入力は現場側 (レール) が左なので、レールの左に 10mm 残す。
+     出力は箱が左なので、箱の左辺を図枠から 5mm あける。どちらも 5mm 格子 */
+  const kvPlaceX = (sym, fr) => Math.ceil((sym.ioSheet.side === "right"
+    ? fr.x - sym.bounds[0] + 5 : fr.x + sym.ioSheet.rail + 15) / 5) * 5;
   const pages = {};
   Object.entries(SPEC).forEach(([id, sp], i) => {
     const sym = symOf(id), want = sym && symSheetSpec(sym);
@@ -147,14 +161,17 @@ const R = await p.evaluate(() => {
     pg.paper = want.paper; pg.orient = want.orient; pg.scale = want.scale;
     App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
     const fr = frameRect(), tb = titleBlocksRects();
-    const d = addDevice(pg, id, fr.x + sym.ioSheet.rail + 15, fr.y + 5, { tag: `-A${i + 1}` });
+    const d = addDevice(pg, id, kvPlaceX(sym, fr), fr.y + 5, { tag: `-A${i + 1}` });
     // 置き場所は 5mm 格子 (行の y が格子に乗るように)
     pages[id] = { pg, d, sym };
     const bd = devBounds(d), bb = devPartBoxes(d);
     out.sheet[id] = {
       inFrame: bd.x >= fr.x && bd.y >= fr.y && bd.x + bd.w <= fr.x + fr.w && bd.y + bd.h <= fr.y + fr.h,
       onBlock: bb.some(x => tb.some(r => x.x < r.x + r.w && x.x + x.w > r.x && x.y < r.y + r.h && x.y + x.h > r.y)),
-      railRoom: Math.round(d.x - sym.ioSheet.rail - fr.x),      // レールの左に残る余白 (10mm 目安)
+      // 現場側の端 (入力=レールの左 / 出力=名称欄の右) と図枠のあき
+      railRoom: sym.ioSheet.side === "right"
+        ? Math.round(fr.x + fr.w - (d.x + sym.bounds[0] + sym.bounds[2]))
+        : Math.round(d.x - sym.ioSheet.rail - fr.x),
     };
     const rows = sym.pins.filter(x => /^R/.test(x.n));
     const m = pageDrawnMinima(pg);
@@ -229,7 +246,7 @@ const R = await p.evaluate(() => {
   }
   const sp = t.sym.ioSheet;
   sp.rows.filter(r => r.io).forEach(r => {
-    addDevice(t.pg, "pb_no", t.d.x - sp.gapFrom, t.d.y + r.y, { tag: "", rot: 270 });
+    addDevice(t.pg, "pb_no", t.d.x + sp.gapX0, t.d.y + r.y, { tag: "", rot: 270 });
   });
   /* コモンは下地が外側のレール (入力なら +24V) へ自動で結ぶ。
      いちばん自然な操作なのに手でやると必ず宙吊りになっていたので、引くようにした */
@@ -271,7 +288,7 @@ const R = await p.evaluate(() => {
     const dd = addDevice(q, "kv_n14at_in", 130, 20, { tag: "-A9" });
     const sp2 = symOf(dd.sym).ioSheet;
     const put = (id) => sp2.rows.filter(r => r.io).slice(0, 3).map(r =>
-      addDevice(q, id, dd.x - sp2.gapFrom, dd.y + r.y, { tag: "", rot: 270 }));
+      addDevice(q, id, dd.x + sp2.gapX0, dd.y + r.y, { tag: "", rot: 270 }));
     /* 外接矩形は全周 2mm の余白つきなので、実際に線が引かれる範囲で測る。
        隣の行の機器と 1mm 以上あいていなければ「干渉」 */
     const ink = (d2) => { const b3 = devBounds(d2); return { y0: b3.y + 2, y1: b3.y + b3.h - 2 }; };
@@ -303,13 +320,13 @@ const R = await p.evaluate(() => {
     out.pitch.wideClash = {};
     WIDE_ONLY.forEach(id => {
       const ds = sp3.rows.filter(r => r.io).slice(0, 3).map(r =>
-        addDevice(q, id, dd.x - sp3.gapFrom, dd.y + r.y, { tag: "", rot: 270 }));
+        addDevice(q, id, dd.x + sp3.gapX0, dd.y + r.y, { tag: "", rot: 270 }));
       out.pitch.wideClash[id] = clash(ds);
       out.pitch.gap[id + "@30"] = +gapOf(ds).toFixed(2);
       ds.forEach(d2 => q.devices.splice(q.devices.indexOf(d2), 1));
     });
     const tall2 = sp3.rows.filter(r => r.io).slice(0, 3).map(r =>
-      addDevice(q, "photo", dd.x - sp3.gapFrom, dd.y + r.y, { tag: "", rot: 270 }));
+      addDevice(q, "photo", dd.x + sp3.gapX0, dd.y + r.y, { tag: "", rot: 270 }));
     out.pitch.tallAtWide = clash(tall2);
     out.pitch.wide = sp3.pitch;
     out.pitch.sheetGrew = JSON.stringify(symSheetSpec(symOf(dd.sym))) !== JSON.stringify(symSheetSpec(symOf("kv_n14at_in")));
@@ -334,7 +351,7 @@ const R = await p.evaluate(() => {
         const q = newPage("改訂の確認", App.project.pages.length + 1);
         App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
         q.paper = s2.sheet.paper; q.orient = s2.sheet.orient; q.scale = s2.sheet.scale; applySheet(q);
-        addDevice(q, id + "@" + v, frameRect().x + s2.ioSheet.rail + 10, frameRect().y + 5, { tag: "-A50" });
+        addDevice(q, id + "@" + v, kvPlaceX(s2, frameRect()), frameRect().y + 5, { tag: "-A50" });
         App.labelRev++;
         runDRC().filter(i => i.page === q.no && /改訂履歴欄|表題欄|図枠/.test(i.msg))
           .forEach(i => bad.push(`${id}@${v}:${i.msg}`));
@@ -358,7 +375,7 @@ const R = await p.evaluate(() => {
     buildIoScaffold(q, dd);
     const spA = symOf(dd.sym).ioSheet;
     const rowsA = spA.rows.filter(r => r.io);
-    rowsA.forEach(r => addDevice(q, "pb_no", dd.x - spA.gapFrom, dd.y + r.y, { tag: "", rot: 270 }));
+    rowsA.forEach(r => addDevice(q, "pb_no", dd.x + spA.gapX0, dd.y + r.y, { tag: "", rot: 270 }));
     const base2 = symStretchBase(symOf(dd.sym));
     symStretchVariant(base2, 30);
     const oldSp = symOf(dd.sym).ioSheet;
@@ -393,18 +410,27 @@ const R = await p.evaluate(() => {
     App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
     const s0 = symOf("kv_n14at_out"), w1 = symSheetSpec(s0);
     q.paper = w1.paper; q.orient = w1.orient; q.scale = w1.scale; applySheet(q);
-    const dd = addDevice(q, "kv_n14at_out", frameRect().x + s0.ioSheet.rail + 15, frameRect().y + 5, { tag: "-A70" });
+    const dd = addDevice(q, "kv_n14at_out", kvPlaceX(s0, frameRect()), frameRect().y + 5, { tag: "-A70" });
     buildIoScaffold(q, dd);
     const spO = symOf(dd.sym).ioSheet;
     const rowsO = spO.rows.filter(r => r.io);
-    rowsO.forEach((r, i) => addDevice(q, "lamp", dd.x - spO.gapFrom, dd.y + r.y, { tag: `-P${i + 1}`, rot: 270 }));
+    rowsO.forEach((r, i) => addDevice(q, "lamp", dd.x + spO.gapX0, dd.y + r.y, { tag: `-P${i + 1}`, rot: 270 }));
     App.labelRev++;
     const netsO = computeNets(q, "closed");
     out.outSheet = {
       loads: rowsO.length,
-      // 負荷が +24V (分岐レール) と出力端子の両方につながっている
-      wired: q.devices.filter(d2 => d2.sym === "lamp").every((d2, i) =>
-        netsO.pinNet(d2, 1) === netsO.pinNet(dd, i) || netsO.pinNet(d2, 0) === netsO.pinNet(dd, i)),
+      /* 向きまで見る: 負荷の左ピン = 出力端子 (信号)、右ピン = +24V (分岐レール)。
+         「アウトプットは左が信号線・右が P,N」の要件そのもの */
+      wired: (() => {
+        const br = q.devices.find(d2 => d2.gen === dd.id && symOf(d2.sym).sim === "link" &&
+          d2.tag === spO.railTags.branch);
+        return !!br && q.devices.filter(d2 => d2.sym === "lamp").every((d2, i) => {
+          const ps = devPins(d2);
+          const left = ps[0].x <= ps[1].x ? 0 : 1;
+          return netsO.pinNet(d2, left) === netsO.pinNet(dd, i) &&
+            netsO.pinNet(d2, 1 - left) === netsO.pinNet(br, 0);
+        });
+      })(),
       drc: runDRC().filter(i => i.page === q.no).map(i => `${i.sev}:${i.rule || "?"}:${i.msg}`),
     };
     App.project.pages.pop();
@@ -426,7 +452,7 @@ const R = await p.evaluate(() => {
     const sp4 = symOf(dd.sym).ioSheet;
     const supplyX = dd.x - sp4.rail, branchX = supplyX + sp4.sep;
     const r0 = sp4.rows.find(r => r.io), ry = dd.y + r0.y;
-    const sens2 = addDevice(q, "prox", dd.x - sp4.gapFrom, ry, { tag: "-B8", rot: 270 });
+    const sens2 = addDevice(q, "prox", dd.x + sp4.gapX0, ry, { tag: "-B8", rot: 270 });
     const sp5 = devPins(sens2);
     App.labelRev++;
     // 置いただけ (直列のまま) はエラー。茶が 0V に載っている
@@ -644,6 +670,15 @@ const checks = {
   /* 3 線式センサは NPN (シンク) 形 — 開閉要素は「出力と 0V」の間 */
   npnSensors: Array.isArray(R.npn) && R.npn.length === 3 && R.npn.every(o => o.sinks === true) &&
     R.npn.map(o => o.pins).join(",") === "BK-BU,BK-BU,N24V-OUT",
+  /* 実機のユニットに合わせた鏡像: 入力は現場側が左 (箱は端子の右 = boxX > 0、
+     名称欄は箱の右 = fnTextX < rail)。出力は箱が左 (boxX < 0)、
+     名称欄はレールのさらに右 (fnTextX > rail) */
+  mirror: ids.every(id => {
+    const L = (R.group[id] || {}).layout || {};
+    return /_out/.test(id)
+      ? L.side === "right" && L.boxX < 0 && L.fnTextX > (R.group[id] || {}).rail
+      : L.side === "left" && L.boxX > 0 && L.fnTextX < (R.group[id] || {}).rail;
+  }),
   // 出力の枚も、負荷を落として結線すれば検図 0 件
   outSheet: (R.outSheet || {}).loads === 6 && R.outSheet.wired === true &&
     Array.isArray(R.outSheet.drc) && R.outSheet.drc.length === 0,

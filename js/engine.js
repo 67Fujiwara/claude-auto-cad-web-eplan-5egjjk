@@ -175,8 +175,10 @@ function clearIoScaffold(page, dev) {
     行から外れて宙に浮く。行番号で対応づけるので、行数が同じかぎり必ず合う */
 function moveIoRowDevices(page, dev, oldSp, newSp) {
   if (!oldSp || !newSp || oldSp.rows.length !== newSp.rows.length) return 0;
-  const sep = oldSp.sep || IO_RAIL_SEP_FALLBACK, lead = oldSp.lead || IO_RAIL_LEAD_FALLBACK;
-  const x0 = dev.x - oldSp.rail + sep + lead, x1 = x0 + oldSp.gap;
+  const x0 = dev.x + (oldSp.gapX0 !== undefined ? oldSp.gapX0
+    : -(oldSp.rail - (oldSp.sep || IO_RAIL_SEP_FALLBACK) - (oldSp.lead || IO_RAIL_LEAD_FALLBACK)));
+  const x1 = dev.x + (oldSp.gapX1 !== undefined ? oldSp.gapX1
+    : (x0 - dev.x) + oldSp.gap);
   let n = 0;
   // 下の行から動かす (上から動かすと、まだ動いていない下の行と一時的に重なる)
   const plan = [];
@@ -209,7 +211,11 @@ function buildIoScaffold(page, dev) {
   const io = all.filter((_, i) => sp.rows[i].io);
   if (!io.length) return 0;
   const sep = sp.sep || IO_RAIL_SEP_FALLBACK, lead = sp.lead || IO_RAIL_LEAD_FALLBACK, gap = sp.gap;
-  const comX = snap(dev.x - sp.rail), branchX = comX + sep;
+  /* 現場側がどちらか。入力は左 (レール → 機器 → 端子)、出力は右
+     (端子 → 負荷 → レール) — 実機のユニットに合わせた鏡像。
+     sd = 現場方向 (+1 右 / -1 左)。外側 = コモン側、内側 = 分岐側は共通 */
+  const sd = sp.side === "right" ? 1 : -1;
+  const comX = snap(dev.x + sd * sp.rail), branchX = comX - sd * sep;
   /* レールは補助行 (COM など) まで伸ばす。入出力行で止めると、いちばん自然な
      操作である「COM をレールへ落とす」が必ず宙吊りになる */
   /* レール頭は 1 行目の 5mm 上。10mm 上げると、電位リンクの三角 (8mm) と
@@ -243,13 +249,14 @@ function buildIoScaffold(page, dev) {
      結線図で意味のない交差を作らないのが JIS Z 8312 の作図) */
   rail(comX, tags.supply, yAll, true);                  // 外側 = コモン側
   rail(branchX, tags.branch, yIo, false);               // 内側 = 各行の分岐もと
-  const gx = branchX + lead, gr = gx + gap;
+  const gx = branchX - sd * lead, gr = gx - sd * gap;   // 隙間の分岐側 / 端子側の端
+  const gLo = Math.min(gx, gr), gHi = Math.max(gx, gr);
   io.forEach(r => {
     /* 隙間に 3 線式センサが置いてあれば、電源線を左右のレールへ引き分ける。
        ただの直列にすると茶線 (BN) が分岐レール = 0V に載ってしまう */
     const s3 = page.devices.map(d2 => ({ d2, t: threeWirePins(symOf(d2.sym)) }))
       .find(({ d2, t }) => t && d2 !== dev && devPins(d2).some(q =>
-        Math.abs(q.y - r.y) < 0.01 && q.x >= gx - 0.01 && q.x <= gr + 0.01));
+        Math.abs(q.y - r.y) < 0.01 && q.x >= gLo - 0.01 && q.x <= gHi + 0.01));
     if (s3) {
       const ps = devPins(s3.d2), t = s3.t;
       line([[comX, ps[t.sup].y], [ps[t.sup].x, ps[t.sup].y]]);     // BN → コモン側 (+24V)
@@ -1119,6 +1126,14 @@ function deviceObstacleBoxes(dev, inset) {
   // 囲み記号 (多芯ケーブル・シールド) の中は「ケーブルそのもの」なので、
   // 心線の線番は囲みの外 — 囲みと端子の間の導体の上 — に置く (図面の作法)。
   // どの機器も外接矩形ぜんぶを避ける、という同じ規則でよい。
+  /* ただし inkBoxes を宣言している記号 (入出力結線図の枠) は帯ごとに避ける。
+     出力の枠は「箱 … 現場側の区画 … 名称欄」と外接矩形のまん中が空いていて、
+     そこは現場機器とそのラベルの置き場所。外接矩形ぜんぶを塞ぐと、
+     ラベルの置き場が無くなって最小重なりの位置 = 名称欄の上に落ちる */
+  const sym = symOf(dev.sym);
+  if (sym && sym.inkBoxes && sym.inkBoxes.length) {
+    return devInkBoxes(dev).map(r => insetRect(r, inset));
+  }
   return [insetRect(devBounds(dev), inset)];
 }
 

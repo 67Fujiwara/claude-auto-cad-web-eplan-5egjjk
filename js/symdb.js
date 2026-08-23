@@ -112,8 +112,9 @@ function mkPort(o) {
 }
 
 /* ── PLC 入出力結線図 (キーエンス KV Nano シリーズ) ─────────────────────
-   実務の入出力結線図の形に合わせる:
+   実務の入出力結線図の形に合わせる。入力と出力は実機のユニットどおり鏡像:
 
+   入力 (現場側が左):
     +24V ┃ 0V ┃                              ┌──────────┐
          ┃    ┣━━[ 機器 ]━━○─┤R007      │ ── 起動押ボタン ──
          ┃    ┃                              │KV-N24AT  │
@@ -123,6 +124,16 @@ function mkPort(o) {
                                              └──────────┘
       外側=      内側=     現場側    端子  端子名は      機能欄 (下線に書く)
       コモン側    分岐側    (実線)   (小円) 外郭の内側
+
+   出力 (箱が左・現場側が右・名称欄は右端):
+    ┌──────────┐
+    │KV-N14AT  │ R500├─○━━[ 負荷 ]━━┃+24V ┃0V   ── 運転表示灯 ──
+    │出力 6点  │                          ┃     ┃
+    │          │ COM ├─○━━━━━━━━━━━━┃   ── 出力コモン ──
+    └──────────┘                    内側=分岐側  外側=コモン側
+
+   機器は rot 270 で置けば向きが合う — 入力は左が電源側 (P,N)・右が信号、
+   出力は左が信号 (出力端子)・右が電源側 (P,N)。
 
    ・用紙 1 枚 = 1 記号 = 「A3 横に収まる行数」(最大 10 点)。チャネル (16 点) は
      またがず、1 チャネルを均等に割る。16 点を 1 枚にすると、機器がぶつからない
@@ -175,9 +186,17 @@ const kvText = (x, y, h, s, anchor = "middle", mono = true) =>
    「行ピッチ」で 25〜35mm へ広げる — 用紙は自動で選び直す */
 const KV_PITCH_MIN = 15, KV_PITCH_MAX = 35, KV_PITCH_DEF = 20;
 
-/** 入出力結線図の中身を行ピッチから組み立てる (伸縮シンボルの寸法違いに使う) */
+/** 入出力結線図の中身を行ピッチから組み立てる (伸縮シンボルの寸法違いに使う)。
+
+    向きは実機のユニットに合わせて入力と出力で鏡像にする:
+    ・入力 (o.fieldSide = "left")  … 現場側が左。レール → 機器 → 端子 → 箱、機能欄は箱の右
+    ・出力 (o.fieldSide = "right") … 箱が左。箱 → 端子 → 機器 → レール、名称 (機能欄) は右端
+    どちらも行の読み順が「電流の入る側 → ユニット」/「ユニット → 負荷 → 電源」になる。
+    機器は rot 270 で置けば、入力は左が電源側 (0V)・右が信号、
+    出力は左が信号 (出力端子)・右が電源側 (+24V) と、自然に向きが合う */
 function kvBuild(o, pitch) {
   const W = KV_BOXW, TR = KV_TERM_R;
+  const flip = o.fieldSide === "right";     // 出力: 現場側が右
   const rows = [];
   o.rows.forEach((n, i) => rows.push({ n, y: KV_Y0 + i * pitch, io: true }));
   /* 補助行 (コモン) は入出力行から 1 ピッチぶん下げる。10mm しか空けないと、
@@ -190,60 +209,69 @@ function kvBuild(o, pitch) {
   /* 端子 (小円) は外郭に接して描き、導体は円の外周で終える。円の中心を外郭線
      の上に置くと、外郭が端子を貫き、導体が円の中心まで入った図になる
      (画面は白塗りで隠れても DXF にはそのまま出る)。
-     ピンは 5mm 格子に乗せたいので、端子を左へ出すのではなく外郭を右へ寄せる —
+     ピンは 5mm 格子に乗せたいので、端子をずらすのではなく外郭を箱側へ寄せる —
      格子から外れたピンは、配線のとき端点が丸められて端子に届かない */
-  const BX = TR * 2;                       // 外郭の左辺 (ピン x=0 から端子の直径ぶん右)
-  parts.push(`<rect x="${BX}" y="0" width="${W}" height="${r1(bh)}"/>`);
+  const BX = flip ? -(TR * 2 + W) : TR * 2;   // 外郭の箱側の辺 (左端の x)
+  parts.push(`<rect x="${r1(BX)}" y="0" width="${W}" height="${r1(bh)}"/>`);
   parts.push(kvText(BX + W / 2, 5, 3.5, o.model, "middle"));
   parts.push(kvText(BX + W / 2, 10, 3.5, o.title, "middle", false));
-  parts.push(`<path d="M${BX},${KV_HDR - 1} H${r1(BX + W)}"/>`);
+  parts.push(`<path d="M${r1(BX)},${KV_HDR - 1} H${r1(BX + W)}"/>`);
+  /* 機能欄の下線の左端。入力は箱の右、出力はレールのさらに右 (右端の名称欄)。
+     出力はレールから 10mm あける — レール頭の電位名 (+24V は半幅 5.8mm) が
+     下線の帯に食い込まないように */
+  const FX = flip ? KV_RAIL + 10 : TR * 2 + W + KV_FN_X;
   let prevIo = null;
   rows.forEach((r, i) => {
     pins.push({ x: 0, y: r.y, n: r.n, noDrc: r.io, inBody: true, row: i });
-    parts.push(`<circle cx="${TR}" cy="${r1(r.y)}" r="${TR}"/>`);
-    if (prevIo === true && !r.io) parts.push(`<path d="M${BX},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
+    parts.push(`<circle cx="${flip ? -TR : TR}" cy="${r1(r.y)}" r="${TR}"/>`);
+    if (prevIo === true && !r.io) parts.push(`<path d="M${r1(BX)},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
     prevIo = r.io;
-    /* 端子名は外郭の内側。外に置くと現場側の配線区画に文字が並び、機器の
-       ピン番号・線番と同じ帯に並んで読み合わせることになる */
-    parts.push(kvText(BX + KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "start"));
-    parts.push(`<path d="M${r1(BX + W + KV_FN_X)},${r1(r.y + 1.5)} H${r1(BX + W + KV_FN_X + KV_FN_W)}" stroke-width="0.25"/>`);
+    /* 端子名は外郭の内側 (端子の丸のすぐ隣)。外に置くと現場側の配線区画に
+       文字が並び、機器のピン番号・線番と同じ帯で読み合わせることになる */
+    if (flip) parts.push(kvText(-TR * 2 - KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "end"));
+    else parts.push(kvText(TR * 2 + KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "start"));
+    parts.push(`<path d="M${r1(FX)},${r1(r.y + 1.5)} H${r1(FX + KV_FN_W)}" stroke-width="0.25"/>`);
   });
   /* 保護接地の図記号は焼き込まない。焼き込むと「紙の上は接地済み・モデルは
      未接続」という食い違いが起き、利用者が指示どおり結線すると導体が接地記号を
-     貫き、別に prot_earth を置けば接地記号が 2 つ並ぶ。PE は端子名で示し、
-     接地は利用者が 02-15-03 を置いて結ぶ (記号は端子より右だけを持つ、の原則) */
-  const bounds = [-2, -2, r1(BX + W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
+     貫き、別に prot_earth を置けば接地記号が 2 つ並ぶ */
+  const bounds = flip
+    ? [r1(BX - 2), -2, r1((FX + KV_FN_W + 2) - (BX - 2)), r1(bh + 4)]
+    : [-2, -2, r1(TR * 2 + W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
   /* 実際に線を引いている帯。外接矩形 (余白つき) をそのまま「インク」として
      申告すると、記号に触れていない導体まで「貫通」になる。
-     ① 端子の丸 + 外郭  ② 機能欄の下線 — その間は何も無い */
-  const inkBoxes = [
-    [0, 0, r1(BX + W), r1(bh)],
-    [r1(BX + W + KV_FN_X), KV_Y0, KV_FN_W, r1(bh - KV_Y0)],
-  ];
+     ① 端子の丸 + 外郭  ② 機能欄の下線 — その間 (出力では現場側の区画) は何も無い */
+  const inkBoxes = flip
+    ? [[r1(BX), 0, r1(TR * 2 + W), r1(bh)], [r1(FX), KV_Y0, KV_FN_W, r1(bh - KV_Y0)]]
+    : [[0, 0, r1(TR * 2 + W), r1(bh)], [r1(FX), KV_Y0, KV_FN_W, r1(bh - KV_Y0)]];
+  // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
+  const gapX1 = flip ? KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD : -(KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP);
+  const gapX0 = gapX1 - KV_GAP;
   return {
     pins, body: parts.join(""), bounds, inkBoxes,
     fnRows: rows.length,
     /* 下地の寸法 (端子からの距離)。テストや使う人がここから隙間の位置を出せる:
-       外側 (コモン側) レール = x - rail / 内側 (分岐側) = x - rail + sep /
-       隙間 = そこから lead だけ右 */
-    ioSheet: { rail: KV_RAIL, gap: KV_GAP, pitch, railTags: o.railTags,
+       side = 現場側がどちらか。外側 (コモン側) レール = x ± rail /
+       内側 (分岐側) = そこから sep だけ機器側 / 隙間 = [x+gapX0, x+gapX1] */
+    ioSheet: { side: flip ? "right" : "left",
+      rail: KV_RAIL, gap: KV_GAP, pitch, railTags: o.railTags,
       sep: KV_RAIL_SEP, lead: KV_RAIL_LEAD,
-      fnTextX: BX + W + KV_FN_X + 1, fnRoom: KV_FN_W - 1,   // 機能欄の文字の左端 / 下線の長さ
-      gapFrom: KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD,
-      gapTo: KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP,
+      fnTextX: FX + 1, fnRoom: KV_FN_W - 1,   // 機能欄の文字の左端 / 下線の長さ
+      gapX0, gapX1,
       rows: rows.map(r => ({ y: r.y, io: r.io })) },
     /* 用紙は「この枚」ではなく「この機種でいちばん行数の多い枚」で決める。
        枚ごとに決めると、行ピッチを広げたとき 1 台の図面集に横と縦が混ざる
        (綴じた図面をめくるたびに紙を回すことになる) */
-    sheet: kvSheetFor({ w: KV_RAIL + bounds[2],
+    sheet: kvSheetFor({ w: flip ? r1(-bounds[0] + FX + KV_FN_W + 2) : r1(KV_RAIL + bounds[2]),
       h: r1(KV_Y0 + (Math.max(o.maxIo || o.rows.length, 1) - 1) * pitch +
         Math.max(KV_AUXROW, pitch) + ((o.aux || []).length - 1) * KV_AUXROW + KV_BOT + 6) }),
   };
 }
 
-/** 入出力結線図の記号 (1 群ぶん)。端子は箱の左、機能欄は箱の右 */
+/** 入出力結線図の記号 (1 群ぶん)。入力は端子が箱の左、出力は端子が箱の右 */
 function mkKvSheet(o) {
   const built = kvBuild(o, KV_PITCH_DEF);
+  const flip = o.fieldSide === "right";
   return {
     id: o.id, db: true, group: "PLC入出力結線図", cat: "db", letter: "A",
     nonstd: true, swapGroup: o.swapGroup, unitSheet: true,
@@ -252,9 +280,10 @@ function mkKvSheet(o) {
       "外郭 + 端子 + 端子名。端子の図記号番号は規格原本との照合が必要)。" +
       "COM の分割と端子台の刻印は機種の取扱説明書で確認してください。" +
       "ユニットの電源と接地は別紙の電源回路図に描きます",
-    sim: "none", thumbBox: [0, 0, KV_BOXW, 16],
-    /* 機器タグは見出しの左 (箱の左肩)。1 行目より上なので現場側の区画を汚さない */
-    tagAnchor: { x: -2, y: 6, anchor: "end" },
+    sim: "none", thumbBox: flip ? [-(KV_TERM_R * 2 + KV_BOXW), 0, KV_BOXW, 16] : [0, 0, KV_BOXW, 16],
+    /* 機器タグは箱の肩 (入力=左肩・出力=右肩)。1 行目より上なので
+       現場側の区画を汚さない */
+    tagAnchor: flip ? { x: 2, y: 6, anchor: "start" } : { x: -2, y: 6, anchor: "end" },
     ...built,
     /* 行ピッチの寸法違い。現場機器がぶつからない距離を図ごとに選べる */
     stretch: {
@@ -350,6 +379,9 @@ function mkKvUnit(model, nIn, nOut) {
          帰りは +24V。分岐用レールは機器・負荷の帰り側になる。
          どちらの紙でも「外側 = コモン側 / 内側 = 分岐側」で位置をそろえる */
       railTags: g.kind === "入力" ? { branch: "0V", supply: "+24V" } : { branch: "+24V", supply: "0V" },
+      /* 実機のユニットに合わせて、入力は現場側が左・出力は現場側が右 (鏡像)。
+         1 台ぶんを並べたとき「入力 → ユニット → 出力」と電流の向きに読める */
+      fieldSide: g.kind === "入力" ? "left" : "right",
       swapGroup: `kv_nano_${kindId}`,
       name: `${model} ${g.kind}結線図${no}`, nameEn: `${model} ${g.kind === "入力" ? "input" : "output"} wiring`,
       desc: `キーエンス KV Nano 基本ユニット ${model} の${g.kind}結線図 (${rows[0]}〜${rows[rows.length - 1]} の${g.n}点)。` +
