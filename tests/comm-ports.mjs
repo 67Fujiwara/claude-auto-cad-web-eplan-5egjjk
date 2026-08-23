@@ -1,5 +1,5 @@
-/* コントローラの通信ポート (EtherNet/IP・USB-A/B/C・HDMI) が、パレットでも図面でも
-   一目で見分けられることを確かめる。
+/* コントローラの通信ポート (EtherNet/IP)。USB-A/B/C・HDMI は指示により削除し、
+   残った RJ45 が LAN の口と一目で分かることを確かめる。
 
    記号は「受け口の識別図 + ラベル」の見出しと、JIS C 0617-3 03-03-05
    「プラグおよびソケット」1極の組み合わせ。LAN・USB・HDMI は既製ケーブル 1 品目
@@ -11,8 +11,11 @@
    して、位置だけ機器と一緒に回し姿勢は変えない (画面・DXF とも)。
 
    判定
-   ・識別図が互いに違う形であること (外形の指紋。x・y を同じ倍率で正規化して
-     いるので縦横比の違いも含む)
+   ・USB-A/B/C・HDMI が削除されていること
+   ・RJ45 の識別図が LAN らしいこと — モジュラジャック特有の 2 段のラッチ溝
+     (すぼまりの段が 2 つ = 高さの段が 3 つ) と接点 8 本
+   ・接続が関係ない図として扱うこと — シミュレーションで導通せず、
+     置いただけ (未配線) でも未接続の警告が出ない
    ・識別図の全ての path が細線 0.25mm であること (電気的な意味を持つ図記号は
      0.5mm。JIS Z 8312 の線幅列で区別する)
    ・回転 0/90/180/270 のどれでも見出しが正立し、外接矩形の内側に収まること
@@ -35,10 +38,6 @@ await p.waitForTimeout(900);
    ものではないが、情報を捨てはしない) */
 const EXPECT = {
   conn_rj45: /端子 1=TD\+ 2=TD- 3=RD\+ 6=RD-/,
-  conn_usb_a: /端子 1=VBUS 2=D- 3=D\+ 4=GND/,
-  conn_usb_b: /端子 1=VBUS 2=D- 3=D\+ 4=GND/,
-  conn_usb_c: /A1〜A12 \/ B1〜B12/,
-  conn_hdmi: /端子 1〜9=TMDS/,
 };
 const R = await p.evaluate((EXPECT) => {
   const NS = "http://www.w3.org/2000/svg";
@@ -174,23 +173,33 @@ const R = await p.evaluate((EXPECT) => {
   });
   out.dxfShapes = shapes;
   if (new Set(Object.values(shapes)).size !== 1) out.dxfRot.push(JSON.stringify(shapes));
-  // 図面に置く: 機能テキストの既定値と検図
+  // 指示による削除: USB-A/B/C・HDMI はもう無い
+  out.removed = ["conn_usb_a", "conn_usb_b", "conn_usb_c", "conn_hdmi"]
+    .every(id => !!(symOf(id) || {}).missing);
+  /* LAN らしさ: 2 段のラッチ溝 (すぼまりの高さの段が 3 つ) + 接点 8 本 */
+  {
+    const blk = blockOf("conn_rj45");
+    const outline = (/<path d="(M-6,-4[^"]*)"/.exec(blk.src) || [])[1] || "";
+    const levels = new Set([...outline.matchAll(/V(-?[\d.]+)/g)].map(m => +m[1]).filter(v => v > 0));
+    out.lan = { pins8: (blk.src.match(/M-?[\d.]+,-4 V-1/g) || []).length,
+      latchLevels: levels.size };
+  }
+  /* 接続が関係ない図: シミュレーションで導通しない・未配線でも警告が出ない */
   const pg3 = newPage("x", 1); App.project.pages = [pg3]; App.pageIdx = 0;
-  let x = 60;
-  IDS.forEach((id, k) => {
-    const d = addDevice(pg3, id, x, 80, { tag: `-X${k + 1}` });
-    if (id === "conn_rj45") out.fn = d.desc;
-    devPins(d).forEach(q => addWire(pg3, [[q.x - 15, q.y], [q.x, q.y]]));
-    x += devBounds(d).w + 26;
-  });
-  out.drc = runDRC().filter(i => i.page === pg3.no && !/端点|未接続/.test(i.msg)).map(i => i.msg);
+  const d = addDevice(pg3, "conn_rj45", 60, 80, { tag: "-X1" });
+  out.fn = d.desc;
+  out.sim = { pairs: ["closed", "open", "split", "sim"].map(m => conductivePairs(d, m).length),
+    noDrcSym: !!symOf("conn_rj45").noDrc };
+  out.drc = runDRC().filter(i => i.page === pg3.no).map(i => i.msg);
   probe.remove(); return out;
 }, Object.fromEntries(Object.entries(EXPECT).map(([k, v]) => [k, v.source])));
 console.log(JSON.stringify({ ...R, ports: Object.fromEntries(Object.entries(R.ports).map(([k, v]) => [k, v && { w: v.w, h: v.h, len: v.len, paths: v.paths }])) }, null, 1));
 const checks = {
   hasBlock: R.noBlock.length === 0,               // 記号本体に見出しがある
   thinLine: R.thick.length === 0,                 // 識別図の全 path が細線
-  distinct: R.sameShape.length === 0,             // 形が互いに違う
+  removed: R.removed === true,                    // USB-A/B/C・HDMI は削除済み
+  lanGlyph: (R.lan || {}).pins8 === 8 && R.lan.latchLevels >= 3,   // 2 段ラッチ + 接点 8 本
+  simOff: (R.sim || {}).pairs && R.sim.pairs.every(v => v === 0) && R.sim.noDrcSym === true,
   upright: R.notUpright.length === 0,             // 4 方向で正立
   inBounds: R.outOfBounds.length === 0,           // 外接矩形の内側
   dxfThin: R.dxfThin.length === 0,                // DXF でも細線レイヤ

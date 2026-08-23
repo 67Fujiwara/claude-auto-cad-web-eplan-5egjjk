@@ -10,7 +10,7 @@ const DB_DEFAULT_PINNED = [
   "cable_core", "shield", "plug_socket", "insul_end", "prot_earth", "func_earth",
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
   "cp1", "cp2", "cont_no_main", "cont_nc_main",
-  "conn_rj45", "conn_usb_a", "conn_hdmi",
+  "conn_rj45",
   // KV Nano は全機種を出しておく (枚数は機種で違う)
   "kv_n14at_in", "kv_n14at_out", "kv_n24at_in1", "kv_n24at_in2", "kv_n24at_out1", "kv_n24at_out2",
   "kv_n40at_in1", "kv_n40at_in2", "kv_n40at_in3", "kv_n40at_out1", "kv_n40at_out2",
@@ -104,7 +104,9 @@ function mkPort(o) {
     stdNote: "プラグおよびソケット (JIS C 0617-3 03-03-05) 1極。上の細線は受け口の識別図で、電気的な意味は持たない",
     // 左=機器側 / 右=ケーブル側。1極なので接続は 1 本
     pins: [{ x: 0, y: 0, n: "" }, { x: 20, y: 0, n: "" }],
-    sim: "passthru",
+    /* 通信は「接続が関係ない図」(どの口にどのケーブルが刺さるかの説明図)
+       として扱う — 制御回路のシミュレーションにも、未接続の検図にも載せない */
+    sim: "none", noDrc: true,
     // 図形は x 0〜20 / y -3.5〜3.5、見出しは x 3〜17 / y -20〜-6。余白は一様 2mm
     bounds: [-2, cy - BLK / 2 - 2, 24, (3.5 + 2) - (cy - BLK / 2 - 2)],
     thumbBox: [cx - BLK / 2, cy - BLK / 2, BLK, BLK],
@@ -879,30 +881,12 @@ const DB_SYMBOLS = [
     name: "EtherNet/IP ポート (RJ45)", nameEn: "EtherNet/IP port (RJ45)",
     desc: "8極モジュラジャック。EtherNet/IP・PROFINET など産業用イーサネット共通。ツメ (ラッチ) 付きの受け口。端子 1=TD+ 2=TD- 3=RD+ 6=RD- (100BASE-TX)",
     typ: "8P8C シールド付",
-    // RJ45 ジャック正面: 角穴 + 下側のラッチ溝 + 接点 8 本
-    glyph: '<path d="M-5.5,-3.2 H5.5 V1.4 H1.8 V3.2 H-1.8 V1.4 H-5.5 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
-           '<path d="M-3.85,-3.2 V-0.8 M-2.75,-3.2 V-0.8 M-1.65,-3.2 V-0.8 M-0.55,-3.2 V-0.8 M0.55,-3.2 V-0.8 M1.65,-3.2 V-0.8 M2.75,-3.2 V-0.8 M3.85,-3.2 V-0.8" stroke-width="0.25"/>' }),
-  mkPort({ id: "conn_usb_a", label: "USB-A", letter: "X", fn: "USB",
-    name: "USB ポート (Type-A)", nameEn: "USB port Type-A",
-    desc: "ティーチング・パラメータ設定用。平たい長方形の受け口。端子 1=VBUS 2=D- 3=D+ 4=GND", typ: "USB2.0 Type-A",
-    // Type-A 受け口正面: 平たい角穴 + 中の舌 (片寄り)
-    glyph: '<path d="M-5,-2.4 H5 V2.4 H-5 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
-           '<path d="M-3.6,0 H3.6 V1.4 H-3.6 Z" stroke-width="0.25" stroke-linejoin="miter"/>' }),
-  mkPort({ id: "conn_usb_b", label: "USB-B", letter: "X", fn: "USB",
-    name: "USB ポート (Type-B)", nameEn: "USB port Type-B",
-    desc: "機器側の受け口。コントローラのティーチングポートに多い。上二隅を落とした角穴。端子 1=VBUS 2=D- 3=D+ 4=GND", typ: "USB2.0 Type-B",
-    glyph: '<path d="M-3.2,3 H3.2 V-1.4 L1.9,-3 H-1.9 L-3.2,-1.4 Z" stroke-width="0.25" stroke-linejoin="miter"/>' }),
-  mkPort({ id: "conn_usb_c", label: "USB-C", letter: "X", fn: "USB",
-    name: "USB ポート (Type-C)", nameEn: "USB port Type-C",
-    desc: "電源・信号兼用。CC で向きと給電を判定。長円の受け口。接点は A1〜A12 / B1〜B12 (VBUS・GND・CC1/CC2・D±・SBU1/2)", typ: "USB Type-C",
-    glyph: '<path d="M-2.7,-1.8 H2.7 A1.8,1.8 0 0 1 2.7,1.8 H-2.7 A1.8,1.8 0 0 1 -2.7,-1.8 Z" stroke-width="0.25"/>' }),
-  mkPort({ id: "conn_hdmi", label: "HDMI", letter: "X", fn: "HDMI",
-    name: "HDMI ポート (Type-A)", nameEn: "HDMI port Type-A",
-    desc: "19極。表示器・タッチパネルの映像用。下辺の両隅を非対称に落とした受け口。端子 1〜9=TMDS D2/D1/D0 10〜12=TMDS クロック 13=CEC 15/16=DDC 18=+5V 19=HPD", typ: "HDMI Type-A",
-    // Type-A 受け口正面: 下側の隅を左右で違う角度に落とした形 (差し込みの向き決め)
-    glyph: '<path d="M-6,-2.4 H6 V0.4 L3.2,2.4 H-2.4 L-6,0.2 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
-           '<path d="M-4.4,-0.9 H4.4" stroke-width="0.25"/>' }),
-  mkConn({ id: "conn_dsub9", label: "D-sub9", letter: "X",
+    /* RJ45 ジャック正面。LAN の口と一目で分かるように、モジュラジャック特有の
+       「2 段のラッチ溝」(肩が 2 回すぼまる) を描き、接点 8 本も長めに出す。
+       1 段だけだと角穴にしか見えない */
+    glyph: '<path d="M-6,-4 H6 V0.6 H3.9 V2.3 H1.9 V4 H-1.9 V2.3 H-3.9 V0.6 H-6 Z" stroke-width="0.25" stroke-linejoin="miter"/>' +
+           '<path d="M-3.85,-4 V-1 M-2.75,-4 V-1 M-1.65,-4 V-1 M-0.55,-4 V-1 M0.55,-4 V-1 M1.65,-4 V-1 M2.75,-4 V-1 M3.85,-4 V-1" stroke-width="0.25"/>' }),
+          mkConn({ id: "conn_dsub9", label: "D-sub9", letter: "X",
     name: "D-sub コネクタ 9極", nameEn: "D-sub 9-pin",
     desc: "RS-232C / RS-422 などのシリアル通信", typ: "D-sub 9P",
     sigs: ["1", "2", "3", "4", "5", "6", "7", "8", "9"] }),
@@ -944,7 +928,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 6;
+const DB_PINNED_VER = 7;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");
