@@ -202,10 +202,13 @@ function kvSeqRows(seq, pitch) {
   return seq.map((e, i) => {
     if (i > 0) {
       const prev = seq[i - 1];
-      y += prev.io && e.io ? pitch
+      /* 信号行とコモン行のピッチはそろえる (行送りは全部 pitch)。
+         コモンの次だけ詰めると 20/10 の交互の刻みになって読みにくい。
+         例外はサービス電源 (0V/24V) — 対で 5mm に詰め、次の行へは補助ピッチ */
+      y += (prev.svc && e.svc) ? 5
+        : prev.svc ? KV_AUXROW
         : prev.io && !e.io ? Math.max(KV_AUXROW, pitch)
-        : (prev.svc && e.svc) ? 5          // サービス電源 (0V/24V) は対で詰める
-        : KV_AUXROW;
+        : pitch;
     }
     return { n: e.n, y, io: e.io, noDrc: e.noDrc };
   });

@@ -485,8 +485,11 @@ const R = await p.evaluate(() => {
     const nets = computeNets(q, "closed");
     const outer = q.devices.find(d2 => d2.gen === dd.id && symOf(d2.sym).sim === "link" && d2.tag === "N24V");
     const comIdx = s0.pins.map((p2, k) => [p2, k]).filter(([p2]) => /^C\d+$/.test(p2.n));
+    const rr2 = s0.ioSheet.rows;
+    const fio = rr2.findIndex(r => r.io);
     out.splitCom = {
       order: s0.pins.map(p2 => p2.n).join(","),
+      even: rr2.slice(fio + 1).every((r, i) => r.y - rr2[fio + i].y === s0.ioSheet.pitch),
       coms: comIdx.length,
       allOn0V: !!outer && comIdx.every(([, k]) => nets.pinNet(dd, k) === nets.pinNet(outer, 0)),
       drc: runDRC().filter(i => i.page === q.no).map(i => `${i.sev}:${i.msg}`) };
@@ -815,6 +818,8 @@ const checks = {
   /* 分割コモン (KV-N14AR): 取説どおりの並びで、コモン 4 つが全部 0V レールへ結ばれる */
   splitCom: (R.splitCom || {}).order === "0V,24V,500,C1,501,C2,502,C3,503,504,505,C4" &&
     R.splitCom.coms === 4 && R.splitCom.allOn0V === true &&
+    // 信号行とコモン行のピッチがそろっている (サービス電源より下は全部 20mm)
+    R.splitCom.even === true &&
     Array.isArray(R.splitCom.drc) && R.splitCom.drc.length === 0,
   /* 実機のユニットに合わせた鏡像: 入力は現場側が左 (箱は端子の右 = boxX > 0、
      名称欄は箱の右 = fnTextX < rail)。出力は箱が左 (boxX < 0)、
