@@ -250,9 +250,27 @@ const R = await p.evaluate(() => {
         toOther: +Math.min(...others).toFixed(2), onGlyph: on };
     });
   }
+  /* 機器を置き、配線は自分で引く (行のスタブはもう描かれない)。
+     行ごと: 分岐レール → 機器 → 端子 */
   const sp = t.sym.ioSheet;
+  const branchX0 = t.d.x - sp.rail + sp.sep;
+  const wireRow = (pg2, dd2, d2, rowY) => {
+    const ps = devPins(d2);
+    const left = ps[0].x <= ps[ps.length - 1].x ? ps[0] : ps[ps.length - 1];
+    const right = ps[0].x <= ps[ps.length - 1].x ? ps[ps.length - 1] : ps[0];
+    const sp2 = symOf(dd2.sym).ioSheet;
+    const bx = sp2.side === "right" ? dd2.x + sp2.rail - sp2.sep : dd2.x - sp2.rail + sp2.sep;
+    if (sp2.side === "right") {
+      addWire(pg2, [[dd2.x, rowY], [left.x, rowY]]);
+      addWire(pg2, [[right.x, rowY], [bx, rowY]]);
+    } else {
+      addWire(pg2, [[bx, rowY], [left.x, rowY]]);
+      addWire(pg2, [[right.x, rowY], [dd2.x, rowY]]);
+    }
+  };
   sp.rows.filter(r => r.io).forEach(r => {
-    addDevice(t.pg, "pb_no", t.d.x + sp.gapX0, t.d.y + r.y, { tag: "", rot: 270 });
+    const d2 = addDevice(t.pg, "pb_no", t.d.x + sp.gapX0, t.d.y + r.y, { tag: "", rot: 270 });
+    wireRow(t.pg, t.d, d2, t.d.y + r.y);
   });
   /* コモンは下地が外側のレール (入力なら +24V) へ自動で結ぶ。
      いちばん自然な操作なのに手でやると必ず宙吊りになっていたので、引くようにした */
@@ -381,7 +399,10 @@ const R = await p.evaluate(() => {
     buildIoScaffold(q, dd);
     const spA = symOf(dd.sym).ioSheet;
     const rowsA = spA.rows.filter(r => r.io);
-    rowsA.forEach(r => addDevice(q, "pb_no", dd.x + spA.gapX0, dd.y + r.y, { tag: "", rot: 270 }));
+    rowsA.forEach(r => {
+      const d2 = addDevice(q, "pb_no", dd.x + spA.gapX0, dd.y + r.y, { tag: "", rot: 270 });
+      wireRow(q, dd, d2, dd.y + r.y);
+    });
     const base2 = symStretchBase(symOf(dd.sym));
     symStretchVariant(base2, 30);
     const oldSp = symOf(dd.sym).ioSheet;
@@ -420,7 +441,10 @@ const R = await p.evaluate(() => {
     buildIoScaffold(q, dd);
     const spO = symOf(dd.sym).ioSheet;
     const rowsO = spO.rows.filter(r => r.io);
-    rowsO.forEach((r, i) => addDevice(q, "lamp", dd.x + spO.gapX0, dd.y + r.y, { tag: `-P${i + 1}`, rot: 270 }));
+    rowsO.forEach((r, i) => {
+      const d2 = addDevice(q, "lamp", dd.x + spO.gapX0, dd.y + r.y, { tag: `-P${i + 1}`, rot: 270 });
+      wireRow(q, dd, d2, dd.y + r.y);
+    });
     App.labelRev++;
     const netsO = computeNets(q, "closed");
     out.outSheet = {
@@ -497,10 +521,9 @@ const R = await p.evaluate(() => {
     App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
   }
 
-  /* ④c 3 線式センサ (現場の主役)。隙間へ落として「下地を作る」を押すだけで、
-     茶=+24V (コモン側レール) / 青=0V (分岐レール) / 黒=入力端子 に引き分かれること。
-     直列の隙間は 2 線のドライ接点用なので、素直に直列でつなぐと茶が 0V に載り、
-     そのまま結線するとセンサが壊れる。押す前はエラーで知らせること */
+  /* ④c 3 線式センサ (現場の主役)。配線は自分で引く方式なので、
+     茶=P24V (コモン側レール) / 青=N24V (分岐レール) / 黒=入力端子 へ手で引く。
+     茶を N24V へ引き間違えたら「3線式センサの電源が逆」のエラーで知らせること */
   {
     const q = newPage("3線センサ", App.project.pages.length + 1);
     App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
@@ -514,10 +537,16 @@ const R = await p.evaluate(() => {
     const r0 = sp4.rows.find(r => r.io), ry = dd.y + r0.y;
     const sens2 = addDevice(q, "prox", dd.x + sp4.gapX0, ry, { tag: "-B8", rot: 270 });
     const sp5 = devPins(sens2);
+    const at0 = n => sp5.find(x => x.name === n);
+    // まず引き間違い: 茶 (BN) を N24V (分岐レール) へ → エラーで知らせる
+    const wrong = addWire(q, [[branchX, at0("BN").y], [at0("BN").x, at0("BN").y]]);
     App.labelRev++;
-    // 置いただけ (直列のまま) はエラー。茶が 0V に載っている
     const bad = runDRC().filter(i => i.target === sens2.id);
-    const rebuilt = buildIoScaffold(q, dd);           // ここで引き分かれる
+    q.wires.splice(q.wires.indexOf(wrong), 1);
+    // 正しく引く: 茶→P24V / 青→N24V / 黒→端子
+    addWire(q, [[supplyX, at0("BN").y], [at0("BN").x, at0("BN").y]]);
+    addWire(q, [[branchX, at0("BU").y], [at0("BU").x, at0("BU").y]]);
+    addWire(q, [[at0("BK").x, at0("BK").y], [dd.x, ry]]);
     App.labelRev++;
     const nets2 = computeNets(q, "closed");
     const at = n => sp5.findIndex(x => x.name === n);
@@ -538,7 +567,7 @@ const R = await p.evaluate(() => {
       // 押す前: 茶が 0V 側という誤りをエラーで知らせる
       beforeSev: bad.map(i => i.sev).join(","),
       beforeRule: bad.map(i => i.rule || "?").join(","),
-      rebuilt: rebuilt > 0,
+
       drc: runDRC().filter(i => i.page === q.no && i.target === sens2.id).map(i => i.msg),
       // 茶が +24V レール、青が 0V レール、黒が入力端子と同じネット
       bnOnSupply: nets2.pinNet(sens2, at("BN")) === nets2.pinNet(linkAt(supplyX), 0),
@@ -682,8 +711,15 @@ const V1 = await p.evaluate(() => {
   const dd = addDevice(q, "kv_n14at_out", Math.ceil((fr.x - s0.bounds[0] + 5) / 5) * 5, fr.y + 10, { tag: "-A80" });
   buildIoScaffold(q, dd);
   const sp = s0.ioSheet;
-  sp.rows.filter(r => r.io).forEach((r, i) =>
-    addDevice(q, "lamp", dd.x + sp.gapX0, dd.y + r.y, { tag: `-P8${i}`, rot: 270 }));
+  /* 配線は自分で引く方式: 行ごとに 端子 → 負荷 → 分岐レール (P24V) を引く */
+  const bxV = dd.x + sp.rail - sp.sep;
+  sp.rows.filter(r => r.io).forEach((r, i) => {
+    const d2 = addDevice(q, "lamp", dd.x + sp.gapX0, dd.y + r.y, { tag: `-P8${i}`, rot: 270 });
+    const ps = devPins(d2);
+    const L = ps[0].x <= ps[1].x ? ps[0] : ps[1], R2 = ps[0].x <= ps[1].x ? ps[1] : ps[0];
+    addWire(q, [[dd.x, dd.y + r.y], [L.x, L.y]]);
+    addWire(q, [[R2.x, R2.y], [bxV, dd.y + r.y]]);
+  });
   App.selection.clear(); App.selection.add(dd.id);
   UI.showProps(); App.labelRev++;
   return { drc0: runDRC().filter(i => i.page === q.no).length };
@@ -740,7 +776,12 @@ const W1 = await p.evaluate(() => {
   const tags = [...new Set(q.devices.filter(d => d.gen === dd.id && symOf(d.sym).sim === "link")
     .map(d => d.tag))].sort();
   App.labelRev++;
-  const r = { railsDrawn: gen.length, tags: tags.join(","),
+  /* 引かれるのはレール 2 本とコモンの結線だけ。行ごとのスタブ (端子から
+     出る宙に浮いた配線) は無い — 配線は自分で引く */
+  const ioYs = new Set(s0.ioSheet.rows.filter(r2 => r2.io).map(r2 => dd.y + r2.y));
+  const stubs = gen.filter(w => w.pts.every(pt2 => Math.abs(pt2[1] - w.pts[0][1]) < 0.01) &&
+    ioYs.has(w.pts[0][1])).length;
+  const r = { railsDrawn: gen.length, stubs, tags: tags.join(","),
     drc: runDRC().filter(i => i.page === q.no).length,
     // A3 縦をびっしり使っているか (16 点 + C0 の行の広がり)
     rowSpan: s0.ioSheet.rows[s0.ioSheet.rows.length - 1].y - s0.ioSheet.rows[0].y,
@@ -813,8 +854,13 @@ const checks = {
   /* パレットから置いた瞬間にレールが引かれる。タグは P24V/N24V (スクショの呼び方)。
      16 点 + C0 の行の広がりは 320mm — A3 縦 (作図領域 400) をびっしり使う。
      機能欄の下線は 50mm (長すぎたので半分にした) */
-  preRails: W1.railsDrawn > 0 && W1.tags === "N24V,P24V" && W1.drc === 0 &&
+  preRails: W1.railsDrawn === 3 && W1.stubs === 0 && W1.tags === "N24V,P24V" && W1.drc === 0 &&
     W1.rowSpan >= 320 && W1.fnRoom === 49,
+  /* 出力の A3 縦置きは横幅をぎりぎりまで使う — 現場側 (レールまでの距離) を
+     160mm へ広げる (箱 36 + 現場 160 + コメント欄 62 ≈ 作図領域 267)。
+     A3 横の出力 (8 点以下の機種) は従来の 80mm のまま */
+  fillWidth: (R.group.kv_n40at_out || {}).rail >= 155 && (R.group.kv_n24at_out || {}).rail >= 155 &&
+    (R.group.kv_n14at_out || {}).rail === 80 && (R.group.kv_n40at_in1 || {}).rail === 80,
   /* 分割コモン (KV-N14AR): 取説どおりの並びで、コモン 4 つが全部 0V レールへ結ばれる */
   splitCom: (R.splitCom || {}).order === "0V,24V,500,C1,501,C2,502,C3,503,504,505,C4" &&
     R.splitCom.coms === 4 && R.splitCom.allOn0V === true &&
@@ -870,9 +916,9 @@ const checks = {
   // 機能欄の文言が紙からはみ出したら検図で出る (下線からのはみ出しも分かる)
   fnDrc: (R.fnDrc || {}).before === 0 && R.fnDrc.out === true && R.fnDrc.over === true,
   // 3 線式センサ (茶=+24V / 青=0V / 黒=入力) が結線できる
-  sensor3: (R.sensor3 || {}).drc && R.sensor3.drc.length === 0 && R.sensor3.rebuilt === true &&
+  sensor3: (R.sensor3 || {}).drc && R.sensor3.drc.length === 0 &&
     R.sensor3.bnOnSupply === true && R.sensor3.buOnBranch === true && R.sensor3.bkOnTerminal === true &&
-    // 引き分ける前は「茶が 0V 側」をエラーで知らせる (未接続の警告では足りない)
+    // 茶を N24V へ引き間違えたら「電源が逆」をエラーで知らせる (未接続の警告では足りない)
     /err/.test(R.sensor3.beforeSev || "") && /3線式センサの電源が逆/.test(R.sensor3.beforeRule || ""),
   // 1 台を複数枚に分けて描いてもタグ重複にならず、部品表は 1 行 1 台
   unitSheets: (R.unit || {}).dupTag === 0 && R.unit.bomRows === 1 &&

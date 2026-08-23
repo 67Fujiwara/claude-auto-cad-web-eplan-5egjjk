@@ -231,6 +231,22 @@ function kvBuild(o, pitch) {
   const flip = o.fieldSide === "right";     // 出力: 現場側が右
   const rows = kvSeqRows(o.seq, pitch);
   const bh = rows[rows.length - 1].y + KV_BOT;
+  /* 用紙は高さで決まる (幅が決め手になることはない)。先に決めて、
+     出力の縦置きでは現場側 (レールまでの距離) を広げ、図枠の横幅を
+     ぎりぎりまで使う — コメント欄 (50mm) は右端に寄る */
+  const sheetH = r1(Math.max(...(o.allSeqs || [o.seq]).map(q => kvSeqH(q, pitch))));
+  /* 幅は「本物の最小幅」を渡す。1 などの仮値だと「表題欄の左に収まる細い記号」
+     と誤判定され、右下の帯 (表題欄 + 改訂履歴欄) を確保しない高さで
+     用紙が選ばれてしまう。この記号は最小でも 170mm ある */
+  const sheet = kvSheetFor({ w: 170, h: sheetH });
+  let RAIL = KV_RAIL;
+  if (flip && sheet.orient === "portrait") {
+    const pp = KV_PAPERS.find(x => x.paper === sheet.paper && x.orient === sheet.orient);
+    const c = sheet.paper === "A1" ? 20 : 10;
+    const inW = pp.w - Math.max(20, c) - c;
+    // 幅 = 箱 (2TR+W+2) + 現場側 + あき 10 + コメント欄 + 2。左右あわせて 8mm 残す
+    RAIL = Math.floor((inW - 8 - (TR * 2 + W + 2) - (10 + KV_FN_W + 2)) / 5) * 5;
+  }
   const pins = [], parts = [];
   /* 端子 (小円) は外郭に接して描き、導体は円の外周で終える。円の中心を外郭線
      の上に置くと、外郭が端子を貫き、導体が円の中心まで入った図になる
@@ -245,7 +261,7 @@ function kvBuild(o, pitch) {
   /* 機能欄の下線の左端。入力は箱の右、出力はレールのさらに右 (右端の名称欄)。
      出力はレールから 10mm あける — レール頭の電位名 (+24V は半幅 5.8mm) が
      下線の帯に食い込まないように */
-  const FX = flip ? KV_RAIL + 10 : TR * 2 + W + KV_FN_X;
+  const FX = flip ? RAIL + 10 : TR * 2 + W + KV_FN_X;
   rows.forEach((r, i) => {
     /* noDrc: 未使用でも黙る端子。入出力点とサービス電源 (0V/24V) は使わない
        図面が普通にある。コモンは黙らせない — 浮いていれば群ごと動かない */
@@ -277,7 +293,9 @@ function kvBuild(o, pitch) {
     : [[0, 0, TR * 2 + W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]])
     .map(([x, y, w2, h2]) => [r1(x - HW), r1(y - HW), r1(w2 + HW * 2), r1(h2 + HW * 2)]);
   // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
-  const gapX1 = flip ? KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD : -(KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP);
+  /* 現場機器の置き場所の目安 (内側レールから引出しぶん端子側)。
+     配線は自分で引く方式なので、これは配置の案内に使うだけ */
+  const gapX1 = flip ? RAIL - KV_RAIL_SEP - KV_RAIL_LEAD : -(RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP);
   const gapX0 = gapX1 - KV_GAP;
   return {
     pins, body: parts.join(""), bounds, inkBoxes,
@@ -286,18 +304,16 @@ function kvBuild(o, pitch) {
        side = 現場側がどちらか。外側 (コモン側) レール = x ± rail /
        内側 (分岐側) = そこから sep だけ機器側 / 隙間 = [x+gapX0, x+gapX1] */
     ioSheet: { side: flip ? "right" : "left",
-      rail: KV_RAIL, gap: KV_GAP, pitch, railTags: o.railTags,
+      rail: RAIL, gap: KV_GAP, pitch, railTags: o.railTags,
       sep: KV_RAIL_SEP, lead: KV_RAIL_LEAD,
       fnTextX: FX + 1, fnRoom: KV_FN_W - 1,   // 機能欄の文字の左端 / 下線の長さ
       gapX0, gapX1,
       // 後方互換 (公開していた旧フィールド。dev.x - gapFrom = 隙間の左端)
       gapFrom: -gapX0, gapTo: -gapX1,
       rows: rows.map(r => ({ y: r.y, io: r.io })) },
-    /* 用紙は「この枚」ではなく「この機種でいちばん背の高い枚」で決める。
-       枚ごとに決めると、行ピッチを広げたとき 1 台の図面集に横と縦が混ざる
-       (綴じた図面をめくるたびに紙を回すことになる)。入力と出力もそろえる */
-    sheet: kvSheetFor({ w: flip ? r1(-bounds[0] + FX + KV_FN_W + 2) : r1(KV_RAIL + bounds[2]),
-      h: r1(Math.max(...(o.allSeqs || [o.seq]).map(q => kvSeqH(q, pitch)))) }),
+    /* 用紙は「この機種でいちばん背の高い枚」で先に決めてある (上の sheet)。
+       枚ごとに決めると、行ピッチを広げたとき 1 台の図面集に横と縦が混ざる */
+    sheet,
   };
 }
 
@@ -463,7 +479,7 @@ function mkKvUnit(model, cfg) {
           `端子の刻印は取扱説明書の回路図どおり (デバイス番号は R + 数字)。` +
           (cfg.relay && kind === "出力" ? `リレー出力でコモンは分割 (${gs.map(g => `${g.com}=${g.pts.join("·")}`).join(" / ")})。` : "") +
           (kind === "出力" && i === 0 ? `0V/24V はユニットのサービス電源端子。` : "") +
-          `置くと P24V/N24V のレールと各行の分岐が実線で引かれます (引き直しは「結線図の下地を作る」)。` +
+          `置くと P24V/N24V のレールとコモンの結線が実線で引かれます — 端子までの配線は自分で引きます。` +
           `機能欄の文言はプロパティでまとめて入れられます。ユニットの電源と接地は別紙の電源回路図に描きます。`,
       }));
     });

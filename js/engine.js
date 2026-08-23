@@ -170,66 +170,85 @@ function clearIoScaffold(page, dev) {
   devs.forEach(d => page.devices.splice(page.devices.indexOf(d), 1));
   return wires.length + devs.length;
 }
-/** 行ピッチを変えたとき、隙間に置いてある現場機器を新しい行の高さへ運ぶ。
-    記号の寸法違いだけ差し替えると、下地は引き直せても機器は旧位置に残り、
-    行から外れて宙に浮く。行番号で対応づけるので、行数が同じかぎり必ず合う */
+/** 行ピッチや機種を変えたとき、行の高さに合わせて描いてある現場機器と
+    配線を新しい行へ運ぶ。配線は利用者が自分で引く方式なので、行の y に
+    水平に載っている配線 (レール↔機器↔端子) を丸ごと平行移動し、
+    その行に乗っている機器も一緒に動かす。行番号で対応づけるので、
+    行数が同じかぎり必ず合う */
 function moveIoRowDevices(page, dev, oldSp, newSp) {
   if (!oldSp || !newSp || oldSp.rows.length !== newSp.rows.length) return 0;
-  const x0 = dev.x + (oldSp.gapX0 !== undefined ? oldSp.gapX0
-    : -(oldSp.rail - (oldSp.sep || IO_RAIL_SEP_FALLBACK) - (oldSp.lead || IO_RAIL_LEAD_FALLBACK)));
-  const x1 = dev.x + (oldSp.gapX1 !== undefined ? oldSp.gapX1
-    : (x0 - dev.x) + oldSp.gap);
+  // 現場側の区画 (レールから端子まで)。この中のものだけ運ぶ
+  const lo = oldSp.side === "right" ? dev.x - 1 : dev.x - oldSp.rail - 1;
+  const hi = oldSp.side === "right" ? dev.x + oldSp.rail + 1 : dev.x + 1;
   let n = 0;
-  // 下の行から動かす (上から動かすと、まだ動いていない下の行と一時的に重なる)
   const plan = [];
   oldSp.rows.forEach((r, i) => {
     const dy = newSp.rows[i].y - r.y;
     if (!dy) return;
     const oldY = dev.y + r.y;
+    plan.push([oldY, dy]);
+  });
+  // 下の行から動かす (上から動かすと、まだ動いていない下の行と一時的に重なる)
+  plan.sort((a2, b2) => b2[1] - a2[1]);
+  const movedWires = new Set(), movedDevs = new Set();
+  plan.forEach(([oldY, dy]) => {
+    page.wires.forEach(w => {
+      if (w.gen === dev.id || movedWires.has(w.id)) return;
+      const onRow = w.pts.every(pt2 => Math.abs(pt2[1] - oldY) < 0.01 &&
+        pt2[0] >= lo && pt2[0] <= hi);
+      if (!onRow) return;
+      w.pts.forEach(pt2 => { pt2[1] = Math.round((pt2[1] + dy) * 100) / 100; });
+      movedWires.add(w.id);
+      n++;
+    });
     page.devices.forEach(d2 => {
-      if (d2 === dev || d2.gen === dev.id) return;
+      if (d2 === dev || d2.gen === dev.id || movedDevs.has(d2.id)) return;
       const ps = devPins(d2);
       if (!ps.length) return;
-      const inRow = ps.some(q => Math.abs(q.y - oldY) < 0.01 && q.x >= x0 - 0.01 && q.x <= x1 + 0.01);
-      if (inRow) plan.push([d2, dy]);
+      const inRow = ps.some(q => Math.abs(q.y - oldY) < 0.01 && q.x >= lo && q.x <= hi);
+      if (!inRow) return;
+      /* 機器は残りの配線 (行の外へ出る縦線など) ごと動かす。行の水平線は
+         上で動かしてあるので、二重に動かさないよう端点一致だけ追従させる */
+      d2.y = Math.round((d2.y + dy) * 100) / 100;
+      movedDevs.add(d2.id);
+      n++;
     });
   });
-  plan.sort((a, b2) => b2[1] - a[1]);
-  plan.forEach(([d2, dy]) => { moveDeviceWithWires(page, d2, 0, dy); n++; });
   return n;
 }
+
 
 function buildIoScaffold(page, dev) {
   const sym = symOf(dev.sym);
   const sp = sym && sym.ioSheet;
   if (!sp) return 0;
+  /* 引き直す前に、旧レールの x を覚えておく。行ピッチや機種を変えると用紙が
+     変わってレールの位置も動く — 利用者がレールへ引いた配線の端点は、
+     新しいレールへ付け替える (置き去りにすると全部宙に浮く) */
+  const oldRails = ioScaffoldParts(page, dev).wires
+    .filter(w => w.pts.length === 2 && Math.abs(w.pts[0][0] - w.pts[1][0]) < 0.01)
+    .map(w => w.pts[0][0]);
   clearIoScaffold(page, dev);                           // 古い下地は残さない
-  /* 端子の座標は記号のピンから取る。行の y だけで x=0 と決め打ちすると、
-     端子の丸を外郭の外へ出した (ピン x = -2.5) 分だけ導体が端子に届かず、
-     宙吊り端点になったうえ図記号を横切る */
   const all = sp.rows.map((r, i) => pinAbs(dev, sym.pins[i] || { x: 0, y: r.y }));
   const io = all.filter((_, i) => sp.rows[i].io);
   if (!io.length) return 0;
-  const sep = sp.sep || IO_RAIL_SEP_FALLBACK, lead = sp.lead || IO_RAIL_LEAD_FALLBACK, gap = sp.gap;
+  const sep = sp.sep || IO_RAIL_SEP_FALLBACK;
   /* 現場側がどちらか。入力は左 (レール → 機器 → 端子)、出力は右
-     (端子 → 負荷 → レール) — 実機のユニットに合わせた鏡像。
-     sd = 現場方向 (+1 右 / -1 左)。外側 = コモン側、内側 = 分岐側は共通 */
+     (端子 → 負荷 → レール)。外側 = コモン側、内側 = 分岐側は共通 */
   const sd = sp.side === "right" ? 1 : -1;
   const comX = snap(dev.x + sd * sp.rail), branchX = comX - sd * sep;
-  /* レールは補助行 (COM など) まで伸ばす。入出力行で止めると、いちばん自然な
-     操作である「COM をレールへ落とす」が必ず宙吊りになる */
   /* レール頭は 1 行目の 5mm 上。10mm 上げると、電位リンクの三角 (8mm) と
      その上の電位名が、図枠の左上へ寄せて置いたときに輪郭線の外へ出る */
   const y1 = io[0].y - 5;
   const yIo = io[io.length - 1].y;                      // 入出力行の下端 (分岐レール)
   const yAll = all[all.length - 1].y;                   // 補助行まで (コモン側レール)
   let n = 0;
-  const line = (pts, gapEnd) => {
+  const line = (pts) => {
     const w = addWire(page, pts);
-    if (w) { w.gen = dev.id; if (gapEnd) w.genGap = true; n++; }
+    if (w) { w.gen = dev.id; n++; }
     return w;
   };
-  const rail = (x, tag, y2, outer) => {
+  const rail = (x, tag, y2) => {
     line([[x, y1], [x, y2]]);
     // 両端に電位リンク。長いレールの片端だけだと、下の行から電位が読めない
     [[y1, 180], [y2, 0]].forEach(([y, rot]) => {
@@ -237,53 +256,44 @@ function buildIoScaffold(page, dev) {
       if (!d) return;
       d.gen = dev.id;
       /* 電位名は自分のレールに寄せる。既定の配置規則に任せると、25mm 隣の
-         もう 1 本のレールのほうが近い位置に落ち、+24V と 0V が入れ替わって読める。
+         もう 1 本のレールのほうが近い位置に落ち、P24V と N24V が入れ替わって読める。
          電位リンクの三角は挿入点から 8mm 伸びるので、文字はその外側 —
          上端は三角のすぐ上、下端は三角のすぐ下 — に中心合わせで置く */
       d.tagAt = { dy: rot === 180 ? -8.5 : 12.5 };
     });
   };
-  const tags = sp.railTags || { branch: "0V", supply: "+24V" };
-  /* コモン側だけ最終行まで下ろし、分岐レールは io 行の下端で止める。
-     行末のコモン (COM / C0 / 分割コモンの最後) はこれで分岐レールを横切らない。
-     分割コモンの中間の群 (C1, C2, …) は io 行の間に挟まるので横切るが、
+  const tags = sp.railTags || { branch: "N24V", supply: "P24V" };
+  /* レール 2 本とコモンの結線だけを引く。行ごとの配線 (端子↔機器↔レール) は
+     利用者が自分で引く — 下地が行ごとのスタブを引いていた頃は、未使用の行にも
+     宙に浮いた導体が印刷され、機器の入れ替えのたびに引き直しが要った。
+     コモン側だけ最終行まで下ろし、分岐レールは io 行の下端で止める。
+     分割コモンの中間の群 (C1, C2, …) の結線は分岐レールを横切るが、
      接続点 (黒丸) の無い交差として描かれ、電気的にも別ネットのまま */
-  rail(comX, tags.supply, yAll, true);                  // 外側 = コモン側
-  rail(branchX, tags.branch, yIo, false);               // 内側 = 各行の分岐もと
-  const gx = branchX - sd * lead, gr = gx - sd * gap;   // 隙間の分岐側 / 端子側の端
-  const gLo = Math.min(gx, gr), gHi = Math.max(gx, gr);
-  io.forEach(r => {
-    /* 隙間に 3 線式センサが置いてあれば、電源線を左右のレールへ引き分ける。
-       ただの直列にすると茶線 (BN) が分岐レール = 0V に載ってしまう */
-    const s3 = page.devices.map(d2 => ({ d2, t: threeWirePins(symOf(d2.sym)) }))
-      .find(({ d2, t }) => t && d2 !== dev && devPins(d2).some(q =>
-        Math.abs(q.y - r.y) < 0.01 && q.x >= gLo - 0.01 && q.x <= gHi + 0.01));
-    /* 引き分けるのは入力の枚だけ。BN→コモン側 / BU→分岐側という対応は
-       入力 (コモン側=+24V) の前提で、出力側で同じに引くと BN が 0V・
-       BU が +24V という短絡入りの下地を自分で描いてしまう。
-       出力の枚の 3 線式検出器はそもそも置き場所の誤りなので、通常の直列の
-       隙間に落として検図 (3線式センサが出力の枚) に知らせてもらう */
-    if (s3 && sd < 0) {
-      const ps = devPins(s3.d2), t = s3.t;
-      line([[comX, ps[t.sup].y], [ps[t.sup].x, ps[t.sup].y]]);     // BN → コモン側 (+24V)
-      line([[branchX, ps[t.zero].y], [ps[t.zero].x, ps[t.zero].y]]); // BU → 分岐側 (0V)
-      line([[ps[t.out].x, ps[t.out].y], [r.x, r.y]]);                // BK → 入力端子
-      return;
-    }
-    line([[branchX, r.y], [gx, r.y]], true);            // レールからの引出し
-    line([[gr, r.y], [r.x, r.y]], true);               // 隙間 → 端子
-  });
-  /* コモンは外側のレールへ。極性 (入力=+24V / 出力=0V) はシンク形の形式から
-     決まっているので、迷わせずに引く。ユニット電源 (L/N/PE) は供給元が
-     図面ごとに違うので引かない — 検図が未接続で知らせる */
+  rail(comX, tags.supply, yAll);                        // 外側 = コモン側
+  rail(branchX, tags.branch, yIo);                      // 内側 = 各行の分岐もと
+  /* コモンは外側のレールへ。極性は機種の形式から決まっている。
+     コモンの刻印は機種で COM / C0 / C1… と分かれる (分割コモンは全部結ぶ) */
   sp.rows.forEach((r0, i) => {
-    // コモンの刻印は機種で COM / C0 / C1… と分かれる (分割コモンは全部結ぶ)
     if (r0.io || !/^(COM|C\d+)$/.test((sym.pins[i] || {}).n || "")) return;
     line([[comX, all[i].y], [all[i].x, all[i].y]]);
   });
+  /* 利用者の配線の端点を旧レールから新レールへ付け替える。
+     旧レールが 2 本なら、外側どうし・内側どうしで対応づける */
+  if (oldRails.length) {
+    const uniq = [...new Set(oldRails.map(v => Math.round(v * 100) / 100))]
+      .sort((a2, b2) => Math.abs(b2 - dev.x) - Math.abs(a2 - dev.x));   // 外側が先
+    const map = new Map();
+    if (uniq[0] !== undefined) map.set(uniq[0], comX);
+    if (uniq[1] !== undefined) map.set(uniq[1], branchX);
+    page.wires.forEach(w => {
+      if (w.gen === dev.id) return;
+      w.pts.forEach(pt2 => { if (map.has(pt2[0]) && map.get(pt2[0]) !== pt2[0]) pt2[0] = map.get(pt2[0]); });
+    });
+  }
   App.labelRev++;
   return n;
 }
+
 
 /* 規格外の図記号の凡例を注記として貼る (JIS C 0617-1 / IEC 60617-1: 規格に
    ない図記号は図面上で説明する)。1 行で貼ると作図領域より長くなって表題欄を
@@ -2817,8 +2827,9 @@ function runDRC() {
       if (!threeWirePins(symOf(dev.sym))) return;
       const host = page.devices.find(d2 => {
         const sp2 = (symOf(d2.sym) || {}).ioSheet;
-        if (!sp2 || sp2.side !== "right" || sp2.gapX0 === undefined) return false;
-        const x0 = d2.x + sp2.gapX0, x1 = d2.x + sp2.gapX1;
+        if (!sp2 || sp2.side !== "right") return false;
+        // 出力の枠の現場側の区画 (端子からレールまで) の行の上にあるか
+        const x0 = d2.x, x1 = d2.x + sp2.rail;
         return devPins(dev).some(q => q.x >= x0 - 0.01 && q.x <= x1 + 0.01 &&
           sp2.rows.some(r => r.io && Math.abs(q.y - (d2.y + r.y)) < 0.01));
       });
