@@ -125,12 +125,13 @@ function mkPort(o) {
       外側=      内側=     現場側    端子  端子名は      機能欄 (下線に書く)
       コモン側    分岐側    (実線)   (小円) 外郭の内側
 
-   出力 (箱が左・現場側が右・名称欄は右端):
+   出力 (箱が左・現場側が右・名称欄は右端。端子名は外郭の内側):
     ┌──────────┐
-    │KV-N14AT  │ R500├─○━━[ 負荷 ]━━┃+24V ┃0V   ── 運転表示灯 ──
-    │出力 6点  │                          ┃     ┃
-    │          │ COM ├─○━━━━━━━━━━━━┃   ── 出力コモン ──
-    └──────────┘                    内側=分岐側  外側=コモン側
+    │KV-N14AT  │
+    │出力 6点  │
+    │     R500├○━━[ 負荷 ]━━┃+24V ┃0V   ── 運転表示灯 ──
+    │     COM ├○━━━━━━━━━━━━━━━┃   ── 出力コモン ──
+    └──────────┘             内側=分岐側  外側=コモン側
 
    機器は rot 270 で置けば向きが合う — 入力は左が電源側 (P,N)・右が信号、
    出力は左が信号 (出力端子)・右が電源側 (P,N)。
@@ -241,9 +242,13 @@ function kvBuild(o, pitch) {
   /* 実際に線を引いている帯。外接矩形 (余白つき) をそのまま「インク」として
      申告すると、記号に触れていない導体まで「貫通」になる。
      ① 端子の丸 + 外郭  ② 機能欄の下線 — その間 (出力では現場側の区画) は何も無い */
-  const inkBoxes = flip
-    ? [[r1(BX), 0, r1(TR * 2 + W), r1(bh)], [r1(FX), KV_Y0, KV_FN_W, r1(bh - KV_Y0)]]
-    : [[0, 0, r1(TR * 2 + W), r1(bh)], [r1(FX), KV_Y0, KV_FN_W, r1(bh - KV_Y0)]];
+  /* 帯には線の太さの半分 (0.25) を織り込む。中心線で申告すると、描いて測った
+     実インク (getBBox + 半幅) より 0.25mm 過小になる */
+  const HW = 0.25;
+  const inkBoxes = (flip
+    ? [[BX, 0, TR * 2 + W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]]
+    : [[0, 0, TR * 2 + W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]])
+    .map(([x, y, w2, h2]) => [r1(x - HW), r1(y - HW), r1(w2 + HW * 2), r1(h2 + HW * 2)]);
   // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
   const gapX1 = flip ? KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD : -(KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP);
   const gapX0 = gapX1 - KV_GAP;
@@ -258,6 +263,8 @@ function kvBuild(o, pitch) {
       sep: KV_RAIL_SEP, lead: KV_RAIL_LEAD,
       fnTextX: FX + 1, fnRoom: KV_FN_W - 1,   // 機能欄の文字の左端 / 下線の長さ
       gapX0, gapX1,
+      // 後方互換 (公開していた旧フィールド。dev.x - gapFrom = 隙間の左端)
+      gapFrom: -gapX0, gapTo: -gapX1,
       rows: rows.map(r => ({ y: r.y, io: r.io })) },
     /* 用紙は「この枚」ではなく「この機種でいちばん行数の多い枚」で決める。
        枚ごとに決めると、行ピッチを広げたとき 1 台の図面集に横と縦が混ざる

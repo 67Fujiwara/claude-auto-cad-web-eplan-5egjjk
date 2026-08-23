@@ -433,6 +433,30 @@ const R = await p.evaluate(() => {
       })(),
       drc: runDRC().filter(i => i.page === q.no).map(i => `${i.sev}:${i.rule || "?"}:${i.msg}`),
     };
+    /* ④b-5 出力の枚に 3 線式センサを置く誤り。下地は引き分けず (入力の前提の
+       まま引くと BN→0V / BU→+24V の短絡入りの下地を自分で描いてしまう)、
+       検図が「検出器は入力の枚へ」と知らせること */
+    {
+      const spO2 = symOf(dd.sym).ioSheet;
+      const r0 = spO2.rows.find(r => r.io);
+      const q2 = q.devices.filter(d2 => d2.sym === "lamp");
+      const lamp0 = q2[0];
+      q.devices.splice(q.devices.indexOf(lamp0), 1);       // 1 行目を空けて
+      const sens = addDevice(q, "prox", dd.x + spO2.gapX0, dd.y + r0.y, { tag: "-B70", rot: 270 });
+      buildIoScaffold(q, dd);
+      App.labelRev++;
+      const drc3 = runDRC().filter(i => i.page === q.no);
+      out.out3wire = {
+        // 短絡入りの下地を自分で描いていないこと
+        noShort: !drc3.some(i => /短絡/.test(i.msg)),
+        // 置き場所の誤りをエラーで知らせること
+        told: drc3.filter(i => i.rule === "3線式センサが出力の枚" && i.sev === "err").length,
+      };
+      q.devices.splice(q.devices.indexOf(sens), 1);
+      addDevice(q, "lamp", dd.x + spO2.gapX0, dd.y + r0.y, { tag: lamp0.tag, rot: 270 });
+      buildIoScaffold(q, dd);
+      App.labelRev++;
+    }
     App.project.pages.pop();
     App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
   }
@@ -611,6 +635,55 @@ const U2 = { ...U2a, hasFix, ...U2b, ...await p.evaluate(() => {
 }) };
 console.log("機種の差し替え:", JSON.stringify({ ...U, ...U2 }, null, 1));
 
+/* 出力の枚の UI 経路。入力でだけ試して出力で壊れていた前科があるので、
+   機種差し替え (#pSwap) と行ピッチ (#pSpanMM) を出力の枚でも通す */
+const V1 = await p.evaluate(() => {
+  const q = newPage("出力UI", App.project.pages.length + 1);
+  App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
+  const s0 = symOf("kv_n14at_out"), w1 = symSheetSpec(s0);
+  q.paper = w1.paper; q.orient = w1.orient; q.scale = w1.scale; applySheet(q);
+  const fr = frameRect();
+  const dd = addDevice(q, "kv_n14at_out", Math.ceil((fr.x - s0.bounds[0] + 5) / 5) * 5, fr.y + 10, { tag: "-A80" });
+  buildIoScaffold(q, dd);
+  const sp = s0.ioSheet;
+  sp.rows.filter(r => r.io).forEach((r, i) =>
+    addDevice(q, "lamp", dd.x + sp.gapX0, dd.y + r.y, { tag: `-P8${i}`, rot: 270 }));
+  App.selection.clear(); App.selection.add(dd.id);
+  UI.showProps(); App.labelRev++;
+  return { drc0: runDRC().filter(i => i.page === q.no).length };
+});
+// 機種差し替え: 6 点 → 8 点 (行ピッチは同じなので既存 6 行はそのまま合う)
+await p.selectOption("#pSwap", "kv_n40at_out1").catch(() => {});
+await p.waitForTimeout(250);
+const V2 = await p.evaluate(() => {
+  const q = curPage();
+  const dd = q.devices.find(d => /^kv_/.test(d.sym));
+  App.labelRev++;
+  return { swapped: dd.sym,
+    drc: runDRC().filter(i => i.page === q.no && /貫通|宙吊り|どこにも接続|短絡|ピン COM/.test(i.msg)).map(i => i.sev + ":" + i.msg) };
+});
+// 行ピッチを 30 に (UI の入力欄経由) → 負荷が新しい行へ運ばれること
+await p.$eval("#pSpanMM", el => { el.value = "30"; el.dispatchEvent(new Event("change", { bubbles: true })); }).catch(() => {});
+await p.waitForTimeout(250);
+const V3 = await p.evaluate(() => {
+  const q = curPage();
+  const dd = q.devices.find(d => /^kv_/.test(d.sym));
+  const w2 = symSheetSpec(symOf(dd.sym));
+  q.paper = w2.paper; q.orient = w2.orient; q.scale = w2.scale; applySheet(q);
+  App.labelRev++;
+  const sp = symOf(dd.sym).ioSheet;
+  const rows = sp.rows.filter(r => r.io);
+  const nets = computeNets(q, "closed");
+  const lamps = q.devices.filter(d2 => d2.sym === "lamp");
+  const r = { pitch: sp.pitch,
+    onRows: lamps.every((d2, i) => Math.abs(d2.y - (dd.y + rows[i].y)) < 0.01),
+    wired: lamps.every((d2, i) => nets.pinNet(d2, 0) === nets.pinNet(dd, i)),
+    drc: runDRC().filter(i => i.page === q.no).map(i => i.sev + ":" + i.msg) };
+  App.project.pages.pop(); App.pageIdx = 0; applySheet(curPage());
+  return r;
+});
+console.log("出力の枚のUI経路:", JSON.stringify({ ...V1, ...V2, ...V3 }, null, 1));
+
 const ids = Object.keys(R.spec);
 const checks = {
   // 想定の枚 (id) がすべてあること
@@ -679,6 +752,11 @@ const checks = {
       ? L.side === "right" && L.boxX < 0 && L.fnTextX > (R.group[id] || {}).rail
       : L.side === "left" && L.boxX > 0 && L.fnTextX < (R.group[id] || {}).rail;
   }),
+  // 出力の枚でも UI 経路 (機種差し替え・行ピッチ) が下地と負荷を壊さない
+  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out1" && V2.drc.length === 0 &&
+    V3.pitch === 30 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,
+  // 出力の枚の 3 線式センサ: 短絡を描かず、置き場所の誤りをエラーで知らせる
+  out3wire: (R.out3wire || {}).noShort === true && R.out3wire.told >= 1,
   // 出力の枚も、負荷を落として結線すれば検図 0 件
   outSheet: (R.outSheet || {}).loads === 6 && R.outSheet.wired === true &&
     Array.isArray(R.outSheet.drc) && R.outSheet.drc.length === 0,

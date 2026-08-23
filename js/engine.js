@@ -257,7 +257,12 @@ function buildIoScaffold(page, dev) {
     const s3 = page.devices.map(d2 => ({ d2, t: threeWirePins(symOf(d2.sym)) }))
       .find(({ d2, t }) => t && d2 !== dev && devPins(d2).some(q =>
         Math.abs(q.y - r.y) < 0.01 && q.x >= gLo - 0.01 && q.x <= gHi + 0.01));
-    if (s3) {
+    /* 引き分けるのは入力の枚だけ。BN→コモン側 / BU→分岐側という対応は
+       入力 (コモン側=+24V) の前提で、出力側で同じに引くと BN が 0V・
+       BU が +24V という短絡入りの下地を自分で描いてしまう。
+       出力の枚の 3 線式検出器はそもそも置き場所の誤りなので、通常の直列の
+       隙間に落として検図 (3線式センサが出力の枚) に知らせてもらう */
+    if (s3 && sd < 0) {
       const ps = devPins(s3.d2), t = s3.t;
       line([[comX, ps[t.sup].y], [ps[t.sup].x, ps[t.sup].y]]);     // BN → コモン側 (+24V)
       line([[branchX, ps[t.zero].y], [ps[t.zero].x, ps[t.zero].y]]); // BU → 分岐側 (0V)
@@ -1132,7 +1137,10 @@ function deviceObstacleBoxes(dev, inset) {
      ラベルの置き場が無くなって最小重なりの位置 = 名称欄の上に落ちる */
   const sym = symOf(dev.sym);
   if (sym && sym.inkBoxes && sym.inkBoxes.length) {
-    return devInkBoxes(dev).map(r => insetRect(r, inset));
+    /* 従来経路は「実インク + 2mm の余白」へ inset を掛けていた。帯にも同じ
+       2mm を足してから掛けないと、障壁が実インクの内側まで下がって、
+       ラベルが外郭や下線に 1.5mm 未満まで寄れてしまう */
+    return devInkBoxes(dev).map(r => insetRect(r, inset - 2));
   }
   return [insetRect(devBounds(dev), inset)];
 }
@@ -1821,6 +1829,9 @@ function nextTag(letter) {
 }
 
 function addDevice(page, symId, x, y, opts = {}) {
+  /* NaN/Infinity の座標は黙って受けない。undefined になった旧フィールドを
+     足し引きした結果の NaN で、機器が図枠外の虚空へ落ちてもエラーが出ない */
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const sym = symOf(symId);
   const dev = {
     id: uid("d"), sym: symId, x: snap(x), y: snap(y), rot: opts.rot || 0,
@@ -2630,7 +2641,7 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "線番と導体の重なり", "記号の重なり", "導体が図記号を貫通", "3線式センサの電源が逆",
+  "線番の重複", "図番の重複", "線番と導体の重なり", "記号の重なり", "導体が図記号を貫通", "3線式センサの電源が逆", "3線式センサが出力の枚",
   "分かれた枚の行き先が無い",
   "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
   "行き先の図番が入らない", "行き先どうしの重なり", "行き先の対が定まらない",
@@ -2795,6 +2806,23 @@ function runDRC() {
         msg: `${tag} の ${nm(t.sup)} (電源+) が 0V 側につながっています`, page: page.no, target: dev.id, loc: devLocation(dev) });
       if (nZero && srcClosed.pNets.has(nZero)) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
         msg: `${tag} の ${nm(t.zero)} (0V) が +24V 側につながっています`, page: page.no, target: dev.id, loc: devLocation(dev) });
+    });
+
+    /* 3 線式の直流検出器 (センサ) が出力の枠の隙間に置かれていないか。
+       センサは入力機器で、出力の行は負荷の場所。下地も出力側では引き分けない
+       ので、置いたまま出図すると結線できない図になる */
+    page.devices.forEach(dev => {
+      if (!threeWirePins(symOf(dev.sym))) return;
+      const host = page.devices.find(d2 => {
+        const sp2 = (symOf(d2.sym) || {}).ioSheet;
+        if (!sp2 || sp2.side !== "right" || sp2.gapX0 === undefined) return false;
+        const x0 = d2.x + sp2.gapX0, x1 = d2.x + sp2.gapX1;
+        return devPins(dev).some(q => q.x >= x0 - 0.01 && q.x <= x1 + 0.01 &&
+          sp2.rows.some(r => r.io && Math.abs(q.y - (d2.y + r.y)) < 0.01));
+      });
+      if (host) issues.push({ sev: "err", rule: "3線式センサが出力の枚",
+        msg: `${displayTag(dev) || symOf(dev.sym).name} (3線式の検出器) が出力の結線図の行に置かれています — 検出器は入力の枚へ`,
+        page: page.no, target: dev.id, loc: devLocation(dev) });
     });
 
     /* 図記号どうしの重なり。文字の重なりは見ていたのに、図記号どうしは
