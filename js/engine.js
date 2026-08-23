@@ -11,8 +11,9 @@ const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f
 /* 線の太さ (JIS Z 8312 の太さ系列。細線:太線 = 1:2) — 用紙上の mm */
 const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
 /* 文字高さ (JIS Z 8313-1 の標準列) — 用紙上の mm */
-const KV_FN_TEXT_X = 36;   // 機能欄の文字の左端 (箱の右 30+5 から 1mm 内側)
-const KV_FN_ROOM = 99;     // 下線の長さ (100mm) から 1mm 内側
+/* 機能欄の割付は記号が ioSheet.fnTextX / fnRoom で持つ。
+   ここは古い記号のための控え (箱 30 + あき 5 の 1mm 内側 / 下線 100mm) */
+const KV_FN_TEXT_X = 36, KV_FN_ROOM = 99;
 const TEXT_H = { small: 2.5, normal: 3.5, large: 5 };
 /* 格子参照の行記号。JIS Z 8311 により I と O は使用しない */
 const SHEET_ROW_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -125,17 +126,34 @@ function moveDeviceWithWires(page, dev, dx, dy) {
 }
 
 /* 入出力結線図の下地を実際の導体で引く。
-   ・現場側にレールを 2 本。分岐用 (入力=0V / 出力=+24V) と、3 線式センサの
-     電源用 (入力=+24V / 出力=0V)。2 線のドライ接点は分岐用だけで足りるが、
-     現場の主役である 3 線センサは電源側の 1 本が無いと結線できない。
-   ・各行は分岐用レールから引き出し、機器を落とす隙間を空けて端子へ入る。
+   ・現場側にレールを 2 本。外側がコモン側 (入力=+24V / 出力=0V)、内側が各行の
+     分岐もと (入力=0V / 出力=+24V)。シンク形の入出力では、入力は 0V →接点→
+     入力端子、出力は +24V →負荷→出力端子と、電流の向きが逆になるので、
+     どちらの紙でも「外側=コモン側・内側=分岐側」で位置をそろえる。
+     こうすれば行の引出しがもう 1 本のレールをまたがない。
+   ・各行は内側のレールから引き出し、機器を落とす隙間を空けて端子へ入る。
+   ・3 線式センサ (BN/BK/BU・P24V/OUT/N24V) が隙間に置いてあれば、ただの
+     直列ではなく、電源線を左右のレールへ正しく引き分ける。素直に直列へ
+     つなぐと茶線が 0V に載り、そのまま結線するとセンサを壊す。
+   ・コモンは外側のレールへ自動で結ぶ (極性は機種の形式から決まっている)。
+     ユニット電源 (L/N/PE) は供給元が図面ごとに違うので引かない。
    ・引いた導体には印 (w.gen = 機器 id) を付ける。行ピッチを変えたり記号を
      動かしたりしたときに、古い下地を残さず引き直せるようにするため。
    記号の中に線を描くのではなく導体で引くので、検図もシミュレーションも
-   絵のとおりに通る。電源・コモン・保護接地は極性が用途で変わるので自動では
-   引かない (検図が未接続で知らせる) */
-/* レール 2 本の間隔と、分岐レールから機器を落とす隙間までの引出し */
-const KV_RAIL_SEP = 10, KV_RAIL_LEAD = 10;
+   絵のとおりに通る */
+/* レール 2 本の間隔と隙間までの引出しは記号が持つ (symdb.js の KV_RAIL_SEP /
+   KV_RAIL_LEAD)。古い記号のための控えの値だけここに置く */
+const IO_RAIL_SEP_FALLBACK = 25, IO_RAIL_LEAD_FALLBACK = 10;
+/** 3 線式の直流検出器か。そうなら 電源(+)・出力・0V のピン番号を返す */
+function threeWirePins(sym) {
+  if (!sym || !Array.isArray(sym.pins) || sym.pins.length !== 3) return null;
+  const n = sym.pins.map(p => p.n);
+  const sup = n.findIndex(x => x === "BN" || x === "P24V");
+  const zero = n.findIndex(x => x === "BU" || x === "N24V");
+  if (sup < 0 || zero < 0) return null;
+  const out = [0, 1, 2].find(i => i !== sup && i !== zero);
+  return { sup, out, zero };
+}
 function ioScaffoldParts(page, dev) {
   return {
     wires: page.wires.filter(w => w.gen === dev.id),
@@ -148,33 +166,94 @@ function clearIoScaffold(page, dev) {
   devs.forEach(d => page.devices.splice(page.devices.indexOf(d), 1));
   return wires.length + devs.length;
 }
+/** 行ピッチを変えたとき、隙間に置いてある現場機器を新しい行の高さへ運ぶ。
+    記号の寸法違いだけ差し替えると、下地は引き直せても機器は旧位置に残り、
+    行から外れて宙に浮く。行番号で対応づけるので、行数が同じかぎり必ず合う */
+function moveIoRowDevices(page, dev, oldSp, newSp) {
+  if (!oldSp || !newSp || oldSp.rows.length !== newSp.rows.length) return 0;
+  const sep = oldSp.sep || IO_RAIL_SEP_FALLBACK, lead = oldSp.lead || IO_RAIL_LEAD_FALLBACK;
+  const x0 = dev.x - oldSp.rail + sep + lead, x1 = x0 + oldSp.gap;
+  let n = 0;
+  // 下の行から動かす (上から動かすと、まだ動いていない下の行と一時的に重なる)
+  const plan = [];
+  oldSp.rows.forEach((r, i) => {
+    const dy = newSp.rows[i].y - r.y;
+    if (!dy) return;
+    const oldY = dev.y + r.y;
+    page.devices.forEach(d2 => {
+      if (d2 === dev || d2.gen === dev.id) return;
+      const ps = devPins(d2);
+      if (!ps.length) return;
+      const inRow = ps.some(q => Math.abs(q.y - oldY) < 0.01 && q.x >= x0 - 0.01 && q.x <= x1 + 0.01);
+      if (inRow) plan.push([d2, dy]);
+    });
+  });
+  plan.sort((a, b2) => b2[1] - a[1]);
+  plan.forEach(([d2, dy]) => { moveDeviceWithWires(page, d2, 0, dy); n++; });
+  return n;
+}
+
 function buildIoScaffold(page, dev) {
   const sym = symOf(dev.sym);
   const sp = sym && sym.ioSheet;
   if (!sp) return 0;
-  const removed = clearIoScaffold(page, dev);           // 古い下地は残さない
-  const rows = sp.rows.filter(r => r.io).map(r => pinAbs(dev, { x: 0, y: r.y }));
-  if (!rows.length) return 0;
-  const supplyX = snap(dev.x - sp.rail), branchX = supplyX + KV_RAIL_SEP, lead = KV_RAIL_LEAD, gap = sp.gap;
-  const y1 = rows[0].y - 10, y2 = rows[rows.length - 1].y;
+  clearIoScaffold(page, dev);                           // 古い下地は残さない
+  /* 端子の座標は記号のピンから取る。行の y だけで x=0 と決め打ちすると、
+     端子の丸を外郭の外へ出した (ピン x = -2.5) 分だけ導体が端子に届かず、
+     宙吊り端点になったうえ図記号を横切る */
+  const all = sp.rows.map((r, i) => pinAbs(dev, sym.pins[i] || { x: 0, y: r.y }));
+  const io = all.filter((_, i) => sp.rows[i].io);
+  if (!io.length) return 0;
+  const sep = sp.sep || IO_RAIL_SEP_FALLBACK, lead = sp.lead || IO_RAIL_LEAD_FALLBACK, gap = sp.gap;
+  const comX = snap(dev.x - sp.rail), branchX = comX + sep;
+  /* レールは補助行 (COM など) まで伸ばす。入出力行で止めると、いちばん自然な
+     操作である「COM をレールへ落とす」が必ず宙吊りになる */
+  const y1 = io[0].y - 10;
+  const yIo = io[io.length - 1].y;                      // 入出力行の下端 (分岐レール)
+  const yAll = all[all.length - 1].y;                   // 補助行まで (コモン側レール)
   let n = 0;
-  const line = (pts) => { const w = addWire(page, pts); if (w) { w.gen = dev.id; n++; } return w; };
-  const rail = (x, tag, bothEnds) => {
+  const line = (pts, gapEnd) => {
+    const w = addWire(page, pts);
+    if (w) { w.gen = dev.id; if (gapEnd) w.genGap = true; n++; }
+    return w;
+  };
+  const rail = (x, tag, y2) => {
     line([[x, y1], [x, y2]]);
-    // 電位リンクで電位を名前で示す。分岐の無いレール (センサ電源側) は下端にも
-    // 付ける — 端が宙に浮いたままだと検図が「どこにも接続していません」と出る
-    [[y1, 180], ...(bothEnds ? [[y2, 0]] : [])].forEach(([y, rot]) => {
+    // 両端に電位リンク。長いレールの片端だけだと、下の行から電位が読めない
+    [[y1, 180], [y2, 0]].forEach(([y, rot]) => {
       const d = addDevice(page, "link", x, y, { tag, rot });
       if (d) d.gen = dev.id;
     });
   };
   const tags = sp.railTags || { branch: "0V", supply: "+24V" };
-  rail(supplyX, tags.supply, true);                     // 3 線式センサの電源側
-  rail(branchX, tags.branch, false);                    // 各行の分岐もと
-  rows.forEach(r => {
-    const gx = branchX + lead, gr = gx + gap;
-    line([[branchX, r.y], [gx, r.y]]);                  // レールからの引出し
-    line([[gr, r.y], [dev.x, r.y]]);                    // 隙間 → 端子
+  /* コモン側だけ補助行まで下ろす。分岐レールも下ろすと、コモンを外側の
+     レールへ引く線が分岐レールを横切ってしまう (電気的には交差だけだが、
+     結線図で意味のない交差を作らないのが JIS Z 8312 の作図) */
+  rail(comX, tags.supply, yAll);                        // 外側 = コモン側
+  rail(branchX, tags.branch, yIo);                      // 内側 = 各行の分岐もと
+  const gx = branchX + lead, gr = gx + gap;
+  io.forEach(r => {
+    /* 隙間に 3 線式センサが置いてあれば、電源線を左右のレールへ引き分ける。
+       ただの直列にすると茶線 (BN) が分岐レール = 0V に載ってしまう */
+    const s3 = page.devices.map(d2 => ({ d2, t: threeWirePins(symOf(d2.sym)) }))
+      .find(({ d2, t }) => t && d2 !== dev && devPins(d2).some(q =>
+        Math.abs(q.y - r.y) < 0.01 && q.x >= gx - 0.01 && q.x <= gr + 0.01));
+    if (s3) {
+      const ps = devPins(s3.d2), t = s3.t;
+      line([[comX, ps[t.sup].y], [ps[t.sup].x, ps[t.sup].y]]);     // BN → コモン側 (+24V)
+      line([[branchX, ps[t.zero].y], [ps[t.zero].x, ps[t.zero].y]]); // BU → 分岐側 (0V)
+      line([[ps[t.out].x, ps[t.out].y], [r.x, r.y]]);                // BK → 入力端子
+      return;
+    }
+    line([[branchX, r.y], [gx, r.y]], true);            // レールからの引出し
+    line([[gr, r.y], [r.x, r.y]], true);               // 隙間 → 端子
+  });
+  /* コモンは外側のレールへ。極性 (入力=+24V / 出力=0V) はシンク形の形式から
+     決まっているので、迷わせずに引く。ユニット電源 (L/N/PE) は供給元が
+     図面ごとに違うので引かない — 検図が未接続で知らせる */
+  sp.rows.forEach((r0, i) => {
+    if (r0.io || !/^COM/.test((sym.pins[i] || {}).n || "")) return;
+    line([[comX, all[i].y], [all[i].x, all[i].y]]);
   });
   App.labelRev++;
   return n;
@@ -651,7 +730,9 @@ function wireLabelPosCalc(w, page, placed) {
 function pinLabelVisible(page, dev, pinIdx) {
   const sym = symOf(dev.sym);
   const p = sym.pins[pinIdx];
-  if (!p || !p.n || dev.sym === "terminal") return null;
+  // inBody: 端子名を記号の body に描いてある (入出力結線図の枠記号)。
+  // 二重に打つと外郭の縁で重なるので、自動ラベルは出さない
+  if (!p || !p.n || p.inBody || dev.sym === "terminal") return null;
   const name = effectivePinName(dev, pinIdx);
   if (!name) return null;
   const abs = pinAbs(dev, p);
@@ -869,6 +950,67 @@ function devPartBoxes(dev) {
     const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
   });
+}
+
+/* 記号が実際に線を引いている範囲 (インク) の外接矩形。
+   bounds は「つかみやすさ」のための余白つきの枠なので、記号どうしの重なりを
+   これで見ると、端子台のように 5mm ピッチで並べた端子が全部「重なり」になる
+   (端子の bounds は 8.4mm 幅、インクは丸 4.4mm)。body を読んで実寸で測る。
+   inkBoxes を宣言している記号 (入出力結線図の枠など) はそれを使う */
+const _symInkCache = new Map();
+function symInkBox(sym) {
+  if (!sym || !sym.body) return null;
+  if (sym.inkBoxes && sym.inkBoxes.length) {
+    const xs = sym.inkBoxes.map(b => b[0]), ys = sym.inkBoxes.map(b => b[1]);
+    const xe = sym.inkBoxes.map(b => b[0] + b[2]), ye = sym.inkBoxes.map(b => b[1] + b[3]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xe) - Math.min(...xs), h: Math.max(...ye) - Math.min(...ys) };
+  }
+  const key = sym.id + "|" + sym.body.length;
+  if (_symInkCache.has(key)) return _symInkCache.get(key);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const put = (x, y) => { if (!isFinite(x) || !isFinite(y)) return; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+  const b = sym.body;
+  b.replace(/<rect[^>]*x="(-?[\d.]+)"[^>]*y="(-?[\d.]+)"[^>]*width="([\d.]+)"[^>]*height="([\d.]+)"/g,
+    (m, x, y, w, h) => { put(+x, +y); put(+x + +w, +y + +h); return ""; });
+  b.replace(/<circle[^>]*cx="(-?[\d.]+)"[^>]*cy="(-?[\d.]+)"[^>]*r="([\d.]+)"/g,
+    (m, cx, cy, r) => { put(+cx - +r, +cy - +r); put(+cx + +r, +cy + +r); return ""; });
+  b.replace(/<text[^>]*x="(-?[\d.]+)"[^>]*y="(-?[\d.]+)"[^>]*data-h="([\d.]+)"[^>]*>([^<]*)</g,
+    (m, x, y, h, t) => { const w = String(t).length * +h * 0.7; put(+x - w / 2, +y - +h); put(+x + w / 2, +y + +h * 0.3); return ""; });
+  /* path はコマンドをたどって現在点を追う (円弧はふくらみを見ず端点だけ —
+     実寸よりわずかに小さく出るが、重なりを見誤るほどの差にはならない) */
+  b.replace(/\bd="([^"]+)"/g, (m, d) => {
+    let cx = 0, cy = 0, sx = 0, sy = 0;
+    const toks = d.match(/[MmLlHhVvCcSsQqTtAaZz]|-?[\d.]+(?:e-?\d+)?/g) || [];
+    let i = 0, cmd = "M";
+    const num = () => +toks[i++];
+    while (i < toks.length) {
+      if (/[A-Za-z]/.test(toks[i])) cmd = toks[i++];
+      if (i >= toks.length && !/[Zz]/.test(cmd)) break;
+      const rel = cmd === cmd.toLowerCase();
+      const C = cmd.toUpperCase();
+      if (C === "M" || C === "L" || C === "T") { const a = num(), c = num(); cx = rel ? cx + a : a; cy = rel ? cy + c : c; if (C === "M") { sx = cx; sy = cy; } put(cx, cy); }
+      else if (C === "H") { const a = num(); cx = rel ? cx + a : a; put(cx, cy); }
+      else if (C === "V") { const a = num(); cy = rel ? cy + a : a; put(cx, cy); }
+      else if (C === "C") { for (let k = 0; k < 2; k++) { const a = num(), c = num(); put(rel ? cx + a : a, rel ? cy + c : c); } const a = num(), c = num(); cx = rel ? cx + a : a; cy = rel ? cy + c : c; put(cx, cy); }
+      else if (C === "S" || C === "Q") { const a = num(), c = num(); put(rel ? cx + a : a, rel ? cy + c : c); const e = num(), f = num(); cx = rel ? cx + e : e; cy = rel ? cy + f : f; put(cx, cy); }
+      else if (C === "A") { num(); num(); num(); num(); num(); const a = num(), c = num(); cx = rel ? cx + a : a; cy = rel ? cy + c : c; put(cx, cy); }
+      else if (C === "Z") { cx = sx; cy = sy; put(cx, cy); }
+      else i++;
+    }
+    return "";
+  });
+  const out = isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+  _symInkCache.set(key, out);
+  return out;
+}
+/** 機器が実際に線を引いている範囲 (図面座標)。回転・位置を反映する */
+function devInkBox(dev) {
+  const ib = symInkBox(symOf(dev.sym));
+  if (!ib) return devBounds(dev);
+  const cs = [[ib.x, ib.y], [ib.x + ib.w, ib.y], [ib.x, ib.y + ib.h], [ib.x + ib.w, ib.y + ib.h]]
+    .map(([x, y]) => pinAbs(dev, { x, y }));
+  const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
 
 function deviceObstacleBoxes(dev, inset) {
@@ -1130,11 +1272,12 @@ function deviceRowTexts(page, dev) {
        変わって「出力 R507 = AC100V L」のような嘘を刷ってしまう */
     const t = Array.isArray(fn) ? fn[i] : fn[p.n];
     if (!t) return;
-    const a = pinAbs(dev, { x: KV_FN_TEXT_X, y: p.y });
+    const sp = sym.ioSheet || {};
+    const a = pinAbs(dev, { x: sp.fnTextX === undefined ? KV_FN_TEXT_X : sp.fnTextX, y: p.y });
     const hh = textHeightMM(String(t), h);
     const w = textWidthMM(String(t), hh, false, false);
     out.push({ text: String(t), x: a.x, y: a.y, size: hh, anchor: "start", row: p.row === undefined ? i : p.row,
-      name: p.n, over: w > KV_FN_ROOM,          // 下線からはみ出しているか
+      name: p.n, over: w > (sp.fnRoom === undefined ? KV_FN_ROOM : sp.fnRoom),   // 下線からはみ出しているか
       box: { x: a.x, y: a.y - hh, w, h: hh } });
   });
   return out;
@@ -2355,7 +2498,8 @@ const DRC_RULES = [
   "未接続ピン", "宙吊り配線端点", "デバイスタグ重複", "コイル未リンク接点",
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
-  "線番の重複", "図番の重複", "線番と導体の重なり",
+  "線番の重複", "図番の重複", "線番と導体の重なり", "記号の重なり", "導体が図記号を貫通", "3線式センサの電源が逆",
+  "ユニット電源の枚が無い", "分かれた枚の行き先が無い", "ユニット電源の枚が無い", "分かれた枚の行き先が無い",
   "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
   "行き先の図番が入らない", "行き先どうしの重なり", "行き先の対が定まらない",
   "行き先とリンクの不一致", "尺度と用紙上の寸法", "記号の想定用紙と違う", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
@@ -2504,6 +2648,79 @@ function runDRC() {
         if (spec) report2(spec, `電線仕様「${w.spec}」`, w.id);
       });
       page.texts.forEach(t => report2(textBounds(t), `注記「${t.text}」`, t.id));
+    }
+
+    /* 3 線式の直流検出器の電源線が逆になっていないか。
+       茶 (BN/P24V) を 0V に、青 (BU/N24V) を +24V につなぐと、通電した
+       とたんにセンサが壊れる。未接続より重い誤りなのでエラーで出す */
+    page.devices.forEach(dev => {
+      const t = threeWirePins(symOf(dev.sym));
+      if (!t) return;
+      const tag = displayTag(dev) || symOf(dev.sym).name;
+      const nSup = closed.pinNet(dev, t.sup), nZero = closed.pinNet(dev, t.zero);
+      const nm = i => (symOf(dev.sym).pins[i] || {}).n || "";
+      if (nSup && srcClosed.nNets.has(nSup)) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
+        msg: `${tag} の ${nm(t.sup)} (電源+) が 0V 側につながっています`, page: page.no, target: dev.id, loc: devLocation(dev) });
+      if (nZero && srcClosed.pNets.has(nZero)) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
+        msg: `${tag} の ${nm(t.zero)} (0V) が +24V 側につながっています`, page: page.no, target: dev.id, loc: devLocation(dev) });
+    });
+
+    /* 図記号どうしの重なり。文字の重なりは見ていたのに、図記号どうしは
+       見ていなかった — レール頭の電位リンクが食い込んでも検図 0 件だった。
+       囲み記号 (多芯ケーブル・遮へい) は重ねて描くのが仕様なので除く */
+    {
+      const boxesOf = new Map(page.devices.map(d => [d.id, [devInkBox(d)]]));
+      const encl = d => { const s0 = symOf(d.sym); return !!(s0.enclosure || s0.stretchOf === "cable_core" || s0.stretchOf === "shield"); };
+      const seen = new Set();
+      page.devices.forEach((a, ai) => {
+        if (encl(a)) return;
+        page.devices.forEach((b2, bi) => {
+          if (bi <= ai || encl(b2)) return;
+          // 連動接点・親子 (linkTo) は同じ機器の一部なので重なって当然
+          if (a.linkTo === b2.id || b2.linkTo === a.id) return;
+          const hit = boxesOf.get(a.id).some(ra => boxesOf.get(b2.id).some(rb => {
+            const ox = Math.min(ra.x + ra.w, rb.x + rb.w) - Math.max(ra.x, rb.x);
+            const oy = Math.min(ra.y + ra.h, rb.y + rb.h) - Math.max(ra.y, rb.y);
+            if (ox <= 0.3 || oy <= 0.3) return false;
+            // 小さいほうの面積の 1 割以上食い込んでいれば「重なり」
+            return ox * oy > Math.min(ra.w * ra.h, rb.w * rb.h) * 0.1;
+          }));
+          if (!hit) return;
+          const k = `${a.id}|${b2.id}`;
+          if (seen.has(k)) return;
+          seen.add(k);
+          issues.push({ sev: "warn", rule: "記号の重なり",
+            msg: `${displayTag(a) || symOf(a.sym).name} と ${displayTag(b2) || symOf(b2.sym).name} の図記号が重なっています`,
+            page: page.no, target: a.id, loc: `${page.no}.${sheetCol(a.x)}` });
+        });
+      });
+    }
+
+    /* 導体が図記号を貫いていないか。画面は白塗りで隠れても、DXF には
+       そのまま出る (塗りつぶしは線を消さない)。その機器の端子で終わっている
+       導体は当然除く */
+    {
+      page.devices.forEach(dev => {
+        const sym = symOf(dev.sym);
+        if (!sym || sym.enclosure) return;                 // 囲み記号は貫くのが仕様
+        /* 実際に線を引いている範囲 (インク) を、線の太さぶんだけ内へ縮めて見る。
+           bounds は余白つきの枠なので、それで見ると隣を通っただけで鳴る */
+        const boxes = [devInkBox(dev)].map(r => insetRect(r, LINE_W.thick / 2));
+        const myPins = devPins(dev);
+        const onPin = pt => myPins.some(q => Math.abs(q.x - pt[0]) < .01 && Math.abs(q.y - pt[1]) < .01);
+        let hit = null;
+        condWires(page).some(w => {
+          for (let i = 0; i < w.pts.length - 1 && i < 200; i++) {
+            const a = w.pts[i], b2 = w.pts[i + 1];
+            if (onPin(a) || onPin(b2)) continue;            // その機器へ入る導体
+            if (boxes.some(r => segCrossesRect(a, b2, r))) { hit = w; return true; }
+          }
+          return false;
+        });
+        if (hit) issues.push({ sev: "warn", rule: "導体が図記号を貫通",
+          msg: `配線が ${displayTag(dev) || sym.name} の図記号を横切っています`,
+          page: page.no, target: hit.id, loc: `${page.no}.${sheetCol(dev.x)}` });
+      });
     }
 
     // 用紙に出る文字要素どうし・文字と図記号の重なり (検図の要)
@@ -2903,7 +3120,10 @@ function runDRC() {
 
     // 宙吊り配線端点 (ピンにも他ワイヤにも接続しない末端)。stub=意図的な引込線/レール端は除外
     drcWires.forEach(w => {
-      if (w.stub) return;
+      /* stub = 意図的な引込線・レール端。genGap = 入出力結線図の下地が空けた
+         「機器を置く隙間」の端。全点を使い切る図面のほうが珍しいので、
+         空いている行を毎回 2 件ずつ知らせると、本当に見るべき指摘が埋もれる */
+      if (w.stub || w.genGap) return;
       [w.pts[0], w.pts[w.pts.length - 1]].forEach(ep => {
         const k = ptKey(ep[0], ep[1]);
         const attached =
@@ -3071,6 +3291,46 @@ function runDRC() {
       issues.push({
         sev: "err", msg: `図番 ${no} が ${pgs.length} ページ (${pgs.map(x => x.no).join(", ")}) で重複しています`,
         page: pgs[0].no, target: null, loc: `${pgs[0].no}.-`,
+      });
+    });
+  }
+
+  /* 1 台の機器を複数枚に分けて描いた図 (入出力結線図) の通しの検査。
+     ・ユニット電源 (L/N/PE) の枚が 1 枚も無ければ、電源の結線が図面集から
+       抜けている。機種を差し替えたときに黙って消えるのがこれ
+     ・分かれている枚どうしは行き先記号で結ぶ (IEC 61082-1 の中断と継続) */
+  {
+    const units = new Map();                 // タグ+機種 → [{page, dev, sym}]
+    App.project.pages.forEach(pg => pg.devices.forEach(dev => {
+      const sym = symOf(dev.sym);
+      if (!sym || !sym.unitSheet || !dev.tag) return;
+      const k = `${dev.tag}|${dev.typeRef || sym.typ || ""}`;
+      if (!units.has(k)) units.set(k, []);
+      units.get(k).push({ pg, dev, sym });
+    }));
+    units.forEach((list, k) => {
+      const tag = k.split("|")[0];
+      const hasPower = list.some(e => (e.sym.pins || []).some(p => /^(L|N|PE)$/.test(p.n || "")));
+      /* 1 枚しか描いていない図は「まだ途中」なので黙る。2 枚以上あるのに
+         どこにも電源の枚が無いときだけ知らせる — 機種を差し替えたときに
+         電源端子ごと消えるのがこの形 */
+      if (!hasPower && list.length >= 2) {
+        const e = list[0];
+        issues.push({ sev: "err", rule: "ユニット電源の枚が無い",
+          msg: `${tag} の図に電源端子 (L/N/PE) の枚がありません — 機種を替えたときに電源の枚が抜けていないか確かめてください`,
+          page: e.pg.no, target: e.dev.id, loc: devLocation(e.dev) });
+      }
+      if (list.length < 2) return;
+      const pageIds = new Set(list.map(e => e.pg.id));
+      list.forEach(e => {
+        const linked = e.pg.devices.some(d2 => {
+          const s2 = symOf(d2.sym);
+          return s2 && s2.gotoRef && d2.props && pageIds.has(d2.props.toPage);
+        });
+        if (linked) return;
+        issues.push({ sev: "warn", rule: "分かれた枚の行き先が無い",
+          msg: `${tag} は ${list.length} 枚に分かれていますが、このページに他の枚への行き先がありません`,
+          page: e.pg.no, target: e.dev.id, loc: devLocation(e.dev) });
       });
     });
   }

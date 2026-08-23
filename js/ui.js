@@ -362,6 +362,8 @@ UI.showProps = (focusTag = false) => {
       })() : ""}
       ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
         <button class="btn-solid primary" id="pScaffold" style="padding:3px 10px;font-size:11px">結線図の下地を作る</button></div>` : ""}
+      ${(sym.nonstd && sym.stdNote) ? `<div class="prop-row"><label>規格外図記号の凡例 <span class="rp-dim">(JIS C 0617-1: 規格にない図記号は図面上で説明する)</span></label>
+        <button class="btn-solid" id="pStdNote" style="padding:3px 10px;font-size:11px">凡例を注記として貼る</button></div>` : ""}
       ${sym.fnRows ? (() => {
         // 機能欄 (行ごとの文言)。1 行 1 端子でまとめて貼り付けられる
         const fn = (dev.props && dev.props.fn) || {};
@@ -446,6 +448,21 @@ UI.showProps = (focusTag = false) => {
       UI.refresh();
       UI.toast(n ? `下地を引きました (導体 ${n} 本。隙間に現場機器を置いてください)` : "下地はすでにあります", 3200);
     });
+    /* 規格外の図記号は、その図面 (または添付文書) 上で説明するのが
+       JIS C 0617-1 / IEC 60617-1 の決まり。プロパティの説明文だけでは
+       出図した紙にも DXF にも出ないので、注記として貼れるようにする */
+    const sn = pane.querySelector("#pStdNote");
+    if (sn) sn.addEventListener("click", () => {
+      commit();
+      const pg = curPage(), fr = frameRect();
+      const text = `【凡例】${sym.name}: ${sym.stdNote}`;
+      if (pg.texts.some(t2 => t2.text === text)) { UI.toast("この凡例はすでに貼ってあります", 2600); return; }
+      const n = pg.texts.filter(t2 => /^【凡例】/.test(t2.text)).length;
+      pg.texts.push({ id: uid("t"), x: fr.x + 5, y: fr.y + fr.h - 5 - n * 5,
+        text, size: TEXT_H.small, anchor: "start" });
+      UI.refresh();
+      UI.toast("凡例を図枠の左下に貼りました (位置は動かせます)", 3200);
+    });
     const fix = pane.querySelector("#pSheetFix");
     if (fix) fix.addEventListener("click", () => {
       const want = symSheetSpec(sym);
@@ -487,9 +504,15 @@ UI.showProps = (focusTag = false) => {
       if (!base) return;
       const span = symStretchSpan(base, Math.round(parseFloat(v) / GRID) * GRID);
       symStretchVariant(base, span);
+      /* 隙間に置いてある現場機器も新しい行の高さへ運び、下地を引き直す。
+         記号だけ差し替えると機器が旧位置に残り、全行が外れる */
+      const oldSp = symOf(dev.sym).ioSheet;
       dev.sym = `${base.id}@${span}`;
+      const moved = oldSp ? moveIoRowDevices(curPage(), dev, oldSp, symOf(dev.sym).ioSheet) : 0;
+      const n = symOf(dev.sym).ioSheet ? buildIoScaffold(curPage(), dev) : 0;
       App.labelRev++;
-      UI.toast(`行ピッチを ${span}mm にしました (下地を引き直してください)`, 3600);
+      UI.toast(`行ピッチを ${span}mm にしました` +
+        (moved ? ` (現場機器 ${moved} 台と下地を引き直しました)` : n ? " (下地を引き直しました)" : ""), 3600);
     });
     // 伸縮シンボル: 長さを変えると "base@長さ" の寸法違いに差し替える
     bind("#pSpan", v => {

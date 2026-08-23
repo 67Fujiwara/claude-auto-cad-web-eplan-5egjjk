@@ -11,9 +11,9 @@ const DB_DEFAULT_PINNED = [
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
   "cp1", "cp2", "cont_no_main", "cont_nc_main",
   "conn_rj45", "conn_usb_a", "conn_hdmi",
-  // KV Nano は 3 機種とも出しておく (N40AT は入力が 2 枚に分かれる)
-  "kv_n14at_in", "kv_n14at_out", "kv_n24at_in", "kv_n24at_out",
-  "kv_n40at_in1", "kv_n40at_in2", "kv_n40at_out",
+  // KV Nano は 3 機種とも出しておく (枚数は機種で違う。N40AT は入力 3 枚 + 出力 2 枚)
+  "kv_n14at_in", "kv_n14at_out", "kv_n24at_in1", "kv_n24at_in2", "kv_n24at_out",
+  "kv_n40at_in1", "kv_n40at_in2", "kv_n40at_in3", "kv_n40at_out1", "kv_n40at_out2",
 ];
 
 /** 多極コネクタ (レセプタクル) を作る。
@@ -140,9 +140,13 @@ function mkPort(o) {
 const KV_AUXROW = 10, KV_HDR = 13, KV_BOT = 4, KV_Y0 = 15;
 const KV_BOXW = 30;                    // ユニットの箱 (細くてよい。中は形式と CH だけ)
 const KV_FN_X = 5, KV_FN_W = 100;      // 機能欄 (箱の右)。下線の長さ
-const KV_RAIL = 70, KV_GAP = 20;       // レールまでの距離 / 機器を落とす隙間
+/* レールまでの距離 / 機器を落とす隙間 / レール 2 本の間隔 / 隙間までの引出し。
+   間隔は電位リンク記号の幅 (18mm) より広くとる — 狭いとレール頭の記号どうしが
+   重なって、どちらのレールの電位か読めない */
+const KV_RAIL = 80, KV_GAP = 20, KV_RAIL_SEP = 25, KV_RAIL_LEAD = 10;
 // 端子は JIS C 0617-2 02-02-01 (端子)。寸法モジュール M=2.5mm に合わせて Ø2.5
 const KV_TERM_R = 1.25;
+const KV_TERM_X = 3;                   // 外郭の左辺から端子名の左端まで
 /** KV の入出力リレー番号 (16 点で次のチャネルへ繰り上がる) */
 function kvRelay(startCh, i) {
   return `R${startCh + Math.floor(i / 16)}${String(i % 16).padStart(2, "0")}`;
@@ -169,37 +173,43 @@ function kvBuild(o, pitch) {
   (o.aux || []).forEach((n, i) => rows.push({ n, y: y0 + i * KV_AUXROW + 5, io: false }));
   const bh = rows[rows.length - 1].y + KV_BOT;
   const pins = [], parts = [];
-  parts.push(`<rect x="0" y="0" width="${W}" height="${r1(bh)}"/>`);
-  parts.push(kvText(W / 2, 5, 3.5, o.model, "middle"));
-  parts.push(kvText(W / 2, 10, 3.5, o.title, "middle", false));
-  parts.push(`<path d="M0,${KV_HDR - 1} H${W}"/>`);
+  /* 端子 (小円) は外郭に接して描き、導体は円の外周で終える。円の中心を外郭線
+     の上に置くと、外郭が端子を貫き、導体が円の中心まで入った図になる
+     (画面は白塗りで隠れても DXF にはそのまま出る)。
+     ピンは 5mm 格子に乗せたいので、端子を左へ出すのではなく外郭を右へ寄せる —
+     格子から外れたピンは、配線のとき端点が丸められて端子に届かない */
+  const BX = TR * 2;                       // 外郭の左辺 (ピン x=0 から端子の直径ぶん右)
+  parts.push(`<rect x="${BX}" y="0" width="${W}" height="${r1(bh)}"/>`);
+  parts.push(kvText(BX + W / 2, 5, 3.5, o.model, "middle"));
+  parts.push(kvText(BX + W / 2, 10, 3.5, o.title, "middle", false));
+  parts.push(`<path d="M${BX},${KV_HDR - 1} H${r1(BX + W)}"/>`);
   let prevIo = null;
   rows.forEach((r, i) => {
-    pins.push({ x: 0, y: r.y, n: r.n, noDrc: r.io, row: i });
-    parts.push(`<circle cx="0" cy="${r1(r.y)}" r="${TR}" fill="#fff"/>`);
-    if (prevIo === true && !r.io) parts.push(`<path d="M0,${r1(r.y - KV_AUXROW / 2)} H${W}"/>`);
+    pins.push({ x: 0, y: r.y, n: r.n, noDrc: r.io, inBody: true, row: i });
+    parts.push(`<circle cx="${TR}" cy="${r1(r.y)}" r="${TR}"/>`);
+    if (prevIo === true && !r.io) parts.push(`<path d="M${BX},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
     prevIo = r.io;
-    if (r.n === "PE") {
-      /* 保護接地 JIS C 0617-2 02-15-03 (接地記号 02-15-01 を円で囲む)。
-         DB の prot_earth と同じ寸法を、端子から左へ引くので 90° 倒して描く */
-      const y = r.y, cx = -10;
-      parts.push(`<path d="M0,${r1(y)} H-4"/>` +
-        `<circle cx="${cx}" cy="${r1(y)}" r="6"/>` +
-        `<path d="M-4,${r1(y)} H-7.4 M-7.4,${r1(y - 3.6)} V${r1(y + 3.6)}` +
-        ` M-9.8,${r1(y - 2.4)} V${r1(y + 2.4)} M-12.2,${r1(y - 1.2)} V${r1(y + 1.2)}"/>`);
-    }
-    parts.push(`<path d="M${W + KV_FN_X},${r1(r.y + 1.5)} H${r1(W + KV_FN_X + KV_FN_W)}" stroke-width="0.25"/>`);
+    /* 端子名は外郭の内側。外に置くと現場側の配線区画に文字が並び、機器の
+       ピン番号・線番と同じ帯に並んで読み合わせることになる */
+    parts.push(kvText(BX + KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "start"));
+    parts.push(`<path d="M${r1(BX + W + KV_FN_X)},${r1(r.y + 1.5)} H${r1(BX + W + KV_FN_X + KV_FN_W)}" stroke-width="0.25"/>`);
   });
-  // 左端は PE の丸囲み (-16) か、端子の丸 (-1.25) + 呼び。PE のある枚だけ広げる
-  const left = rows.some(r => r.n === "PE") ? -17 : -11;
-  const bounds = [left, -2, r1(W + KV_FN_X + KV_FN_W + 2 - left), r1(bh + 4)];
+  /* 保護接地の図記号は焼き込まない。焼き込むと「紙の上は接地済み・モデルは
+     未接続」という食い違いが起き、利用者が指示どおり結線すると導体が接地記号を
+     貫き、別に prot_earth を置けば接地記号が 2 つ並ぶ。PE は端子名で示し、
+     接地は利用者が 02-15-03 を置いて結ぶ (記号は端子より右だけを持つ、の原則) */
+  const bounds = [-2, -2, r1(BX + W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
   return {
     pins, body: parts.join(""), bounds, inkBoxes: [bounds.slice()],
     fnRows: rows.length,
     /* 下地の寸法 (端子からの距離)。テストや使う人がここから隙間の位置を出せる:
-       電源レール = x - rail / 分岐レール = x - rail + 10 / 隙間 = そこから 10mm 右 */
+       外側 (コモン側) レール = x - rail / 内側 (分岐側) = x - rail + sep /
+       隙間 = そこから lead だけ右 */
     ioSheet: { rail: KV_RAIL, gap: KV_GAP, pitch, railTags: o.railTags,
-      gapFrom: KV_RAIL - 20, gapTo: KV_RAIL - 20 - KV_GAP,
+      sep: KV_RAIL_SEP, lead: KV_RAIL_LEAD,
+      fnTextX: BX + W + KV_FN_X + 1, fnRoom: KV_FN_W - 1,   // 機能欄の文字の左端 / 下線の長さ
+      gapFrom: KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD,
+      gapTo: KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP,
       rows: rows.map(r => ({ y: r.y, io: r.io })) },
     sheet: kvSheetFor({ w: KV_RAIL + bounds[2], h: bounds[3] }),
   };
@@ -241,47 +251,79 @@ const KV_PAPERS = [
   { paper: "A1", orient: "landscape", w: 841, h: 594 },
   { paper: "A1", orient: "portrait", w: 594, h: 841 },
 ];
-/* 右下でふさがる帯: 表題欄 160×30 の上に改訂履歴欄 120×30 (5 行ぶん) が載る。
-   改訂は後から増えるので、いちばん高くなった姿で場所を空けておく */
-const KV_TB_W = 160, KV_TB_H = 30, KV_REV_H = 30, KV_BLOCK_H = KV_TB_H + KV_REV_H + 5;
+/* 右下でふさがる帯: 表題欄 160×30 と、その左隣に置かれる改訂履歴欄 120×30。
+   engine.js の revisionRect() は余地があれば改訂履歴欄を表題欄の「左」に並べる
+   ので、ふさがるのは幅 280mm・高さ 30mm の帯。改訂は後から増えるので、
+   いちばん大きくなった姿 (4 行 + 見出し = 30mm) で場所を空けておく */
+const KV_TB_W = 160, KV_REV_W = 120, KV_BLOCK_W = KV_TB_W + KV_REV_W, KV_BLOCK_H = 35;
+/* 尺度は NS (非尺度)。図記号で表す図は実物との寸法比を持たないので、
+   「1:1」と刷るのは事実に反する (JIS Z 8314 / IEC 61082-1) */
+const KV_SCALE = "NS";
 function kvSheetFor(size) {
   for (const s of KV_PAPERS) {
     const c = s.paper === "A1" ? 20 : 10;       // 輪郭線までの余白 (とじ代は 20mm)
     const inW = s.w - Math.max(20, c) - c, inH = s.h - c * 2;
     /* 記号が細くて表題欄・改訂履歴欄の左に収まるなら、高さは作図領域いっぱいまで使える */
-    const roomH = size.w <= inW - KV_TB_W ? inH : inH - KV_BLOCK_H;
-    if (size.w <= inW && size.h + 10 <= roomH) return { paper: s.paper, orient: s.orient, scale: "1:1" };
+    const roomH = size.w <= inW - KV_BLOCK_W ? inH : inH - KV_BLOCK_H;
+    if (size.w <= inW && size.h + 10 <= roomH) return { paper: s.paper, orient: s.orient, scale: KV_SCALE };
   }
   const l = KV_PAPERS[KV_PAPERS.length - 1];
-  return { paper: l.paper, orient: l.orient, scale: "1:1" };
+  return { paper: l.paper, orient: l.orient, scale: KV_SCALE };
 }
 
-/** KV Nano 基本ユニットの結線図記号。1 群 (16 点まで) = 1 枚 */
+/* 1 枚あたりの点数。用紙を A3 横 1 種類にそろえるための上限で、
+   「16 点 = 1 チャネル = 1 枚」ではなく「A3 横に収まる行数 = 1 枚」で切る。
+
+   なぜ 16 点をやめたか: 1 行 = 1 機器を横に倒して置くので、行ピッチは
+   ぶつからない距離 (20mm) が要る。16 行だと縦 335mm を超え、A3 には
+   どう置いても入らない。用紙を A2 へ上げると、現場に持ち込む図面集が
+   折らないと綴じられず、複写機にも乗らない。紙ではなく割付のほうを変えた。
+   チャネル (16 点) はまたがない — 1 チャネルを均等に割る */
+const KV_PER_SHEET = 10;
+
+/** KV Nano 基本ユニットの結線図記号。1 枚 = A3 横に収まる行数まで */
 function mkKvUnit(model, nIn, nOut) {
   const out = [];
   const groups = [];
-  for (let i = 0; i < nIn; i += 16) groups.push({ kind: "入力", ch: 0, from: i, n: Math.min(16, nIn - i) });
-  for (let i = 0; i < nOut; i += 16) groups.push({ kind: "出力", ch: 5, from: i, n: Math.min(16, nOut - i) });
-  const powerOn = groups.slice().sort((a, b2) => a.n - b2.n || groups.indexOf(a) - groups.indexOf(b2))[0];
-  groups.forEach((g, gi) => {
+  /* まずチャネル (16 点) で切り、そのチャネルを均等に割る。
+     端数を最後の枚へ寄せると 10/4 のように偏るので、行数をそろえる */
+  const addCh = (kind, ch, from, n) => {
+    const sheets = Math.max(1, Math.ceil(n / KV_PER_SHEET));
+    let at = from;
+    for (let k = 0; k < sheets; k++) {
+      const cnt = Math.ceil((n - (at - from)) / (sheets - k));
+      groups.push({ kind, ch, from: at, n: cnt });
+      at += cnt;
+    }
+  };
+  for (let i = 0; i < nIn; i += 16) addCh("入力", 0, i, Math.min(16, nIn - i));
+  for (let i = 0; i < nOut; i += 16) addCh("出力", 5, i, Math.min(16, nOut - i));
+  /* ユニットの電源 (L/N/PE) は、行にいちばん余裕のある枚 (点数のいちばん
+     少ない枚。同数なら最後の枚) に載せる。点数の多い枚に足すと紙が 1 段大きくなる。
+     これは作図の都合なので、どの枚に載るかは「機種と枚数」表で示し、
+     1 台を複数枚に分けたのに電源の枚が無い図は検図で知らせる */
+  const powerOn = groups.slice().sort((a, b2) => a.n - b2.n || groups.indexOf(b2) - groups.indexOf(a))[0];
+  groups.forEach((g) => {
     const rows = [];
     for (let i = 0; i < g.n; i++) rows.push(kvRelay(g.ch, g.from + i));
-    /* コモンは群ごと。ユニットの電源 (L/N/PE) は、行にいちばん余裕のある群
-       (点数のいちばん少ない枚) に載せる。点数の多い枚に足すと紙が 1 段大きくなる */
     const aux = g === powerOn ? ["COM", "L", "N", "PE"] : ["COM"];
-    const many = groups.filter(x => x.kind === g.kind).length > 1;
-    const no = many ? ` (${Math.floor(g.from / 16) + 1})` : "";
+    const kindId = g.kind === "入力" ? "in" : "out";
+    const sibs = groups.filter(x => x.kind === g.kind);
+    const many = sibs.length > 1;
+    const idx = sibs.indexOf(g) + 1;
+    const no = many ? ` (${idx}/${sibs.length})` : "";
     out.push(mkKvSheet({
-      id: `${model.toLowerCase().replace(/-/g, "_")}_${g.kind === "入力" ? "in" : "out"}${many ? Math.floor(g.from / 16) + 1 : ""}`,
+      id: `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${many ? idx : ""}`,
       model, title: `${g.kind}${no} ${g.n}点`, rows, aux,
       /* シンク (NPN) 形の KV-N□□AT の場合:
          入力は COM を +24V へ、機器の帰りは 0V。出力は COM を 0V へ、負荷の
-         帰りは +24V。分岐用レールは機器・負荷の帰り側になる */
+         帰りは +24V。分岐用レールは機器・負荷の帰り側になる。
+         どちらの紙でも「外側 = コモン側 / 内側 = 分岐側」で位置をそろえる */
       railTags: g.kind === "入力" ? { branch: "0V", supply: "+24V" } : { branch: "+24V", supply: "0V" },
-      swapGroup: `kv_nano_${g.kind === "入力" ? "in" : "out"}`,
+      swapGroup: `kv_nano_${kindId}`,
       name: `${model} ${g.kind}結線図${no}`, nameEn: `${model} ${g.kind === "入力" ? "input" : "output"} wiring`,
       desc: `キーエンス KV Nano 基本ユニット ${model} の${g.kind}結線図 (${rows[0]}〜${rows[rows.length - 1]} の${g.n}点)。` +
-        `端子の左は現場側 — プロパティの「結線図の下地を作る」で N24/P24 のレールと各行の分岐を実線で引きます。` +
+        `端子の左は現場側 — プロパティの「結線図の下地を作る」で 0V/+24V のレールと各行の分岐を実線で引きます。` +
         `右は機能欄で、行ごとの文言はプロパティでまとめて入れられます。`,
     }));
   });
@@ -743,7 +785,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 4;
+const DB_PINNED_VER = 5;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");

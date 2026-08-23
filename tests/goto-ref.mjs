@@ -402,7 +402,9 @@ const S = await p.evaluate(() => {
   const p2 = newPage("次葉", 2); App.project.pages.push(p2); UI.renumberPages(); App.pageIdx = 0;
   addDevice(pg, "psu24", 60, 40, { tag: "-G1" });
   const co = addDevice(pg, "coil", 50, 90, { tag: "-K1" });
-  addWire(pg, [[50, 70], [50, 90]]); addWire(pg, [[70, 70], [70, 110], [50, 110]]);
+  /* 帰りの線は x=110 で回す。行き先の旗は挿入点から右へ 35mm 伸びるので、
+     x=70 で回すと旗を導体が横切る図になり、検図 (導体が図記号を貫通) が鳴る */
+  addWire(pg, [[50, 70], [50, 90]]); addWire(pg, [[70, 70], [110, 70], [110, 110], [50, 110]]);
   const snap = () => { simSolve(); const e = App.sim.energized;
     return JSON.stringify({ st: App.sim.states, p: [...e.pNets].sort(), n: [...e.nNets].sort() }); };
   simStart();
@@ -418,7 +420,9 @@ const S = await p.evaluate(() => {
   o.after = snap();
   o.same = o.before === o.after;
   o.coilStillOn = !!App.sim.states[co.id];
-  o.drcSame = o.drcBefore === otherDrc(g.id);
+  o.drcAfter = otherDrc(g.id);
+  o.drcSame = o.drcBefore === o.drcAfter;
+  o.drcAdded = o.drcAfter.split("|").filter(x => x && !o.drcBefore.split("|").includes(x));
   o.bomSame = o.bomBefore === JSON.stringify(buildBOM().rows ? buildBOM().rows : buildBOM());
   o.termSame = o.termBefore === JSON.stringify(buildTerminalList());
   // どの状態でも導通しない (閉/開/分離/実行中/切替の各モード)
