@@ -424,7 +424,7 @@ function pageToDXF(page) {
   tbCell(2, R, "日付", meta.date || todayStr());
   tbCell(3, R, "尺度", pm.scale || "1:1");
   tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
-  tbCell(1, R * 2, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || "第三角法"}`);
+  tbCell(1, R * 2, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || PROJ_DEFAULT}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
   ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);

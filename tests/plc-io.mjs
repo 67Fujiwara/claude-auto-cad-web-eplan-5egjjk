@@ -3,10 +3,11 @@
    実務の結線図の形 — 左に現場側のレール、各行はそこから分岐して機器を通り、
    端子 (○ + リレー番号) からユニットの箱へ入る。箱の右は機能欄 (下線に文言)。
 
-   ・用紙 1 枚 = 1 記号 = 1 群 (16 点まで)。16 点を超える入力は 2 枚に分ける。
-     用紙は記号の大きさから選び、表題欄 (160×30) と改訂履歴欄 (120×30) を空ける。
-     「A3 横で 16 点」は行ピッチ 15mm なら成り立つが、そのとき横に倒した機器どうしが
-     接する。既定は「ぶつからない距離」を優先した 20mm で、16 点の群は A2 横になる。
+   ・用紙 1 枚 = 1 記号 = 「A3 横に収まる行数」(最大 10 点)。チャネル (16 点) は
+     またがず均等に割る。用紙は記号の大きさから選び、表題欄 (160×30) と
+     その左隣の改訂履歴欄 (120×30) — あわせて幅 280mm の帯 — を空ける。
+     用紙は機種でそろえる (枚ごとに決めるとピッチを広げたとき横と縦が混ざる)。
+   ・ユニットの電源と接地は描かない (別紙の電源回路図)。補助行はコモンだけ。
    ・端子より左 (現場側) は実際の導体で描く。プロパティの「結線図の下地を作る」で
      レールと各行の分岐を引き、機器を落とす隙間を空ける。記号の中に線を描いて
      しまうと、見た目はつながっているのに検図もシミュレーションも通らない図になる。
@@ -16,18 +17,20 @@
 
    判定
    ・群ごとの点数と端子番号が実機どおりで、16 点で次のチャネルへ繰り上がること
-   ・想定の用紙 (すべて 1:1) の図枠に収まり、表題欄・改訂履歴欄に掛からないこと。
-     行ピッチ 15mm ならすべて A3 横に収まること
+   ・想定の用紙 (すべて NS) の図枠に収まり、表題欄・改訂履歴欄に掛からないこと。
+     既定ピッチ 20mm ではすべて A3 横。どのピッチでも同じ機種の枚は同じ用紙
    ・紙の上の寸法 (行ピッチ 20mm・文字 2.5mm・線 0.25mm) が群によらず同じこと
    ・見出し (形式・種別) が箱に収まり、上辺・行間・罫線と 1mm 以上あくこと。
      種別は和文なので JIS Z 8313-0 の和文最小 3.5mm で描かれる — 実寸で測る
-   ・未使用の入出力点は警告しないが、電源・コモン・保護接地の結び忘れは知らせること。
-     PE の未接続はエラーで、丸囲みの保護接地 02-15-03 が付くこと
-   ・「下地を作る」が本物の導体を引き、隙間に機器を置いて COM をつなげば検図が 0 件に
-     なること。二度押しても二重に引かないこと
+   ・未使用の入出力点は警告しないが、コモンの結び忘れは知らせること。
+     接地の図記号は焼き込まないこと
+   ・「下地を作る」が本物の導体を引き、コモンを外側のレールへ結ぶこと。
+     電位名 (+24V/0V) が自分のレールに付くこと (25mm 隣のレールより近い)。
+     二度押しても二重に引かないこと。出力の枚に負荷を置いても検図 0 件になること
+   ・3 線式の直流検出器は NPN (シンク) 形 — 開閉要素は「出力と 0V」の間
    ・機能欄の文言が画面と DXF に出て下線の上に載り、長すぎれば検図に出ること
-   ・プロパティで同じ群の機種に差し替えられ、用紙が変わる差し替えは検図に出てから
-     「この用紙にする」で消えること
+   ・プロパティで同じ群の機種に差し替えられ、下地も引き直されること。
+     想定と違う用紙は検図に出て「この用紙にする」で消えること
    ・1 台の PLC を複数枚に分けて描いてもタグ重複にならず、部品表は 1 行 1 台
    ・部品表に出て、DXF に端子番号が出ること */
 import { chromium } from "playwright-core";
@@ -101,7 +104,11 @@ const R = await p.evaluate(() => {
           const w = textWidthMM(o.t, textHeightMM(o.t, o.h), o.mono, false);
           return { top: o.y - ink.up, bot: o.y + ink.down, l: o.x - w / 2, r: o.x + w / 2, t: o.t };
         }).sort((a, b2) => a.top - b2.top);
-        return { n: 2, inBox: box.every(o => o.l >= 0.5 && o.r <= 30 - 0.5),
+        /* 外郭は端子の直径ぶん右にある (ピンを 5mm 格子に乗せるため)。
+           見出しの文字がその内側に収まっているか */
+        const bx0 = Math.min(...(sym.body.match(/<rect x="([\d.]+)"/g) || ['<rect x="0"'])
+          .map(m => parseFloat(m.replace(/[^\d.]/g, ""))));
+        return { n: 2, inBox: box.every(o => o.l >= bx0 + 0.5 && o.r <= bx0 + 30 - 0.5),
           fromTop: +box[0].top.toFixed(2),          // 箱の上辺からのあき
           between: +(box[1].top - box[0].bot).toFixed(2),
           toRule: +(rule - box[1].bot).toFixed(2) };
@@ -111,11 +118,18 @@ const R = await p.evaluate(() => {
   /* 行ピッチと用紙の対応。「A3 横に 16 点」はピッチ 15mm なら成り立つ
      (ただし横に倒した機器どうしは接する — だから既定は 20mm) */
   out.pitchPaper = {};
+  out.pitchPaperByModel = {};
+  const lab = sh => sh ? sh.paper + (sh.orient === "landscape" ? "横" : "縦") + " " + sh.scale : "-";
   [15, 20, 25, 30, 35].forEach(v => {
-    out.pitchPaper[v] = Object.keys(SPEC).map(id => {
-      const s2 = symOf(id + "@" + v), sh = s2 && s2.sheet;
-      return sh ? sh.paper + (sh.orient === "landscape" ? "横" : "縦") + " " + sh.scale : "-";
-    }).join(",");
+    out.pitchPaper[v] = Object.keys(SPEC).map(id => lab((symOf(id + "@" + v) || {}).sheet)).join(",");
+    // 機種ごとに、その機種の枚が何種類の用紙になるか (1 種類であること)
+    const byModel = {};
+    Object.keys(SPEC).forEach(id => {
+      const m = id.replace(/_(in|out)\d*$/, "");
+      (byModel[m] = byModel[m] || []).push(lab((symOf(id + "@" + v) || {}).sheet));
+    });
+    out.pitchPaperByModel[v] = {};
+    Object.entries(byModel).forEach(([m, v2]) => { out.pitchPaperByModel[v][m] = [...new Set(v2)]; });
   });
 
   if (out.missingIds.length) return out;      // 以降は記号がそろっている前提
@@ -195,6 +209,24 @@ const R = await p.evaluate(() => {
   out.scaffold = { wires: n1, again: n2, total: t.pg.wires.length, same: n1 === n2,
     // レールは導体で、電位リンクが付く
     hasLink: t.pg.devices.some(d => symOf(d.sym).sim === "link") };
+  /* 電位名 (+24V / 0V) が自分のレールに付いていること。25mm 隣にもう 1 本
+     レールがあるので、まわりを探して置く既定規則だと「相手のレールのほうが
+     近い」位置に落ち、+24V と 0V が入れ替わって読める */
+  {
+    const links = t.pg.devices.filter(x => x.gen === t.d.id && symOf(x.sym).sim === "link");
+    out.railLabels = links.map(l => {
+      const lb = deviceLabelBoxes(t.pg, l).find(o => o.isTag);
+      if (!lb) return { tag: l.tag, noLabel: true };
+      const cx = lb.box.x + lb.box.w / 2;
+      const others = links.filter(o => Math.abs(o.x - l.x) > 1).map(o => Math.abs(cx - o.x));
+      // 電位リンクの三角 (挿入点から 8mm) に文字が乗っていないこと
+      const ib = devInkBox(l);
+      const on = lb.box.x < ib.x + ib.w && lb.box.x + lb.box.w > ib.x &&
+        lb.box.y < ib.y + ib.h && lb.box.y + lb.box.h > ib.y;
+      return { tag: l.tag, toOwn: +Math.abs(cx - l.x).toFixed(2),
+        toOther: +Math.min(...others).toFixed(2), onGlyph: on };
+    });
+  }
   const sp = t.sym.ioSheet;
   sp.rows.filter(r => r.io).forEach(r => {
     addDevice(t.pg, "pb_no", t.d.x - sp.gapFrom, t.d.y + r.y, { tag: "", rot: 270 });
@@ -352,6 +384,33 @@ const R = await p.evaluate(() => {
     App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
   }
 
+  /* ④b-4 出力の枚。隙間に負荷 (表示灯) を落として結線すると検図 0 件になること。
+     出力は「+24V →負荷→ 出力端子」で、帰りは機器の中 (COM=0V) を通るので、
+     図の上では電源へ届かない。ここを見ていなかったため、出荷している 10 枚の
+     うち出力 4 枚は一度も通しで試されていなかった */
+  {
+    const q = newPage("出力の枚", App.project.pages.length + 1);
+    App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
+    const s0 = symOf("kv_n14at_out"), w1 = symSheetSpec(s0);
+    q.paper = w1.paper; q.orient = w1.orient; q.scale = w1.scale; applySheet(q);
+    const dd = addDevice(q, "kv_n14at_out", frameRect().x + s0.ioSheet.rail + 15, frameRect().y + 5, { tag: "-A70" });
+    buildIoScaffold(q, dd);
+    const spO = symOf(dd.sym).ioSheet;
+    const rowsO = spO.rows.filter(r => r.io);
+    rowsO.forEach((r, i) => addDevice(q, "lamp", dd.x - spO.gapFrom, dd.y + r.y, { tag: `-P${i + 1}`, rot: 270 }));
+    App.labelRev++;
+    const netsO = computeNets(q, "closed");
+    out.outSheet = {
+      loads: rowsO.length,
+      // 負荷が +24V (分岐レール) と出力端子の両方につながっている
+      wired: q.devices.filter(d2 => d2.sym === "lamp").every((d2, i) =>
+        netsO.pinNet(d2, 1) === netsO.pinNet(dd, i) || netsO.pinNet(d2, 0) === netsO.pinNet(dd, i)),
+      drc: runDRC().filter(i => i.page === q.no).map(i => `${i.sev}:${i.rule || "?"}:${i.msg}`),
+    };
+    App.project.pages.pop();
+    App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
+  }
+
   /* ④c 3 線式センサ (現場の主役)。隙間へ落として「下地を作る」を押すだけで、
      茶=+24V (コモン側レール) / 青=0V (分岐レール) / 黒=入力端子 に引き分かれること。
      直列の隙間は 2 線のドライ接点用なので、素直に直列でつなぐと茶が 0V に載り、
@@ -378,6 +437,17 @@ const R = await p.evaluate(() => {
     const at = n => sp5.findIndex(x => x.name === n);
     const linkAt = x => q.devices.find(d2 => d2.gen === dd.id && symOf(d2.sym).sim === "link" &&
       Math.abs(d2.x - x) < 0.01);
+    /* 3 線式の直流検出器は NPN (シンク) 形で描かれていること。開閉要素が
+       「+V と 出力」の間 (PNP・ソース形) だと、プラスコモンの入力につないでも
+       永久に ON しない図になる。記号・型式・結線が食い違ってはいけない */
+    out.npn = ["prox", "photo", "press_sw"].map(id => {
+      const s3 = symOf(id);
+      const pr = conductivePairs({ id: "x", sym: id, x: 0, y: 0, props: {} }, "closed");
+      const nm = i => (s3.pins[i] || {}).n || "";
+      return { id, pins: (pr[0] || []).map(nm).sort().join("-"),
+        // 開閉要素が 0V 側の端子を含むこと (BU / N24V)
+        sinks: (pr[0] || []).some(i => /^(BU|N24V)$/.test(nm(i))) };
+    });
     out.sensor3 = {
       // 押す前: 茶が 0V 側という誤りをエラーで知らせる
       beforeSev: bad.map(i => i.sev).join(","),
@@ -496,7 +566,16 @@ const U2a = await p.evaluate(() => {
 });
 const hasFix = await p.waitForSelector("#pSheetFix", { timeout: 4000 }).then(() => true).catch(() => false);
 if (hasFix) { await p.click("#pSheetFix"); await p.waitForTimeout(300); }
-const U2 = { ...U2a, hasFix, ...await p.evaluate(() => {
+/* 差し替えたあと、下地が壊れていないこと (旧い行の高さに導体が残ると、
+   コモンの線が宙に浮いて枠の中を横切る) */
+const U2b = await p.evaluate(() => {
+  const dev = (curPage() || { devices: [] }).devices.find(d => /^kv_/.test(d.sym));
+  if (!dev) return { swapDrc: ["機器がありません"] };
+  App.labelRev++;
+  return { swapDrc: runDRC().filter(i => i.page === curPage().no &&
+    /貫通|宙吊り|どこにも接続|未接続/.test(i.msg)).map(i => `${i.sev}:${i.msg}`) };
+});
+const U2 = { ...U2a, hasFix, ...U2b, ...await p.evaluate(() => {
   const dev = (curPage() || { devices: [] }).devices.find(d => /^kv_/.test(d.sym));
   if (!dev) return { fixedPaper: "", sheetErrAfter: -1, frameErrAfter: -1 };
   App.labelRev++;
@@ -528,11 +607,12 @@ const checks = {
     return h.n === 2 && h.inBox === true && h.fromTop >= 1 && h.between >= 1 && h.toRule >= 1; }),
   /* 行ピッチを 15mm にすれば 16 点でも A3 横 1:1 に収まる (用紙の希望どおり)。
      既定 20mm では A2 横まで大きくなる — 現場機器がぶつからない距離を優先している */
-  /* 既定ピッチ (20mm) でどの枚も A3 横 1 種類。広げても A3 を出ない —
-     現場へ持ち込む図面集は A3 綴じなので、A2 に上げない割付にしてある */
+  /* 既定ピッチ (20mm) でどの枚も A3 横 1 種類。
+     さらに、どのピッチでも「同じ機種の枚どうしは同じ用紙」であること —
+     枚ごとに用紙を決めると、ピッチを広げたとき 1 台の図面集に横と縦が混ざる */
   pitchPaper: ((R.pitchPaper || {})[20] || "").split(",").every(v => v === "A3横 NS") &&
     ((R.pitchPaper || {})[15] || "").split(",").every(v => v === "A3横 NS") &&
-    Object.values(R.pitchPaper || {}).every(v => v && !/A2|A1|-/.test(v)),
+    Object.values(R.pitchPaperByModel || {}).every(m => Object.values(m).every(v => v.length === 1)),
   // 横に倒した現場機器が隣の行とぶつからない (既定ピッチ)。
   // 背の高い記号は既定では当たるが、ピッチを広げれば収まる
   /* 単極の入出力機器は既定ピッチ (20mm) で隣の行とぶつからない。
@@ -561,6 +641,15 @@ const checks = {
   termInBody: ids.every(id => (R.group[id] || {}).termInBody) && R.termLabels === 0,
   // 機能欄の下線が行数ぶんある
   fnRuling: ids.every(id => (R.group[id] || {}).fnLines === (R.group[id] || {}).fnRows),
+  /* 3 線式センサは NPN (シンク) 形 — 開閉要素は「出力と 0V」の間 */
+  npnSensors: Array.isArray(R.npn) && R.npn.length === 3 && R.npn.every(o => o.sinks === true) &&
+    R.npn.map(o => o.pins).join(",") === "BK-BU,BK-BU,N24V-OUT",
+  // 出力の枚も、負荷を落として結線すれば検図 0 件
+  outSheet: (R.outSheet || {}).loads === 6 && R.outSheet.wired === true &&
+    Array.isArray(R.outSheet.drc) && R.outSheet.drc.length === 0,
+  // 電位名は自分のレールに付く (相手のレールより必ず近い)
+  railLabels: Array.isArray(R.railLabels) && R.railLabels.length >= 4 &&
+    R.railLabels.every(o => !o.noLabel && o.toOwn < o.toOther - 5 && o.onGlyph === false),
   // 下地を引いただけ (未使用の行だらけ) でも検図は 0 件
   emptyDrc: Array.isArray(R.emptyDrc) && R.emptyDrc.length === 0,
   // 図記号どうしの重なりと、図記号を貫く導体を検図が見る
@@ -610,7 +699,9 @@ const checks = {
     U2.pins === 9 &&
     // 想定と違う用紙は検図に出て、「この用紙にする」で消える
     U2.sheetErr === 1 && U2.hasFix === true && U2.fixedPaper === "A3/landscape/NS" &&
-    U2.sheetErrAfter === 0 && U2.frameErrAfter === 0,
+    U2.sheetErrAfter === 0 && U2.frameErrAfter === 0 &&
+    // 差し替えで下地が壊れていない
+    Array.isArray(U2.swapDrc) && U2.swapDrc.length === 0,
 };
 const fail = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
 console.log("CHECKS:", JSON.stringify(checks), fail.length ? "FAIL " + fail.join(",") : "ok");

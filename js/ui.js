@@ -425,8 +425,16 @@ UI.showProps = (focusTag = false) => {
       // 使う人が手で入れた型式は尊重する
       if (!dev.typeRef || dev.typeRef === (before.typ || "")) dev.typeRef = after.typ || "";
       // 機能欄は端子名で持っているので、名前の変わらない端子はそのまま残る
+      /* 行数が変われば行の高さも変わる。記号だけ差し替えると、置いてある現場機器と
+         引いてある下地が旧位置に残り、コモンの線が宙に浮いて枠の中を横切る */
+      let moved = 0, redrew = 0;
+      if (before.ioSheet && after.ioSheet) {
+        moved = moveIoRowDevices(curPage(), dev, before.ioSheet, after.ioSheet);
+        redrew = buildIoScaffold(curPage(), dev);
+      }
       App.labelRev++;
-      UI.toast(`${after.name} に差し替えました (端子 ${n0} → ${after.pins.length})`, 3200);
+      UI.toast(`${after.name} に差し替えました (端子 ${n0} → ${after.pins.length})` +
+        (redrew ? ` / 下地を引き直し${moved ? `、現場機器 ${moved} 台を新しい行へ移しました` : "ました"}` : ""), 3600);
     });
     // 機能欄: 1 行 1 端子でまとめて入れる
     const fnEl = pane.querySelector("#pFn");
@@ -454,14 +462,10 @@ UI.showProps = (focusTag = false) => {
     const sn = pane.querySelector("#pStdNote");
     if (sn) sn.addEventListener("click", () => {
       commit();
-      const pg = curPage(), fr = frameRect();
-      const text = `【凡例】${sym.name}: ${sym.stdNote}`;
-      if (pg.texts.some(t2 => t2.text === text)) { UI.toast("この凡例はすでに貼ってあります", 2600); return; }
-      const n = pg.texts.filter(t2 => /^【凡例】/.test(t2.text)).length;
-      pg.texts.push({ id: uid("t"), x: fr.x + 5, y: fr.y + fr.h - 5 - n * 5,
-        text, size: TEXT_H.small, anchor: "start" });
+      const n = pasteStdNote(curPage(), sym);
       UI.refresh();
-      UI.toast("凡例を図枠の左下に貼りました (位置は動かせます)", 3200);
+      UI.toast(n ? `凡例を ${n} 行で図枠の左下に貼りました (位置は動かせます)`
+                 : "この凡例はすでに貼ってあります", 3200);
     });
     const fix = pane.querySelector("#pSheetFix");
     if (fix) fix.addEventListener("click", () => {
@@ -1665,7 +1669,7 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>日付</label><input id="tbDate" class="mono" value="${escAttr(meta.date || todayStr())}" placeholder="2026-01-31"/></div>
       <div class="prop-row"><label>企業 (団体) 名</label><input id="tbAuth" value="${escAttr(meta.author || "")}" placeholder="社名を入力"/></div>
       <div class="prop-row"><label>投影法</label><select id="tbProjMethod">
-        ${["第三角法", "第一角法", "該当なし (回路図)"].map(v => opt(v, meta.proj || "第三角法")).join("")}
+        ${["該当なし (回路図)", "第三角法", "第一角法"].map(v => opt(v, meta.proj || PROJ_DEFAULT)).join("")}
       </select></div>
     </div>
     <div class="prop-note">

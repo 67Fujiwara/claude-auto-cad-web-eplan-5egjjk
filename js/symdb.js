@@ -114,21 +114,30 @@ function mkPort(o) {
 /* ── PLC 入出力結線図 (キーエンス KV Nano シリーズ) ─────────────────────
    実務の入出力結線図の形に合わせる:
 
-     N24 ┃                                    ┌──────┐
-         ┣━━[ 機器 ]━━○ R000 ─────────┤QX41  │ ── 操作電源 入 ────
-         ┃                             │ 00CH │
-         ┣━━[ 機器 ]━━○ R001 ─────────┤      │ ── タンク1本選択 ──
-                                        └──────┘
-                        ↑端子と番号        ↑ユニット   ↑機能欄 (下線に書く)
+    +24V ┃ 0V ┃                              ┌──────────┐
+         ┃    ┣━━[ 機器 ]━━○─┤R007      │ ── 起動押ボタン ──
+         ┃    ┃                              │KV-N24AT  │
+         ┃    ┣━━[ 機器 ]━━○─┤R008      │ ── 停止押ボタン ──
+         ┃    ┃                              │入力(2/2) │
+         ┗━━━━━━━━━━━━━━○─┤COM       │
+                                             └──────────┘
+      外側=      内側=     現場側    端子  端子名は      機能欄 (下線に書く)
+      コモン側    分岐側    (実線)   (小円) 外郭の内側
 
-   ・用紙 1 枚 = 1 記号 = 1 群 (16 点まで)。16 点を超える機種は入力を 2 枚に分ける
-     (実務でも 1 チャネル = 1 枚。ユーザーの「A3 横で 16 点かける」に合わせた)。
+   ・用紙 1 枚 = 1 記号 = 「A3 横に収まる行数」(最大 10 点)。チャネル (16 点) は
+     またがず、1 チャネルを均等に割る。16 点を 1 枚にすると、機器がぶつからない
+     行ピッチ (20mm) では縦 335mm を超えて A3 に入らず A2 になってしまうため。
+     用紙は機種でそろえる (枚ごとに決めるとピッチを広げたとき横と縦が混ざる)。
+   ・端子の小円は外郭に接して描き、導体は円の外周で終える。端子名は外郭の内側。
    ・端子の左 (現場側) は実際の導体で描く。プロパティの「結線図の下地を作る」を
-     押すと、N24/P24 のレールと各行の分岐を実線で引き、機器を落とす隙間を空ける。
+     押すと、レール 2 本と各行の分岐を実線で引き、機器を落とす隙間を空け、
+     コモンを外側のレールへ結ぶ。3 線式センサが隙間にあれば茶/青/黒を引き分ける。
      こうすると絵と回路が一致する (記号の中に線を描いてしまうと、見た目はつながって
      いるのに検図もシミュレーションも通らない図になる)。
    ・右は機能欄。行ごとの文言はプロパティでまとめて貼り付けられる。
-   ・尺度は 1:1。このアプリは図記号を尺度に関わらず実寸で描くので、縮小すると
+   ・ユニットの電源と接地は描かない (別紙の電源回路図)。補助行はコモンだけ。
+   ・尺度は NS (非尺度)。図記号で表す図は実物との寸法比を持たない。
+     なお縮小尺度も使えない — 図記号を尺度に関わらず実寸で描くので、縮小すると
      線番・注記・現場機器の記号が用紙の上で半分になり JIS Z 8313 の 2.5mm を割る。
 
    端子番号は KV Nano の内蔵入出力リレー (入力 R000〜 / 出力 R500〜)。
@@ -144,8 +153,10 @@ const KV_FN_X = 5, KV_FN_W = 100;      // 機能欄 (箱の右)。下線の長�
    間隔は電位リンク記号の幅 (18mm) より広くとる — 狭いとレール頭の記号どうしが
    重なって、どちらのレールの電位か読めない */
 const KV_RAIL = 80, KV_GAP = 20, KV_RAIL_SEP = 25, KV_RAIL_LEAD = 10;
-// 端子は JIS C 0617-2 02-02-01 (端子)。寸法モジュール M=2.5mm に合わせて Ø2.5
-const KV_TERM_R = 1.25;
+/* 端子の小円。図記号番号は規格原本との照合が必要 (symbols.js の terminal と
+   同じ扱い)。大きさはライブラリで 1 つにそろえる — 同じ「端子」が図面の中で
+   2 通りの径で並ぶと、縮小・複写したときに別のものに見える */
+const KV_TERM_R = TERM_R;
 const KV_TERM_X = 3;                   // 外郭の左辺から端子名の左端まで
 /** KV の入出力リレー番号 (16 点で次のチャネルへ繰り上がる) */
 function kvRelay(startCh, i) {
@@ -169,8 +180,11 @@ function kvBuild(o, pitch) {
   const W = KV_BOXW, TR = KV_TERM_R;
   const rows = [];
   o.rows.forEach((n, i) => rows.push({ n, y: KV_Y0 + i * pitch, io: true }));
-  const y0 = rows.length ? rows[rows.length - 1].y + KV_AUXROW : KV_Y0;
-  (o.aux || []).forEach((n, i) => rows.push({ n, y: y0 + i * KV_AUXROW + 5, io: false }));
+  /* 補助行 (コモン) は入出力行から 1 ピッチぶん下げる。10mm しか空けないと、
+     最後の行に横に倒して置いた機器の下端 (押しボタンで 15.25mm) にコモンの
+     導体が触れる */
+  const y0 = rows.length ? rows[rows.length - 1].y + Math.max(KV_AUXROW, pitch) : KV_Y0;
+  (o.aux || []).forEach((n, i) => rows.push({ n, y: y0 + i * KV_AUXROW, io: false }));
   const bh = rows[rows.length - 1].y + KV_BOT;
   const pins = [], parts = [];
   /* 端子 (小円) は外郭に接して描き、導体は円の外周で終える。円の中心を外郭線
@@ -199,8 +213,15 @@ function kvBuild(o, pitch) {
      貫き、別に prot_earth を置けば接地記号が 2 つ並ぶ。PE は端子名で示し、
      接地は利用者が 02-15-03 を置いて結ぶ (記号は端子より右だけを持つ、の原則) */
   const bounds = [-2, -2, r1(BX + W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
+  /* 実際に線を引いている帯。外接矩形 (余白つき) をそのまま「インク」として
+     申告すると、記号に触れていない導体まで「貫通」になる。
+     ① 端子の丸 + 外郭  ② 機能欄の下線 — その間は何も無い */
+  const inkBoxes = [
+    [0, 0, r1(BX + W), r1(bh)],
+    [r1(BX + W + KV_FN_X), KV_Y0, KV_FN_W, r1(bh - KV_Y0)],
+  ];
   return {
-    pins, body: parts.join(""), bounds, inkBoxes: [bounds.slice()],
+    pins, body: parts.join(""), bounds, inkBoxes,
     fnRows: rows.length,
     /* 下地の寸法 (端子からの距離)。テストや使う人がここから隙間の位置を出せる:
        外側 (コモン側) レール = x - rail / 内側 (分岐側) = x - rail + sep /
@@ -211,7 +232,12 @@ function kvBuild(o, pitch) {
       gapFrom: KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD,
       gapTo: KV_RAIL - KV_RAIL_SEP - KV_RAIL_LEAD - KV_GAP,
       rows: rows.map(r => ({ y: r.y, io: r.io })) },
-    sheet: kvSheetFor({ w: KV_RAIL + bounds[2], h: bounds[3] }),
+    /* 用紙は「この枚」ではなく「この機種でいちばん行数の多い枚」で決める。
+       枚ごとに決めると、行ピッチを広げたとき 1 台の図面集に横と縦が混ざる
+       (綴じた図面をめくるたびに紙を回すことになる) */
+    sheet: kvSheetFor({ w: KV_RAIL + bounds[2],
+      h: r1(KV_Y0 + (Math.max(o.maxIo || o.rows.length, 1) - 1) * pitch +
+        Math.max(KV_AUXROW, pitch) + ((o.aux || []).length - 1) * KV_AUXROW + KV_BOT + 6) }),
   };
 }
 
@@ -223,7 +249,9 @@ function mkKvSheet(o) {
     nonstd: true, swapGroup: o.swapGroup, unitSheet: true,
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.model,
     stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
-      "外郭 + 端子 02-02-01 + 端子名)。COM の分割・電源端子の呼びは機種の取扱説明書で確認してください",
+      "外郭 + 端子 + 端子名。端子の図記号番号は規格原本との照合が必要)。" +
+      "COM の分割と端子台の刻印は機種の取扱説明書で確認してください。" +
+      "ユニットの電源と接地は別紙の電源回路図に描きます",
     sim: "none", thumbBox: [0, 0, KV_BOXW, 16],
     /* 機器タグは見出しの左 (箱の左肩)。1 行目より上なので現場側の区画を汚さない */
     tagAnchor: { x: -2, y: 6, anchor: "end" },
@@ -316,6 +344,7 @@ function mkKvUnit(model, nIn, nOut) {
     out.push(mkKvSheet({
       id: `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${many ? idx : ""}`,
       model, title: `${g.kind}${no} ${g.n}点`, rows, aux,
+      maxIo: Math.max(...groups.map(x => x.n)),      // 用紙は機種でそろえる
       /* シンク (NPN) 形の KV-N□□AT の場合:
          入力は COM を +24V へ、機器の帰りは 0V。出力は COM を 0V へ、負荷の
          帰りは +24V。分岐用レールは機器・負荷の帰り側になる。

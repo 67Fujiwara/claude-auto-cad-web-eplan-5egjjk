@@ -174,7 +174,7 @@ function sheetSVG(page, opts = {}) {
     ${cell(c3, r2, 2, "日付", meta.date || todayStr())}
     ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
     ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
-    ${cell(c2, r3, 1, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || "第三角法"}`)}
+    ${cell(c2, r3, 1, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || PROJ_DEFAULT}`)}
     <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSizeFor("ページ", S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
     <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large), false, true)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
     ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}

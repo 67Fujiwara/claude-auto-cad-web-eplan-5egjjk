@@ -26,6 +26,10 @@ const SHEET_DIVISIONS = { A0: [24, 16], A1: [16, 12], A2: [12, 8], A3: [8, 6], A
 const PAPERS = {
   A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841],
 };
+/* 投影法の既定。回路図・結線図は図記号で描く図であって正投影図ではないので、
+   投影法を持たない (JIS Z 8316 / ISO 5456-2 の図示記号も刷らない)。
+   機械図を取り込んだページなど、必要なページでは表題欄の設定で変えられる */
+const PROJ_DEFAULT = "該当なし (回路図)";
 /* NS = 非尺度 (制御回路図の標準)。尺度は JIS Z 8314 の推奨尺度列 */
 const SCALES = ["NS", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20", "1:50", "1:100"];
 function scaleFactor(scale) {
@@ -208,7 +212,9 @@ function buildIoScaffold(page, dev) {
   const comX = snap(dev.x - sp.rail), branchX = comX + sep;
   /* レールは補助行 (COM など) まで伸ばす。入出力行で止めると、いちばん自然な
      操作である「COM をレールへ落とす」が必ず宙吊りになる */
-  const y1 = io[0].y - 10;
+  /* レール頭は 1 行目の 5mm 上。10mm 上げると、電位リンクの三角 (8mm) と
+     その上の電位名が、図枠の左上へ寄せて置いたときに輪郭線の外へ出る */
+  const y1 = io[0].y - 5;
   const yIo = io[io.length - 1].y;                      // 入出力行の下端 (分岐レール)
   const yAll = all[all.length - 1].y;                   // 補助行まで (コモン側レール)
   let n = 0;
@@ -217,20 +223,26 @@ function buildIoScaffold(page, dev) {
     if (w) { w.gen = dev.id; if (gapEnd) w.genGap = true; n++; }
     return w;
   };
-  const rail = (x, tag, y2) => {
+  const rail = (x, tag, y2, outer) => {
     line([[x, y1], [x, y2]]);
     // 両端に電位リンク。長いレールの片端だけだと、下の行から電位が読めない
     [[y1, 180], [y2, 0]].forEach(([y, rot]) => {
       const d = addDevice(page, "link", x, y, { tag, rot });
-      if (d) d.gen = dev.id;
+      if (!d) return;
+      d.gen = dev.id;
+      /* 電位名は自分のレールに寄せる。既定の配置規則に任せると、25mm 隣の
+         もう 1 本のレールのほうが近い位置に落ち、+24V と 0V が入れ替わって読める。
+         電位リンクの三角は挿入点から 8mm 伸びるので、文字はその外側 —
+         上端は三角のすぐ上、下端は三角のすぐ下 — に中心合わせで置く */
+      d.tagAt = { dy: rot === 180 ? -8.5 : 12.5 };
     });
   };
   const tags = sp.railTags || { branch: "0V", supply: "+24V" };
   /* コモン側だけ補助行まで下ろす。分岐レールも下ろすと、コモンを外側の
      レールへ引く線が分岐レールを横切ってしまう (電気的には交差だけだが、
      結線図で意味のない交差を作らないのが JIS Z 8312 の作図) */
-  rail(comX, tags.supply, yAll);                        // 外側 = コモン側
-  rail(branchX, tags.branch, yIo);                      // 内側 = 各行の分岐もと
+  rail(comX, tags.supply, yAll, true);                  // 外側 = コモン側
+  rail(branchX, tags.branch, yIo, false);               // 内側 = 各行の分岐もと
   const gx = branchX + lead, gr = gx + gap;
   io.forEach(r => {
     /* 隙間に 3 線式センサが置いてあれば、電源線を左右のレールへ引き分ける。
@@ -257,6 +269,53 @@ function buildIoScaffold(page, dev) {
   });
   App.labelRev++;
   return n;
+}
+
+/* 規格外の図記号の凡例を注記として貼る (JIS C 0617-1 / IEC 60617-1: 規格に
+   ない図記号は図面上で説明する)。1 行で貼ると作図領域より長くなって表題欄を
+   貫くので、作図領域の幅で折り返し、表題欄・改訂履歴欄を避けて上へ積む。
+   戻り値は貼った行数 (すでに貼ってあれば 0) */
+function pasteStdNote(page, sym) {
+  const head = `【凡例】${sym.name}: `;
+  const body = String(sym.stdNote || "");
+  if (!body) return 0;
+  if (page.texts.some(t => t.text.indexOf(head) === 0)) return 0;
+  const fr = frameRect(), h = TEXT_H.small, lineH = h * 1.8;
+  const blocks = titleBlocksRects();
+  /* 1 行に入る幅。左下から積むので、表題欄の帯に掛かる高さでは幅を狭める…
+     のではなく、帯より上へ逃がす方が読みやすい。まず全幅で折り返す */
+  /* 幅は右下の帯 (表題欄と改訂履歴欄) の左まで。図面の注記は左下に段で置くのが
+     作法で、全幅で 1 行に伸ばすと帯を貫くか、逃がした先で回路に掛かる */
+  const leftmost = blocks.length ? Math.min(...blocks.map(r => r.x)) : fr.x + fr.w;
+  const room = Math.max(60, Math.min(fr.w - 10, leftmost - (fr.x + 5) - 5));
+  /* 折り返しは句読点・かっこ・空白を優先し、そこで切れないほど長い塊は
+     1 字ずつ詰める (和文は分かち書きしないので、区切りが無い文が普通にある) */
+  const lines = [];
+  let cur = "";
+  const flush = () => { if (cur) { lines.push(cur); cur = ""; } };
+  (head + body).split(/(?<=[、。・）)\]】])|(?<=\s)/).forEach(w => {
+    if (cur && textWidthMM(cur + w, h) > room) flush();
+    for (const ch of w) {
+      if (cur && textWidthMM(cur + ch, h) > room) flush();
+      cur += ch;
+    }
+  });
+  flush();
+  // 表題欄・改訂履歴欄に掛からない、いちばん下の基線を探す
+  const clear = (y) => {
+    const b = { x: fr.x + 5, y: y - h, w: room, h: h * 1.3 };
+    return !blocks.some(r => b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y);
+  };
+  let bottom = fr.y + fr.h - 5;
+  const already = page.texts.filter(t => /^【凡例】/.test(t.text)).length;
+  bottom -= already * lineH;
+  while (bottom > fr.y + lineH * lines.length && !clear(bottom)) bottom -= lineH;
+  lines.forEach((tx, i) => {
+    page.texts.push({ id: uid("t"), x: fr.x + 5, y: bottom - (lines.length - 1 - i) * lineH,
+      text: tx, size: h, anchor: "start" });
+  });
+  App.labelRev++;
+  return lines.length;
 }
 
 function shiftProjectGeometry(dx, dy, pages) {
@@ -958,6 +1017,29 @@ function devPartBoxes(dev) {
    (端子の bounds は 8.4mm 幅、インクは丸 4.4mm)。body を読んで実寸で測る。
    inkBoxes を宣言している記号 (入出力結線図の枠など) はそれを使う */
 const _symInkCache = new Map();
+/* 画面外の SVG に一度だけ描いて getBBox() を取る。正規表現で body を読むやり方は
+   <g transform="translate(…)"> を取りこぼし (ライブラリに 19 記号ある)、円弧の
+   ふくらみも text-anchor も和文の最小呼びも測れなかった。描いて測れば全部合う。
+   取れなかったときだけ、下の読み取り (概算) に落ちる */
+let _inkSvg = null;
+function symInkByRender(sym) {
+  if (typeof document === "undefined" || !document.body) return null;
+  try {
+    if (!_inkSvg) {
+      _inkSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      _inkSvg.setAttribute("style", "position:absolute;left:-9999px;top:-9999px;width:10px;height:10px;visibility:hidden");
+      document.body.appendChild(_inkSvg);
+    }
+    _inkSvg.innerHTML = symBodySVG(sym);
+    const g = _inkSvg.firstElementChild;
+    if (!g) return null;
+    const bb = g.getBBox();
+    if (!isFinite(bb.width) || !isFinite(bb.height)) return null;
+    // getBBox は線の中心線で返るので、線の太さの半分を外へ足す
+    const hw = symStrokeWidth(sym, SYM_STROKE) / 2;
+    return { x: bb.x - hw, y: bb.y - hw, w: bb.width + hw * 2, h: bb.height + hw * 2 };
+  } catch (e) { return null; }
+}
 function symInkBox(sym) {
   if (!sym || !sym.body) return null;
   if (sym.inkBoxes && sym.inkBoxes.length) {
@@ -965,8 +1047,11 @@ function symInkBox(sym) {
     const xe = sym.inkBoxes.map(b => b[0] + b[2]), ye = sym.inkBoxes.map(b => b[1] + b[3]);
     return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xe) - Math.min(...xs), h: Math.max(...ye) - Math.min(...ys) };
   }
-  const key = sym.id + "|" + sym.body.length;
+  // キャッシュの鍵は body そのもの。長さだけだと、同じ長さの書き換えで古い箱が残る
+  const key = sym.id + "|" + sym.body;
   if (_symInkCache.has(key)) return _symInkCache.get(key);
+  const drawn = symInkByRender(sym);
+  if (drawn) { _symInkCache.set(key, drawn); return drawn; }
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const put = (x, y) => { if (!isFinite(x) || !isFinite(y)) return; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
   const b = sym.body;
@@ -1003,14 +1088,31 @@ function symInkBox(sym) {
   _symInkCache.set(key, out);
   return out;
 }
-/** 機器が実際に線を引いている範囲 (図面座標)。回転・位置を反映する */
-function devInkBox(dev) {
-  const ib = symInkBox(symOf(dev.sym));
-  if (!ib) return devBounds(dev);
-  const cs = [[ib.x, ib.y], [ib.x + ib.w, ib.y], [ib.x, ib.y + ib.h], [ib.x + ib.w, ib.y + ib.h]]
+/** 記号が線を引いている範囲を、帯ごとに (inkBoxes があればそのぶんだけ) */
+function symInkBoxes(sym) {
+  if (sym && sym.inkBoxes && sym.inkBoxes.length) {
+    return sym.inkBoxes.map(([x, y, w, h]) => ({ x, y, w, h }));
+  }
+  const b = symInkBox(sym);
+  return b ? [b] : [];
+}
+const _boxAbs = (dev, r) => {
+  const cs = [[r.x, r.y], [r.x + r.w, r.y], [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]]
     .map(([x, y]) => pinAbs(dev, { x, y }));
   const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
   return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+};
+/** 機器が実際に線を引いている範囲 (図面座標・帯ごと)。回転・位置を反映する */
+function devInkBoxes(dev) {
+  const bs = symInkBoxes(symOf(dev.sym));
+  return bs.length ? bs.map(r => _boxAbs(dev, r)) : [devBounds(dev)];
+}
+/** 同じものを 1 つの外接矩形で */
+function devInkBox(dev) {
+  const bs = devInkBoxes(dev);
+  const xs = bs.map(r => r.x), ys = bs.map(r => r.y);
+  const xe = bs.map(r => r.x + r.w), ye = bs.map(r => r.y + r.h);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xe) - Math.min(...xs), h: Math.max(...ye) - Math.min(...ys) };
 }
 
 function deviceObstacleBoxes(dev, inset) {
@@ -1085,6 +1187,18 @@ function placeDeviceLabels(page, dev, obstacles) {
   /* 用紙 1 枚を占める記号 (入出力結線図) は、タグの居場所を記号側が指定する。
      まわりを探して置く規則をそのまま当てると、外接矩形が紙いっぱいなので
      タグが現場側の配線区画のまん中へ降りてしまい、置いた機器とぶつかる */
+  /* 機器ごとの置き場所指定 (下地が置いたレール頭の電位名など)。
+     レールが 25mm 間隔で 2 本並ぶ図では、まわりを探して置く規則だと
+     電位名が「相手のレールのほうが近い」位置に落ちて、+24V と 0V が
+     入れ替わって読める。自分のレールの真上/真下に中心合わせで留める */
+  if (dev.tagAt) {
+    const out = [];
+    const x = dev.x + (dev.tagAt.dx || 0), y = dev.y + (dev.tagAt.dy || 0);
+    const anc = dev.tagAt.anchor || "middle";
+    if (tag) out.push(mk(tag, x, y, anc, true));
+    if (desc) out.push(mk(desc, x, y + (dev.tagAt.dy < 0 ? -4 : 4) * f, anc));
+    return wrap(out, "top");
+  }
   if (sym.tagAnchor) {
     const a = pinAbs(dev, sym.tagAnchor), anc = sym.tagAnchor.anchor || "end";
     const out = [];
@@ -1921,14 +2035,17 @@ function funcPairs(dev, mode) {
 function conductivePairs(dev, mode = "closed") {
   const sym = symOf(dev.sym);
   if (devFuncs(sym)) return funcPairs(dev, mode);
+  /* 開閉するピンの組。既定は先頭 2 本だが、3 線式の直流検出器のように
+     開閉要素が出力と 0V の間にある (NPN・シンク形) 記号は simPins で指定する */
+  const P = sym.simPins || [0, 1];
   switch (sym.sim) {
     case "contact_no":
       if (mode === "open" || mode === "split") return [];
-      return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1]] : [];
+      return (mode === "sim" ? simActiveState(dev) : true) ? [P.slice(0, 2)] : [];
     case "contact_nc":
       if (mode === "open" || mode === "split") return [];
-      if (mode === "sim") return simActiveState(dev) ? [] : [[0, 1]];
-      return [[0, 1]];
+      if (mode === "sim") return simActiveState(dev) ? [] : [P.slice(0, 2)];
+      return [P.slice(0, 2)];
     case "contact2_no":
       if (mode === "open" || mode === "split") return [];
       return (mode === "sim" ? simActiveState(dev) : true) ? [[0, 1], [2, 3]] : [];
@@ -2499,7 +2616,7 @@ const DRC_RULES = [
   "接点なしコイル", "接点数超過", "電源未到達負荷", "無開閉直結コイル", "電源短絡",
   "自動生成時の警告", "図枠外・表題欄との重なり", "文字の重なり", "未登録シンボル",
   "線番の重複", "図番の重複", "線番と導体の重なり", "記号の重なり", "導体が図記号を貫通", "3線式センサの電源が逆",
-  "分かれた枚の行き先が無い", "ユニット電源の枚が無い", "分かれた枚の行き先が無い",
+  "分かれた枚の行き先が無い",
   "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
   "行き先の図番が入らない", "行き先どうしの重なり", "行き先の対が定まらない",
   "行き先とリンクの不一致", "尺度と用紙上の寸法", "記号の想定用紙と違う", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
@@ -2669,7 +2786,7 @@ function runDRC() {
        見ていなかった — レール頭の電位リンクが食い込んでも検図 0 件だった。
        囲み記号 (多芯ケーブル・遮へい) は重ねて描くのが仕様なので除く */
     {
-      const boxesOf = new Map(page.devices.map(d => [d.id, [devInkBox(d)]]));
+      const boxesOf = new Map(page.devices.map(d => [d.id, devInkBoxes(d)]));
       const encl = d => { const s0 = symOf(d.sym); return !!(s0.enclosure || s0.stretchOf === "cable_core" || s0.stretchOf === "shield"); };
       const seen = new Set();
       page.devices.forEach((a, ai) => {
@@ -2705,7 +2822,7 @@ function runDRC() {
         if (!sym || sym.enclosure) return;                 // 囲み記号は貫くのが仕様
         /* 実際に線を引いている範囲 (インク) を、線の太さぶんだけ内へ縮めて見る。
            bounds は余白つきの枠なので、それで見ると隣を通っただけで鳴る */
-        const boxes = [devInkBox(dev)].map(r => insetRect(r, LINE_W.thick / 2));
+        const boxes = devInkBoxes(dev).map(r => insetRect(r, LINE_W.thick / 2));
         const myPins = devPins(dev);
         const onPin = pt => myPins.some(q => Math.abs(q.x - pt[0]) < .01 && Math.abs(q.y - pt[1]) < .01);
         let hit = null;
@@ -3197,7 +3314,20 @@ function runDRC() {
         const a = closed.pinNet(dev, 0), b = closed.pinNet(dev, 1);
         // 電源未到達 (全接点閉でも電源に届かない)
         if (srcClosed.pNets.size) {
-          const ok = (srcClosed.pNets.has(a) && srcClosed.nNets.has(b)) || (srcClosed.pNets.has(b) && srcClosed.nNets.has(a));
+          /* 入出力結線図の枠記号 (unitSheet) の端子につながっていれば、
+             そこから先は機器の中なので図では追えない。出力の枚は
+             「+24V →負荷→ 出力端子」で正しいのに、枠が sim を持たないため
+             負荷 1 台につき 1 件のエラーが必ず出ていた */
+          const intoUnit = page.devices.some(d2 => {
+            const s2 = symOf(d2.sym);
+            if (!s2 || !s2.unitSheet) return false;
+            return (s2.pins || []).some((_, i) => {
+              const n = closed.pinNet(d2, i);
+              return n && (n === a || n === b);
+            });
+          });
+          const ok = intoUnit ||
+            (srcClosed.pNets.has(a) && srcClosed.nNets.has(b)) || (srcClosed.pNets.has(b) && srcClosed.nNets.has(a));
           if (!ok) issues.push({ sev: "err", msg: `${displayTag(dev)} が電源 (+24V/0V) に接続されていません`, page: page.no, target: dev.id, loc: devLocation(dev) });
         }
         // 無開閉直結 (接点を1つも介さず両極に直結 → 電源投入と同時に動作)

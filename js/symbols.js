@@ -7,6 +7,10 @@
 "use strict";
 
 const SYM_STROKE = 0.5;          // JIS Z 8312 太線 (LINE_W.thick と同値)
+/* 端子 (小円) の半径。ライブラリ全体で 1 つにそろえる — 同じ「端子」が図面の
+   中で 2 通りの径で並ぶと、縮小・複写したときに別のものに見える。
+   接続点 (塗りつぶし Ø1.5) と紛れない大きさにする */
+const TERM_R = 2.2;
 
 // カテゴリ定義
 const SYM_CATS = {
@@ -22,6 +26,13 @@ const SYM_CATS = {
 // 縦型接点: ピン(0,0)-(0,20)。可動刃は (0,13) を支点として左上へ開く
 const G_NO = `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5"/>`;
 const G_NC = `<path d="M0,0 V7 M0,7 H-5 M0,13 L-4.8,3.4 M0,20 V13"/>`;
+/* 3 線式の直流検出器 (NPN・シンク形) の出力段。開閉要素は「出力 (BK) と 0V (BU)」
+   の間にある — ここを「+V (BN) と出力」の間に描くと PNP (ソース形) の図になり、
+   プラスコモンの PLC 入力につないでも永久に ON しない図になってしまう。
+   ピン座標は BN(0,0) / BK(0,20) / BU(-10,20) のまま (既存図面の配線を壊さない)。
+   ・BN は検出箱へ直行  ・BK と BU の間に横向きのメーク接点 (10mm 間) */
+const G_DET3 = `<path d="M0,0 V10 H-5"/>` +
+  `<path d="M0,20 H-3.5 M-10,20 H-6.5 M-6.5,20 L-2.6,16.1"/>`;
 // 可動刃の線上の x (機械リンクの破線を刃にぴったり終端させるために使う)
 const bladeXNO = (y) => +(-4.8 * (13 - y) / 8).toFixed(3);     // G_NO: (0,13)→(-4.8,5)
 const bladeXNC = (y) => +(-4.8 * (13 - y) / 9.6).toFixed(3);   // G_NC: (0,13)→(-4.8,3.4)
@@ -95,14 +106,16 @@ const SYMBOLS = [
   {
     id: "prox", jis: "07-19-01", cat: "input", letter: "B", name: "近接センサ", nameEn: "Proximity sensor",
     desc: "誘導形 3線式 (BN=+V/BK=出力/BU=0V)", typ: "E2E-X5ME1", pins: [{x:0,y:0,n:"BN"},{x:0,y:20,n:"BK"},{x:-10,y:20,n:"BU"}],
-    sim: "contact_no", momentary: false, bounds: [-21,-2, 23, 24],
-    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-16.5,10 l3.5,-3.5 l3.5,3.5 l-3.5,3.5 z"/><path d="M-10,17 V20"/>` + G_NO,
+    // 開閉要素は BK-BU 間 (NPN・シンク形)。E2E-X5ME1 は NPN
+    sim: "contact_no", simPins: [1, 2], momentary: false, bounds: [-21,-2, 23, 24],
+    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-16.5,10 l3.5,-3.5 l3.5,3.5 l-3.5,3.5 z"/><path d="M-10,17 V20"/>` + G_DET3,
   },
   {
     id: "photo", jis: "07-19-06", cat: "input", letter: "B", name: "光電センサ", nameEn: "Photoelectric sensor",
     desc: "透過形/反射形 3線式 (BN=+V/BK=出力/BU=0V)", typ: "E3Z-D61", pins: [{x:0,y:0,n:"BN"},{x:0,y:20,n:"BK"},{x:-10,y:20,n:"BU"}],
-    sim: "contact_no", momentary: false, bounds: [-27,-2, 29, 24],
-    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-25,7 l5,2 m-2.2,-1.6 l2.2,1.6 l-2.6,0.6 M-25,12 l5,1 m-2.1,-1.4 l2.1,1.4 l-2.5,0.8"/><path d="M-10,17 V20"/>` + G_NO,
+    // 開閉要素は BK-BU 間 (NPN・シンク形)
+    sim: "contact_no", simPins: [1, 2], momentary: false, bounds: [-27,-2, 29, 24],
+    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-25,7 l5,2 m-2.2,-1.6 l2.2,1.6 l-2.6,0.6 M-25,12 l5,1 m-2.1,-1.4 l2.1,1.4 l-2.5,0.8"/><path d="M-10,17 V20"/>` + G_DET3,
   },
   {
     id: "press_sw", jis: "07-08-05", stdNote: "検出器箱 + 07-08-05 の圧力操作 + メーク接点の組合せ (電子式3線)",
@@ -110,9 +123,10 @@ const SYMBOLS = [
     desc: "電子式 3線 (P24V=+24V·茶BN / N24V=0V·青BU / OUT=出力·黒BK → PLC入力へ)。DP-101 系は NPN (シンク) 出力 — PLC入力のシンク/ソース設定に注意", typ: "DP-101",
     // 近接・光電センサと同じ3線構造。上(0,0)/下(0,20) の座標は維持し既存配線を壊さない
     pins: [{x:0,y:0,n:"P24V"},{x:0,y:20,n:"OUT"},{x:-10,y:20,n:"N24V"}],
-    sim: "contact_no", momentary: false, bounds: [-21,-2, 23, 24],
+    // 開閉要素は OUT-N24V 間 (NPN・シンク形)。DP-101 系は NPN
+    sim: "contact_no", simPins: [1, 2], momentary: false, bounds: [-21,-2, 23, 24],
     // 検出器箱の中に圧力操作部 (ドーム) を描いて検出原理を示す
-    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-16,12 A4,4 0 0 1 -8,12"/><path d="M-16,12 H-8"/><path d="M-10,17 V20"/>` + G_NO,
+    body: `<rect x="-19" y="3" width="14" height="14"/><path d="M-16,12 A4,4 0 0 1 -8,12"/><path d="M-16,12 H-8"/><path d="M-10,17 V20"/>` + G_DET3,
   },
   {
     id: "float_sw", jis: "07-08-06", cat: "input", letter: "B", name: "フロートスイッチ", nameEn: "Float switch",
@@ -362,7 +376,7 @@ const SYMBOLS = [
     id: "terminal", stdNote: "端子 (JIS C 0617-3 接続部品。図記号番号は規格原本との照合が必要)", cat: "misc", letter: "X", name: "端子", nameEn: "Terminal",
     desc: "端子台の1点", typ: "UK-2.5N", pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}],
     sim: "passthru", bounds: [-4.2,-2, 8.4, 24],
-    body: `<path d="M0,0 V7.8 M0,20 V12.2"/><circle cx="0" cy="10" r="2.2"/>`,
+    body: `<path d="M0,0 V${10 - TERM_R} M0,20 V${10 + TERM_R}"/><circle cx="0" cy="10" r="${TERM_R}"/>`,
   },
   {
     id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
