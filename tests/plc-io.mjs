@@ -44,17 +44,18 @@ await p.waitForTimeout(900);
 const R = await p.evaluate(() => {
   const out = { group: {}, sheet: {}, print: {} };
   const SPEC = {
-    // 1 枚 = A3 横に収まる行数まで。チャネル (16 点) はまたがず均等に割る
+    /* 1 枚 = A3 横に収まる行数まで。チャネル (16 点) はまたがず均等に割る。
+       補助行はコモンだけ — ユニットの電源と接地は別紙の電源回路図に描く */
     kv_n14at_in:   { io: 8,  first: "R000", last: "R007", aux: "COM" },
-    kv_n14at_out:  { io: 6,  first: "R500", last: "R505", aux: "COM,L,N,PE" },
+    kv_n14at_out:  { io: 6,  first: "R500", last: "R505", aux: "COM" },
     kv_n24at_in1:  { io: 7,  first: "R000", last: "R006", aux: "COM" },
-    kv_n24at_in2:  { io: 7,  first: "R007", last: "R013", aux: "COM,L,N,PE" },
+    kv_n24at_in2:  { io: 7,  first: "R007", last: "R013", aux: "COM" },
     kv_n24at_out:  { io: 10, first: "R500", last: "R509", aux: "COM" },
     kv_n40at_in1:  { io: 8,  first: "R000", last: "R007", aux: "COM" },
     kv_n40at_in2:  { io: 8,  first: "R008", last: "R015", aux: "COM" },
     kv_n40at_in3:  { io: 8,  first: "R100", last: "R107", aux: "COM" },
     kv_n40at_out1: { io: 8,  first: "R500", last: "R507", aux: "COM" },
-    kv_n40at_out2: { io: 8,  first: "R508", last: "R515", aux: "COM,L,N,PE" },
+    kv_n40at_out2: { io: 8,  first: "R508", last: "R515", aux: "COM" },
   };
   // どの枚も A3 横・非尺度 (NS)。用紙をそろえるための割付なので、例外を作らない
   Object.values(SPEC).forEach(v => { v.paper = "A3"; v.orient = "landscape"; v.scale = "NS"; });
@@ -77,10 +78,8 @@ const R = await p.evaluate(() => {
       sheet: symSheetSpec(sym), swap: sym.swapGroup, typ: sym.typ, fnRows: sym.fnRows,
       // 未使用の入出力点は黙る。電源・コモン・PE は黙らせない
       ioSkipped: io.every(x => x.noDrc === true) && aux.every(x => !x.noDrc),
-      /* 保護接地の図記号は焼き込まない。焼き込むと「紙は接地済み・モデルは未接続」に
-         なり、指示どおり結線すると導体が接地記号を貫く。端子は他の行と同じ小円だけ */
-      peEarth: !aux.some(x => x.n === "PE") ||
-        ((sym.body.match(/<circle /g) || []).length === sym.pins.length && !/r="6"/.test(sym.body)),
+      /* 接地の図記号を焼き込まないこと。端子の小円 (行数ぶん) 以外の円が無い */
+      peEarth: (sym.body.match(/<circle /g) || []).length === sym.pins.length && !/r="6"/.test(sym.body),
       // 機能欄の下線が行数ぶんある
       fnLines: (sym.body.match(/stroke-width="0\.25"/g) || []).length,
       /* 端子名は外郭の内側に描いてあること (自動ラベルは出さない)。
@@ -551,8 +550,12 @@ const checks = {
   printedSame: ids.every(id => (R.print[id] || {}).pitch === 20 && R.print[id].minText >= 2.5 - 0.001 &&
     R.print[id].minLine >= 0.25 - 0.001),
   // 未使用の入出力点は黙る。電源・コモン・保護接地は知らせる
-  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "COM,L,N,PE" &&
-    R.unconnected.peSev === "err" && R.unconnected.otherSev === "warn",
+  /* 未使用の入出力点は黙るが、コモンの結び忘れは知らせる。
+     電源と接地はこの図に無い (別紙) ので、ここには出てこない */
+  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "COM" &&
+    R.unconnected.otherSev === "warn" && R.unconnected.peSev === "" &&
+    // 電源端子・接地端子が 1 つも無いこと
+    ids.every(id => !/[LN]|PE/.test((R.group[id] || {}).aux || "")),
   peEarth: ids.every(id => (R.group[id] || {}).peEarth),
   // 端子名は記号の中。画面で自動ラベルが 1 つも出ないこと
   termInBody: ids.every(id => (R.group[id] || {}).termInBody) && R.termLabels === 0,

@@ -298,15 +298,16 @@ function mkKvUnit(model, nIn, nOut) {
   };
   for (let i = 0; i < nIn; i += 16) addCh("入力", 0, i, Math.min(16, nIn - i));
   for (let i = 0; i < nOut; i += 16) addCh("出力", 5, i, Math.min(16, nOut - i));
-  /* ユニットの電源 (L/N/PE) は、行にいちばん余裕のある枚 (点数のいちばん
-     少ない枚。同数なら最後の枚) に載せる。点数の多い枚に足すと紙が 1 段大きくなる。
-     これは作図の都合なので、どの枚に載るかは「機種と枚数」表で示し、
-     1 台を複数枚に分けたのに電源の枚が無い図は検図で知らせる */
-  const powerOn = groups.slice().sort((a, b2) => a.n - b2.n || groups.indexOf(b2) - groups.indexOf(a))[0];
+  /* ユニットの電源と接地は入出力結線図には描かない (別紙の電源回路図)。
+     入出力結線図が受け持つのは「現場機器 ─ 入出力端子」の対応で、
+     電源の供給元・遮断器・接地の系統は電源回路図で追うもの。ここに混ぜると
+     どちらの図も読みにくくなり、電源端子の呼び (交流電源形は L/N、直流電源形は
+     24V/0V) が機種で変わるぶんの誤りも持ち込むことになる。
+     補助行はコモンだけ (コモンは行の帰り側なので入出力結線図の一部) */
   groups.forEach((g) => {
     const rows = [];
     for (let i = 0; i < g.n; i++) rows.push(kvRelay(g.ch, g.from + i));
-    const aux = g === powerOn ? ["COM", "L", "N", "PE"] : ["COM"];
+    const aux = ["COM"];
     const kindId = g.kind === "入力" ? "in" : "out";
     const sibs = groups.filter(x => x.kind === g.kind);
     const many = sibs.length > 1;
@@ -324,7 +325,8 @@ function mkKvUnit(model, nIn, nOut) {
       name: `${model} ${g.kind}結線図${no}`, nameEn: `${model} ${g.kind === "入力" ? "input" : "output"} wiring`,
       desc: `キーエンス KV Nano 基本ユニット ${model} の${g.kind}結線図 (${rows[0]}〜${rows[rows.length - 1]} の${g.n}点)。` +
         `端子の左は現場側 — プロパティの「結線図の下地を作る」で 0V/+24V のレールと各行の分岐を実線で引きます。` +
-        `右は機能欄で、行ごとの文言はプロパティでまとめて入れられます。`,
+        `右は機能欄で、行ごとの文言はプロパティでまとめて入れられます。` +
+        `ユニットの電源と接地は別紙の電源回路図に描きます (この図には入れません)。`,
     }));
   });
   return out;
