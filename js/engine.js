@@ -12,6 +12,7 @@ const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f
 const LINE_W = { thick: 0.5, thin: 0.25, extra: 0.7 };
 /* 文字高さ (JIS Z 8313-1 の標準列) — 用紙上の mm */
 const KV_FN_TEXT_X = 36;   // 機能欄の文字の左端 (箱の右 30+5 から 1mm 内側)
+const KV_FN_ROOM = 99;     // 下線の長さ (100mm) から 1mm 内側
 const TEXT_H = { small: 2.5, normal: 3.5, large: 5 };
 /* 格子参照の行記号。JIS Z 8311 により I と O は使用しない */
 const SHEET_ROW_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -108,7 +109,12 @@ function moveDeviceWithWires(page, dev, dx, dy) {
   if (!dx && !dy) return;
   const pins = devPins(dev);
   const hits = [];
+  // この機器のために引いた下地 (レール・分岐) は、機器と一体で動かす
+  const gen = page.wires.filter(w => w.gen === dev.id);
+  gen.forEach(w => { w.pts = w.pts.map(p => [p[0] + dx, p[1] + dy]); });
+  page.devices.forEach(d => { if (d.gen === dev.id) { d.x += dx; d.y += dy; } });
   page.wires.forEach(w => {
+    if (w.gen === dev.id) return;                      // 上でまとめて動かした
     w.pts.forEach((p, i) => {
       if (i !== 0 && i !== w.pts.length - 1) return;
       if (pins.some(pn => Math.abs(pn.x - p[0]) < 0.01 && Math.abs(pn.y - p[1]) < 0.01)) hits.push([w, i]);
@@ -119,37 +125,56 @@ function moveDeviceWithWires(page, dev, dx, dy) {
 }
 
 /* 入出力結線図の下地を実際の導体で引く。
-   ・現場側のレール (既定 0V) を左に 1 本。各行はそこから分岐して端子へ。
-   ・機器を落とす隙間 (既定 20mm) を空けるので、そこへ接点やセンサを置ける。
-     隙間の左右は本物の導体なので、機器を置けばそのまま回路になる。
+   ・現場側にレールを 2 本。分岐用 (入力=0V / 出力=+24V) と、3 線式センサの
+     電源用 (入力=+24V / 出力=0V)。2 線のドライ接点は分岐用だけで足りるが、
+     現場の主役である 3 線センサは電源側の 1 本が無いと結線できない。
+   ・各行は分岐用レールから引き出し、機器を落とす隙間を空けて端子へ入る。
+   ・引いた導体には印 (w.gen = 機器 id) を付ける。行ピッチを変えたり記号を
+     動かしたりしたときに、古い下地を残さず引き直せるようにするため。
    記号の中に線を描くのではなく導体で引くので、検図もシミュレーションも
-   絵のとおりに通る。電源・コモン・保護接地は極性が機種と用途で変わるので
-   自動では引かない (検図が未接続で知らせる)。既にある下地は引き直さない */
-function buildIoScaffold(page, dev, opts = {}) {
+   絵のとおりに通る。電源・コモン・保護接地は極性が用途で変わるので自動では
+   引かない (検図が未接続で知らせる) */
+/* レール 2 本の間隔と、分岐レールから機器を落とす隙間までの引出し */
+const KV_RAIL_SEP = 10, KV_RAIL_LEAD = 10;
+function ioScaffoldParts(page, dev) {
+  return {
+    wires: page.wires.filter(w => w.gen === dev.id),
+    devs: page.devices.filter(d => d.gen === dev.id),
+  };
+}
+function clearIoScaffold(page, dev) {
+  const { wires, devs } = ioScaffoldParts(page, dev);
+  wires.forEach(w => page.wires.splice(page.wires.indexOf(w), 1));
+  devs.forEach(d => page.devices.splice(page.devices.indexOf(d), 1));
+  return wires.length + devs.length;
+}
+function buildIoScaffold(page, dev) {
   const sym = symOf(dev.sym);
   const sp = sym && sym.ioSheet;
   if (!sp) return 0;
+  const removed = clearIoScaffold(page, dev);           // 古い下地は残さない
   const rows = sp.rows.filter(r => r.io).map(r => pinAbs(dev, { x: 0, y: r.y }));
   if (!rows.length) return 0;
-  const railX = snap(dev.x - sp.rail), lead = 5, gap = sp.gap;
-  // レールの下端は最後の分岐の位置で止める (伸ばすと端点が宙に浮く)
+  const supplyX = snap(dev.x - sp.rail), branchX = supplyX + KV_RAIL_SEP, lead = KV_RAIL_LEAD, gap = sp.gap;
   const y1 = rows[0].y - 10, y2 = rows[rows.length - 1].y;
-  const same = (p, x, y) => Math.abs(p[0] - x) < .01 && Math.abs(p[1] - y) < .01;
-  const has = (x1, ya, x2, yb) => page.wires.some(w =>
-    same(w.pts[0], x1, ya) && same(w.pts[w.pts.length - 1], x2, yb));
   let n = 0;
-  const line = (pts) => { if (addWire(page, pts)) n++; };
-  if (!has(railX, y1, railX, y2)) {
-    line([[railX, y1], [railX, y2]]);
-    // レールの電位を名前で示す (既定は 0V。現場の呼び方に合わせて変えてください)
-    if (!page.devices.some(d => symOf(d.sym).sim === "link" && Math.abs(d.x - railX) < .01 && Math.abs(d.y - y1) < .01)) {
-      addDevice(page, "link", railX, y1, { tag: opts.rail || "0V", rot: 180 });
-    }
-  }
+  const line = (pts) => { const w = addWire(page, pts); if (w) { w.gen = dev.id; n++; } return w; };
+  const rail = (x, tag, bothEnds) => {
+    line([[x, y1], [x, y2]]);
+    // 電位リンクで電位を名前で示す。分岐の無いレール (センサ電源側) は下端にも
+    // 付ける — 端が宙に浮いたままだと検図が「どこにも接続していません」と出る
+    [[y1, 180], ...(bothEnds ? [[y2, 0]] : [])].forEach(([y, rot]) => {
+      const d = addDevice(page, "link", x, y, { tag, rot });
+      if (d) d.gen = dev.id;
+    });
+  };
+  const tags = sp.railTags || { branch: "0V", supply: "+24V" };
+  rail(supplyX, tags.supply, true);                     // 3 線式センサの電源側
+  rail(branchX, tags.branch, false);                    // 各行の分岐もと
   rows.forEach(r => {
-    const gx = railX + lead, gr = gx + gap;
-    if (!has(railX, r.y, gx, r.y)) line([[railX, r.y], [gx, r.y]]);      // レールからの引出し
-    if (!has(gr, r.y, dev.x, r.y)) line([[gr, r.y], [dev.x, r.y]]);      // 隙間 → 端子
+    const gx = branchX + lead, gr = gx + gap;
+    line([[branchX, r.y], [gx, r.y]]);                  // レールからの引出し
+    line([[gr, r.y], [dev.x, r.y]]);                    // 隙間 → 端子
   });
   App.labelRev++;
   return n;
@@ -915,6 +940,17 @@ function placeDeviceLabels(page, dev, obstacles) {
   const wrap = (arr, side) => { arr.side = side; return arr; };
   if (!tag && !desc) return wrap([], "left");
 
+  /* 用紙 1 枚を占める記号 (入出力結線図) は、タグの居場所を記号側が指定する。
+     まわりを探して置く規則をそのまま当てると、外接矩形が紙いっぱいなので
+     タグが現場側の配線区画のまん中へ降りてしまい、置いた機器とぶつかる */
+  if (sym.tagAnchor) {
+    const a = pinAbs(dev, sym.tagAnchor), anc = sym.tagAnchor.anchor || "end";
+    const out = [];
+    if (tag) out.push(mk(tag, a.x, a.y, anc, true));
+    if (desc) out.push(mk(desc, a.x, a.y + 4 * f, anc));
+    return wrap(out, "left");
+  }
+
   // 候補の生成 ─ side ごとに機器へ寄せる段階を持つ
   const sideCand = (side, d, dy = 0) => {
     const out = [];
@@ -1086,16 +1122,20 @@ function gotoRefText(dev) {
 function deviceRowTexts(page, dev) {
   const sym = symOf(dev.sym);
   if (!sym || !sym.fnRows) return [];
-  const fn = (dev.props && dev.props.fn) || [];
+  const fn = (dev.props && dev.props.fn) || {};
   const s = contentScale(), h = TEXT_H.small * s * symTextK(sym);
   const out = [];
   sym.pins.forEach((p, i) => {
-    const t = fn[p.row === undefined ? i : p.row];
+    /* 文言は端子名で持つ。行番号で持つと、機種を差し替えたとき端子の並びが
+       変わって「出力 R507 = AC100V L」のような嘘を刷ってしまう */
+    const t = Array.isArray(fn) ? fn[i] : fn[p.n];
     if (!t) return;
     const a = pinAbs(dev, { x: KV_FN_TEXT_X, y: p.y });
     const hh = textHeightMM(String(t), h);
+    const w = textWidthMM(String(t), hh, false, false);
     out.push({ text: String(t), x: a.x, y: a.y, size: hh, anchor: "start", row: p.row === undefined ? i : p.row,
-      box: { x: a.x, y: a.y - hh, w: textWidthMM(String(t), hh, false, false), h: hh } });
+      name: p.n, over: w > KV_FN_ROOM,          // 下線からはみ出しているか
+      box: { x: a.x, y: a.y - hh, w, h: hh } });
   });
   return out;
 }
@@ -2453,6 +2493,8 @@ function runDRC() {
         const xr = deviceXrefBox(page, dev);
         if (xr) report2(xr.box, `${displayTag(dev) || "機器"} の相互参照`, dev.id);
         mirrorLabelBoxes(dev).forEach(bx => report2(bx, `${displayTag(dev) || "コイル"} の接点ミラー`, dev.id));
+        // 入出力結線図の機能欄 (行ごとの文言) も紙に出る文字なので同じ扱いにする
+        deviceRowTexts(page, dev).forEach(o => report2(o.box, `機能欄「${o.text}」`, dev.id));
       });
       pinLabelBoxes(page).forEach(bx => report2(bx, "端子番号", bx.owner));
       condWires(page).forEach(w => {
@@ -2473,6 +2515,8 @@ function runDRC() {
       if (xr) labels.push({ ...xr.box, dev, what: `${displayTag(dev) || "機器"} の相互参照` });
       // 接点ミラー表 (コイル直下のクロスリファレンス表)
       mirrorLabelBoxes(dev).forEach(o => labels.push({ ...o, dev, what: `${displayTag(dev) || "コイル"} の接点ミラー` }));
+      // 入出力結線図の機能欄。長い文言は隣の行とぶつかるので、ここで必ず当たる
+      deviceRowTexts(page, dev).forEach(o => labels.push({ ...o.box, dev, what: `機能欄「${o.text}」` }));
     });
     // 端子番号 (描画・ラベル配置と同じ矩形で判定する)
     const devById = new Map(page.devices.map(d => [d.id, d]));
@@ -2892,16 +2936,26 @@ function runDRC() {
              する — 用紙 1 枚を占める記号では、記号の原点では遠すぎる */
           const dup = sym.pins.filter(q => q.n && q.n === pin.name).length > 1;
           const zone = `${sheetCol(pin.x)}${sheetRow(pin.y)}`;
-          issues.push({ sev: "warn",
-            msg: `${displayTag(dev) || sym.name} のピン ${pin.name || pin.idx + 1}${dup ? ` (${zone})` : ""} が未接続です`,
+          /* 保護接地の結び忘れは注意ではなく誤り。感電保護 (JIS C 60364-4-41 /
+             IEC 60204-1 8.2) は PE が確実につながっていることが前提なので、
+             出図前に必ず消してもらう */
+          const isPE = /^(PE|E)$/.test(pin.name || "");
+          issues.push({ sev: isPE ? "err" : "warn",
+            msg: `${displayTag(dev) || sym.name} のピン ${pin.name || pin.idx + 1}${dup ? ` (${zone})` : ""} が未接続です` +
+              (isPE ? " — 保護接地は必ず接続してください" : ""),
             page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(pin.x)}` });
         }
       });
-      // タグ重複 (電位リンクは同タグで対にするのが仕様なので除外)
+      /* タグ重複 (電位リンクは同タグで対にするのが仕様なので除外)。
+         入出力結線図のように 1 台の機器を複数枚に分けて描く記号は、
+         同じ機種どうしなら同じタグでよい (同じ実機の別の葉) */
       if (dev.tag && !dev.linkTo && sym.sim !== "link") {
-        if (tagSeen.has(dev.tag)) {
+        const prev = tagSeen.get(dev.tag);
+        const sameUnit = prev && sym.unitSheet && symOf(prev.sym || "").unitSheet &&
+          symOf(prev.sym || "").typ === sym.typ;
+        if (tagSeen.has(dev.tag) && !sameUnit) {
           issues.push({ sev: "err", msg: `デバイスタグ ${dev.tag} が重複しています`, page: page.no, target: dev.id, loc: devLocation(dev) });
-        } else tagSeen.set(dev.tag, dev.id);
+        } else if (!tagSeen.has(dev.tag)) tagSeen.set(dev.tag, dev);
       }
       // リンク未設定の補助接点
       if (sym.linked && !dev.linkTo) {
@@ -3058,7 +3112,11 @@ function buildBOM() {
     if (BOM_EXCLUDE.has(symId)) return;
     // 端子は本数だけ数える (タグ -X1:n を -X1 に集約)
     const baseTag = symId === "terminal" ? (dev.tag || "-X1").split(":")[0] : null;
-    const key = symId === "terminal" ? "terminal|" + baseTag : symId + "|" + (dev.typeRef || "");
+    /* 入出力結線図のように 1 台を複数枚で描く記号は、機種とタグでまとめる
+       (記号 id で分けると、1 台の PLC が枚数ぶん部品表に並ぶ) */
+    const key = symId === "terminal" ? "terminal|" + baseTag
+      : sym.unitSheet ? "unit|" + (dev.typeRef || sym.typ || "") + "|" + (dev.tag || "")
+      : symId + "|" + (dev.typeRef || "");
     // 多芯ケーブルは 1 本の物理ケーブルなので、心線囲みと遮へいを 1 行にまとめる
     // (現場は CVVS-1.25sq-6C を 1 品目として拾う)。芯数と遮へいの有無は購買の属性
     let cableCores = null, shielded = false;
@@ -3071,12 +3129,14 @@ function buildBOM() {
     }
     const rowKey = cableCores ? key + "|" + cableCores + "|" + (shielded ? "S" : "") + (sym.stretchOf || sym.id) : key;
     const solo = cableCores && (sym.stretchOf || sym.id) === "shield";   // 遮へいだけを掛けた図
-    const rowName = !cableCores ? sym.name
+    const rowName = sym.unitSheet ? `${dev.typeRef || sym.typ} (入出力結線図)`
+      : !cableCores ? sym.name
       : solo ? `シールド線 ${cableCores}芯`
       : `多芯ケーブル ${cableCores}芯${shielded ? " (遮へい付)" : ""}`;
     if (!rows.has(rowKey)) rows.set(rowKey, { name: rowName, typeRef: dev.typeRef || "—", tags: [], len: 0, cable: !!cableCores });
     const row = rows.get(rowKey);
-    row.tags.push(displayTag(dev) || "—");
+    const tg = displayTag(dev) || "—";
+    if (!(sym.unitSheet && row.tags.includes(tg))) row.tags.push(tg);   // 同じ実機は 1 台
     row.len += cableCores ? (parseFloat(dev.props && dev.props.len) || 0) : 0;
   }));
   return [...rows.values()].sort((a, b) => (a.tags[0] || "").localeCompare(b.tags[0] || ""));

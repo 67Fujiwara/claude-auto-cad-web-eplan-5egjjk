@@ -358,23 +358,24 @@ UI.showProps = (focusTag = false) => {
           .sort((a2, b2) => String(a2.typ || a2.id).localeCompare(String(b2.typ || b2.id)));
         return `<div class="prop-row"><label>機種 <span class="rp-dim">(差し替えると端子構成ごと入れ替わります)</span></label>
           <select id="pSwap">${kin.map(s2 =>
-            `<option value="${s2.id}"${s2.id === sym.id ? " selected" : ""}>${escAttr(s2.typ || s2.name)}</option>`).join("")}</select></div>`;
+            `<option value="${s2.id}"${s2.id === sym.id ? " selected" : ""}>${escAttr(s2.name || s2.typ)}</option>`).join("")}</select></div>`;
       })() : ""}
       ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
         <button class="btn-solid primary" id="pScaffold" style="padding:3px 10px;font-size:11px">結線図の下地を作る</button></div>` : ""}
       ${sym.fnRows ? (() => {
         // 機能欄 (行ごとの文言)。1 行 1 端子でまとめて貼り付けられる
-        const fn = (dev.props && dev.props.fn) || [];
+        const fn = (dev.props && dev.props.fn) || {};
+        const val = (p2, i) => (Array.isArray(fn) ? fn[i] : fn[p2.n]) || "";
         const names = sym.pins.map(p2 => p2.n).join(" / ");
         return `<div class="prop-row"><label>機能欄 <span class="rp-dim">(1 行 = 1 端子: ${escAttr(names)})</span></label>
-          <textarea id="pFn" rows="${Math.min(12, sym.fnRows)}" class="mono" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12px;padding:6px 8px;outline:none;resize:vertical">${escAttr(sym.pins.map((p2, i) => fn[i] || "").join("\n"))}</textarea></div>`;
+          <textarea id="pFn" rows="${Math.min(12, sym.fnRows)}" class="mono" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12px;padding:6px 8px;outline:none;resize:vertical">${escAttr(sym.pins.map(val).join("\n"))}</textarea></div>`;
       })() : ""}
       ${sym.sheet ? (() => {
         // 用紙に合わせて作った記号 (入出力結線図)。今の用紙と違えば 1 押しで直せる
         const mm = symSheetMismatch(curPage(), sym);
         return `<div class="prop-row"><label>この記号の用紙 <span class="rp-dim">(結線図は用紙 1 枚 = 記号 1 個)</span></label>
           <div class="mono" style="display:flex;align-items:center;gap:8px">
-            <span>${escAttr(sym.sheet)}</span>
+            <span>${escAttr(sheetLabel(symSheetSpec(sym)))}</span>
             ${mm ? `<button class="btn-solid primary" id="pSheetFix" style="padding:3px 10px;font-size:11px">この用紙にする</button>`
                  : `<span class="rp-dim">✓ このページはこの用紙です</span>`}
           </div></div>`;
@@ -415,11 +416,15 @@ UI.showProps = (focusTag = false) => {
     // 端子が動いたぶんだけ知らせる (検図の未接続で拾える)
     bind("#pSwap", v => {
       if (!v || v === dev.sym) return;
-      const before = devPins(dev).length;
+      const before = symOf(dev.sym), n0 = devPins(dev).length;
       dev.sym = v;
-      App.labelRev++;
       const after = symOf(v);
-      UI.toast(`${after.typ || after.name} に差し替えました (端子 ${before} → ${after.pins.length})`, 3200);
+      // 型式は差し替えに追従させる (図と部品表が食い違わないように)。
+      // 使う人が手で入れた型式は尊重する
+      if (!dev.typeRef || dev.typeRef === (before.typ || "")) dev.typeRef = after.typ || "";
+      // 機能欄は端子名で持っているので、名前の変わらない端子はそのまま残る
+      App.labelRev++;
+      UI.toast(`${after.name} に差し替えました (端子 ${n0} → ${after.pins.length})`, 3200);
     });
     // 機能欄: 1 行 1 端子でまとめて入れる
     const fnEl = pane.querySelector("#pFn");
@@ -427,8 +432,9 @@ UI.showProps = (focusTag = false) => {
       commit();
       dev.props = dev.props || {};
       const lines = fnEl.value.split("\n").map(v => v.trim());
-      while (lines.length && !lines[lines.length - 1]) lines.pop();
-      if (lines.length) dev.props.fn = lines; else delete dev.props.fn;
+      const map = {};
+      sym.pins.forEach((p2, i) => { if (lines[i]) map[p2.n] = lines[i]; });
+      if (Object.keys(map).length) dev.props.fn = map; else delete dev.props.fn;
       App.labelRev++;
       UI.refresh(false);
     });
