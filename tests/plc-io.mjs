@@ -51,18 +51,24 @@ await p.waitForTimeout(900);
 const R = await p.evaluate(() => {
   const out = { group: {}, sheet: {}, print: {} };
   const SPEC = {
-    /* 1 枚 = A3 横に収まる行数まで。チャネル (16 点) はまたがず均等に割る。
-       補助行はコモンだけ — ユニットの電源と接地は別紙の電源回路図に描く */
-    kv_n14at_in:   { io: 8,  first: "R000", last: "R007", aux: "COM" },
-    kv_n14at_out:  { io: 6,  first: "R500", last: "R505", aux: "COM" },
-    kv_n24at_in1:  { io: 7,  first: "R000", last: "R006", aux: "COM" },
-    kv_n24at_in2:  { io: 7,  first: "R007", last: "R013", aux: "COM" },
-    kv_n24at_out:  { io: 10, first: "R500", last: "R509", aux: "COM" },
-    kv_n40at_in1:  { io: 8,  first: "R000", last: "R007", aux: "COM" },
-    kv_n40at_in2:  { io: 8,  first: "R008", last: "R015", aux: "COM" },
-    kv_n40at_in3:  { io: 8,  first: "R100", last: "R107", aux: "COM" },
-    kv_n40at_out1: { io: 8,  first: "R500", last: "R507", aux: "COM" },
-    kv_n40at_out2: { io: 8,  first: "R508", last: "R515", aux: "COM" },
+    /* 1 枚 = A3 横に収まる高さまで。チャネル (16 点) はまたがず均等に割る。
+       端子の刻印は取説の回路図どおり (デバイス番号から R を除いた数字、
+       コモンは C0/C1…、出力の 1 枚目にサービス電源 0V/24V)。
+       AT 形の出力コモンの刻印は未確認のため COM のまま */
+    kv_n14at_in:   { io: 8, first: "000", last: "007", aux: "C0" },
+    kv_n14at_out:  { io: 6, first: "500", last: "505", aux: "0V,24V,COM" },
+    kv_n24at_in1:  { io: 7, first: "000", last: "006", aux: "C0" },
+    kv_n24at_in2:  { io: 7, first: "007", last: "013", aux: "C0" },
+    kv_n24at_out1: { io: 5, first: "500", last: "504", aux: "0V,24V,COM" },
+    kv_n24at_out2: { io: 5, first: "505", last: "509", aux: "COM" },
+    kv_n40at_in1:  { io: 8, first: "000", last: "007", aux: "C0" },
+    kv_n40at_in2:  { io: 8, first: "008", last: "015", aux: "C0" },
+    kv_n40at_in3:  { io: 8, first: "100", last: "107", aux: "C0" },
+    kv_n40at_out1: { io: 8, first: "500", last: "507", aux: "0V,24V,COM" },
+    kv_n40at_out2: { io: 8, first: "508", last: "515", aux: "COM" },
+    // リレー出力形。出力コモンは分割 (C1=500 / C2=501 / C3=502 / C4=503〜505)
+    kv_n14ar_in:   { io: 8, first: "000", last: "007", aux: "C0" },
+    kv_n14ar_out:  { io: 6, first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4" },
   };
   // どの枚も A3 横・非尺度 (NS)。用紙をそろえるための割付なので、例外を作らない
   Object.values(SPEC).forEach(v => { v.paper = "A3"; v.orient = "landscape"; v.scale = "NS"; });
@@ -78,13 +84,15 @@ const R = await p.evaluate(() => {
     if (!sym || !Array.isArray(sym.pins) || !sym.pins.every(q => q && q.n !== undefined)) {
       out.group[id] = "記号がありません"; return;
     }
-    const io = sym.pins.filter(x => /^R/.test(x.n)), aux = sym.pins.filter(x => !/^R/.test(x.n));
+    const io = sym.pins.filter(x => /^\d+$/.test(x.n)), aux = sym.pins.filter(x => !/^\d+$/.test(x.n));
     if (!io.length) { out.group[id] = "端子がありません"; return; }
     out.group[id] = {
       io: io.length, first: io[0].n, last: io[io.length - 1].n, aux: aux.map(x => x.n).join(","),
       sheet: symSheetSpec(sym), swap: sym.swapGroup, typ: sym.typ, fnRows: sym.fnRows,
-      // 未使用の入出力点は黙る。電源・コモン・PE は黙らせない
-      ioSkipped: io.every(x => x.noDrc === true) && aux.every(x => !x.noDrc),
+      /* 未使用の入出力点とサービス電源 (0V/24V) は黙る。コモンは黙らせない —
+         浮いていれば群ごと動かない */
+      ioSkipped: io.every(x => x.noDrc === true) &&
+        aux.every(x => /^(COM|C\d+)$/.test(x.n) ? !x.noDrc : x.noDrc === true),
       /* 接地の図記号を焼き込まないこと。端子の小円 (行数ぶん) 以外の円が無い */
       peEarth: (sym.body.match(/<circle /g) || []).length === sym.pins.length && !/r="6"/.test(sym.body),
       // 機能欄の下線が行数ぶんある
@@ -173,9 +181,12 @@ const R = await p.evaluate(() => {
         ? Math.round(fr.x + fr.w - (d.x + sym.bounds[0] + sym.bounds[2]))
         : Math.round(d.x - sym.ioSheet.rail - fr.x),
     };
-    const rows = sym.pins.filter(x => /^R/.test(x.n));
+    /* 行ピッチは「並びで隣り合う io 行」の間で測る。分割コモン (C1〜) が
+       間に挟まる箇所は 1 行ぶん広いのが正しい */
+    const rr = sym.ioSheet.rows;
+    const gaps = rr.slice(1).map((r, i) => (rr[i].io && r.io) ? r.y - rr[i].y : null).filter(v => v !== null);
     const m = pageDrawnMinima(pg);
-    out.print[id] = { pitch: rows.length > 1 ? rows[1].y - rows[0].y : 15,
+    out.print[id] = { pitch: gaps.length ? Math.min(...gaps) : sym.ioSheet.pitch,
       minText: +m.h.toFixed(3), minLine: +m.w.toFixed(3) };
   });
   App.labelRev++;
@@ -250,7 +261,7 @@ const R = await p.evaluate(() => {
   });
   /* コモンは下地が外側のレール (入力なら +24V) へ自動で結ぶ。
      いちばん自然な操作なのに手でやると必ず宙吊りになっていたので、引くようにした */
-  const com = t.sym.pins.findIndex(q => q.n === "COM");
+  const com = t.sym.pins.findIndex(q => q.n === "C0");
   const cp = devPins(t.d)[com];
   App.labelRev++;
   {
@@ -424,10 +435,13 @@ const R = await p.evaluate(() => {
       wired: (() => {
         const br = q.devices.find(d2 => d2.gen === dd.id && symOf(d2.sym).sim === "link" &&
           d2.tag === spO.railTags.branch);
+        // 端子の添字: サービス電源 (0V/24V) が先頭にあるので、io 端子だけの並びで引く
+        const ioIdx = symOf(dd.sym).pins.map((p2, k) => [p2, k])
+          .filter(([p2]) => /^\d+$/.test(p2.n)).map(([, k]) => k);
         return !!br && q.devices.filter(d2 => d2.sym === "lamp").every((d2, i) => {
           const ps = devPins(d2);
           const left = ps[0].x <= ps[1].x ? 0 : 1;
-          return netsO.pinNet(d2, left) === netsO.pinNet(dd, i) &&
+          return netsO.pinNet(d2, left) === netsO.pinNet(dd, ioIdx[i]) &&
             netsO.pinNet(d2, 1 - left) === netsO.pinNet(br, 0);
         });
       })(),
@@ -457,6 +471,30 @@ const R = await p.evaluate(() => {
       buildIoScaffold(q, dd);
       App.labelRev++;
     }
+    App.project.pages.pop();
+    App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
+  }
+
+  /* ④b-6 分割コモン (KV-N14AR・リレー出力)。取説の回路図どおり
+     0V/24V, 500, C1, 501, C2, 502, C3, 503, 504, 505, C4 の並びで、
+     「下地を作る」が 4 つのコモンを全部 0V レールへ結ぶこと */
+  {
+    const q = newPage("分割コモン", App.project.pages.length + 1);
+    App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
+    const s0 = symOf("kv_n14ar_out"), w1 = symSheetSpec(s0);
+    q.paper = w1.paper; q.orient = w1.orient; q.scale = w1.scale; applySheet(q);
+    const fr = frameRect();
+    const dd = addDevice(q, "kv_n14ar_out", Math.ceil((fr.x - s0.bounds[0] + 5) / 5) * 5, fr.y + 10, { tag: "-A90" });
+    buildIoScaffold(q, dd);
+    App.labelRev++;
+    const nets = computeNets(q, "closed");
+    const outer = q.devices.find(d2 => d2.gen === dd.id && symOf(d2.sym).sim === "link" && d2.tag === "0V");
+    const comIdx = s0.pins.map((p2, k) => [p2, k]).filter(([p2]) => /^C\d+$/.test(p2.n));
+    out.splitCom = {
+      order: s0.pins.map(p2 => p2.n).join(","),
+      coms: comIdx.length,
+      allOn0V: !!outer && comIdx.every(([, k]) => nets.pinNet(dd, k) === nets.pinNet(outer, 0)),
+      drc: runDRC().filter(i => i.page === q.no).map(i => `${i.sev}:${i.msg}`) };
     App.project.pages.pop();
     App.pageIdx = App.project.pages.indexOf(t.pg); applySheet(t.pg);
   }
@@ -540,7 +578,7 @@ const R = await p.evaluate(() => {
   }
 
   // ⑤ 機能欄 (行ごとの文言) が画面と DXF に出る
-  t.d.props = { fn: { R000: "操作電源 入", R001: "タンク1本選択", R003: "No1タンク選択" } };
+  t.d.props = { fn: { "000": "操作電源 入", "001": "タンク1本選択", "003": "No1タンク選択" } };
   App.labelRev++;
   const rt = deviceRowTexts(t.pg, t.d);
   const svg = devLabelsSVG(t.d, t.sym, t.pg);
@@ -549,21 +587,21 @@ const R = await p.evaluate(() => {
     // 下線 (行の y + 1.5) の上に載っているか
     onLine: rt.every(o => { const y0 = t.d.y + t.sym.pins[o.row].y; return o.y <= y0 + 1.5 && o.y > y0 - 4; }),
     svg: /操作電源 入/.test(svg), dxf: /\\U\+64CD/.test(dxf1) || /操作電源/.test(dxf1),
-    skipsEmpty: !rt.some(o => o.name === "R002"),
+    skipsEmpty: !rt.some(o => o.name === "002"),
     // 端子名で持つので、機種を差し替えても文言がずれない
-    byName: rt.every(o => ({ R000: "操作電源 入", R001: "タンク1本選択", R003: "No1タンク選択" })[o.name] === o.text) };
+    byName: rt.every(o => ({ "000": "操作電源 入", "001": "タンク1本選択", "003": "No1タンク選択" })[o.name] === o.text) };
 
   /* ⑤b 機能欄の文言も「紙に出る文字」なので、長すぎて図枠の外へ出たり
          表題欄に乗ったりしたら検図で必ず出ること (下線の長さだけの問題ではない) */
   {
     const long = "あ".repeat(140);
     const before = runDRC().filter(i => i.target === t.d.id && /機能欄/.test(i.msg)).length;
-    t.d.props = { fn: { R000: long } };
+    t.d.props = { fn: { "000": long } };
     App.labelRev++;
     const after = runDRC().filter(i => i.target === t.d.id && /機能欄/.test(i.msg));
     out.fnDrc = { before, out: after.some(i => /図枠/.test(i.msg)),
       over: (deviceRowTexts(t.pg, t.d)[0] || {}).over === true };
-    t.d.props = { fn: { R000: "操作電源 入", R001: "タンク1本選択", R003: "No1タンク選択" } };
+    t.d.props = { fn: { "000": "操作電源 入", "001": "タンク1本選択", "003": "No1タンク選択" } };
     App.labelRev++;
   }
 
@@ -574,7 +612,7 @@ const R = await p.evaluate(() => {
   App.pageIdx = i2;
   applySheet(curPage());
   const dxf = pageToDXF(curPage());
-  out.dxf = { r107: /\n1\nR107\n/.test(dxf), com: /\n1\nCOM\n/.test(dxf) };
+  out.dxf = { r107: /\n1\n107\n/.test(dxf), com: /\n1\nC0\n/.test(dxf) };
   return out;
 });
 console.log(JSON.stringify(R, null, 1));
@@ -677,7 +715,11 @@ const V3 = await p.evaluate(() => {
   const lamps = q.devices.filter(d2 => d2.sym === "lamp");
   const r = { pitch: sp.pitch,
     onRows: lamps.every((d2, i) => Math.abs(d2.y - (dd.y + rows[i].y)) < 0.01),
-    wired: lamps.every((d2, i) => nets.pinNet(d2, 0) === nets.pinNet(dd, i)),
+    wired: lamps.every((d2, i) => {
+      const ioIdx = symOf(dd.sym).pins.map((p2, k) => [p2, k])
+        .filter(([p2]) => /^\d+$/.test(p2.n)).map(([, k]) => k);
+      return nets.pinNet(d2, 0) === nets.pinNet(dd, ioIdx[i]);
+    }),
     drc: runDRC().filter(i => i.page === q.no).map(i => i.sev + ":" + i.msg) };
   App.project.pages.pop(); App.pageIdx = 0; applySheet(curPage());
   return r;
@@ -687,14 +729,14 @@ console.log("出力の枚のUI経路:", JSON.stringify({ ...V1, ...V2, ...V3 }, 
 const ids = Object.keys(R.spec);
 const checks = {
   // 想定の枚 (id) がすべてあること
-  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 10,
+  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 13,
   // 群ごとの点数・端子番号 (16 点で次のチャネルへ繰り上がる)
   groups: ids.every(id => R.group[id] && R.group[id].io !== undefined && R.group[id].io === R.spec[id].io &&
     R.group[id].first === R.spec[id].first && R.group[id].last === R.spec[id].last &&
     R.group[id].aux === R.spec[id].aux),
   // 16 点で次のチャネルへ繰り上がる (枚の切れ目はチャネルをまたがない)
-  relayCarry: (R.group.kv_n40at_in2 || {}).last === "R015" && (R.group.kv_n40at_in3 || {}).first === "R100" &&
-    (R.group.kv_n40at_out2 || {}).last === "R515",
+  relayCarry: (R.group.kv_n40at_in2 || {}).last === "015" && (R.group.kv_n40at_in3 || {}).first === "100" &&
+    (R.group.kv_n40at_out2 || {}).last === "515",
   // 1 枚は A3 横に収まる行数まで
   perSheet16: ids.every(id => (R.group[id] || {}).io <= 10),
   // 用紙は 1:1。図枠に収まり表題欄を避け、レールの左に余白が残る
@@ -731,7 +773,9 @@ const checks = {
   // 未使用の入出力点は黙る。電源・コモン・保護接地は知らせる
   /* 未使用の入出力点は黙るが、コモンの結び忘れは知らせる。
      電源と接地はこの図に無い (別紙) ので、ここには出てこない */
-  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "COM" &&
+  /* 未使用の入出力点とサービス電源 (0V/24V) は黙るが、コモンの結び忘れは
+     知らせる。分割コモン (C1〜C4) も 1 つずつ */
+  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "C0,C1,C2,C3,C4,COM" &&
     R.unconnected.otherSev === "warn" && R.unconnected.peSev === "" &&
     // 電源端子・接地端子が 1 つも無いこと
     ids.every(id => !/[LN]|PE/.test((R.group[id] || {}).aux || "")),
@@ -743,6 +787,10 @@ const checks = {
   /* 3 線式センサは NPN (シンク) 形 — 開閉要素は「出力と 0V」の間 */
   npnSensors: Array.isArray(R.npn) && R.npn.length === 3 && R.npn.every(o => o.sinks === true) &&
     R.npn.map(o => o.pins).join(",") === "BK-BU,BK-BU,N24V-OUT",
+  /* 分割コモン (KV-N14AR): 取説どおりの並びで、コモン 4 つが全部 0V レールへ結ばれる */
+  splitCom: (R.splitCom || {}).order === "0V,24V,500,C1,501,C2,502,C3,503,504,505,C4" &&
+    R.splitCom.coms === 4 && R.splitCom.allOn0V === true &&
+    Array.isArray(R.splitCom.drc) && R.splitCom.drc.length === 0,
   /* 実機のユニットに合わせた鏡像: 入力は現場側が左 (箱は端子の右 = boxX > 0、
      名称欄は箱の右 = fnTextX < rail)。出力は箱が左 (boxX < 0)、
      名称欄はレールのさらに右 (fnTextX > rail) */
@@ -800,14 +848,14 @@ const checks = {
   unitSheets: (R.unit || {}).dupTag === 0 && R.unit.bomRows === 1 &&
     (R.unit.bomTags || []).join(",") === "-A100",
   // 部品表・DXF
-  bom: R.bom === 10,
+  bom: R.bom === 13,
   dxf: (R.dxf || {}).r107 === true && R.dxf.com === true,
   // プロパティ: 機種の差し替え・下地・機能欄の入口があること
   /* 規格外の図記号は図面上で説明する (JIS C 0617-1)。プロパティの説明文は
      紙にも DXF にも出ないので、注記として貼る入口があること */
   props: U.hasSwap === true && U.hasScaffoldBtn === true && U.hasFnBox === true &&
     U.hasStdNoteBtn === true &&
-    U.options === "kv_n14at_in,kv_n24at_in1,kv_n24at_in2,kv_n40at_in1,kv_n40at_in2,kv_n40at_in3",
+    U.options === "kv_n14ar_in,kv_n14at_in,kv_n24at_in1,kv_n24at_in2,kv_n40at_in1,kv_n40at_in2,kv_n40at_in3",
   swapModel: hasSwap === true && canPick === true && U2.swapped === "kv_n40at_in1" && U2.keptTag === true &&
     U2.pins === 9 &&
     // 想定と違う用紙は検図に出て、「この用紙にする」で消える

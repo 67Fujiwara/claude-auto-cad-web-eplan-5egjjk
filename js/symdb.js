@@ -11,9 +11,10 @@ const DB_DEFAULT_PINNED = [
   "elb2", "elb3", "inverter_box", "ps_box", "plc_box", "fan",
   "cp1", "cp2", "cont_no_main", "cont_nc_main",
   "conn_rj45", "conn_usb_a", "conn_hdmi",
-  // KV Nano は 3 機種とも出しておく (枚数は機種で違う。N40AT は入力 3 枚 + 出力 2 枚)
-  "kv_n14at_in", "kv_n14at_out", "kv_n24at_in1", "kv_n24at_in2", "kv_n24at_out",
+  // KV Nano は全機種を出しておく (枚数は機種で違う)
+  "kv_n14at_in", "kv_n14at_out", "kv_n24at_in1", "kv_n24at_in2", "kv_n24at_out1", "kv_n24at_out2",
   "kv_n40at_in1", "kv_n40at_in2", "kv_n40at_in3", "kv_n40at_out1", "kv_n40at_out2",
+  "kv_n14ar_in", "kv_n14ar_out",
 ];
 
 /** 多極コネクタ (レセプタクル) を作る。
@@ -136,10 +137,14 @@ function mkPort(o) {
    機器は rot 270 で置けば向きが合う — 入力は左が電源側 (P,N)・右が信号、
    出力は左が信号 (出力端子)・右が電源側 (P,N)。
 
-   ・用紙 1 枚 = 1 記号 = 「A3 横に収まる行数」(最大 10 点)。チャネル (16 点) は
+   ・用紙 1 枚 = 1 記号 = 「A3 横に収まる高さ」まで。チャネル (16 点) は
      またがず、1 チャネルを均等に割る。16 点を 1 枚にすると、機器がぶつからない
-     行ピッチ (20mm) では縦 335mm を超えて A3 に入らず A2 になってしまうため。
+     行ピッチ (20mm) では縦が A3 に入らず A2 になってしまうため。
      用紙は機種でそろえる (枚ごとに決めるとピッチを広げたとき横と縦が混ざる)。
+   ・端子の刻印は取扱説明書の入出力回路図どおり: デバイス番号から R を除いた
+     数字 (000〜/500〜)、コモンは C0/C1…。出力の 1 枚目にはサービス電源
+     (0V/24V) の端子。リレー出力形 (N14AR) はコモンが分割で、群ごとに
+     コモン行が挟まる。
    ・端子の小円は外郭に接して描き、導体は円の外周で終える。端子名は外郭の内側。
    ・端子の左 (現場側) は実際の導体で描く。プロパティの「結線図の下地を作る」を
      押すと、レール 2 本と各行の分岐を実線で引き、機器を落とす隙間を空け、
@@ -170,9 +175,11 @@ const KV_RAIL = 80, KV_GAP = 20, KV_RAIL_SEP = 25, KV_RAIL_LEAD = 10;
    2 通りの径で並ぶと、縮小・複写したときに別のものに見える */
 const KV_TERM_R = TERM_R;
 const KV_TERM_X = 3;                   // 外郭の左辺から端子名の左端まで
-/** KV の入出力リレー番号 (16 点で次のチャネルへ繰り上がる) */
-function kvRelay(startCh, i) {
-  return `R${startCh + Math.floor(i / 16)}${String(i % 16).padStart(2, "0")}`;
+/** KV の端子表示 (16 点で次のチャネルへ繰り上がる)。
+    取扱説明書の入出力回路図のとおり、端子の刻印はデバイス番号 (R000〜) から
+    R を除いた数字 (000〜 / 500〜)。ソフト側のデバイス番号は R + この数字 */
+function kvTerm(startCh, i) {
+  return `${startCh + Math.floor(i / 16)}${String(i % 16).padStart(2, "0")}`;
 }
 const kvText = (x, y, h, s, anchor = "middle", mono = true) =>
   `<text x="${r1(x)}" y="${r1(y)}" data-h="${h}" text-anchor="${anchor}" fill="currentColor" stroke="none" font-family="${mono ? "monospace" : "sans-serif"}">${s}</text>`;
@@ -187,6 +194,26 @@ const kvText = (x, y, h, s, anchor = "middle", mono = true) =>
    「行ピッチ」で 25〜35mm へ広げる — 用紙は自動で選び直す */
 const KV_PITCH_MIN = 15, KV_PITCH_MAX = 35, KV_PITCH_DEF = 20;
 
+/* 行の y を並びから出す。io 行どうしは行ピッチ、io 行の次の補助行
+   (コモン・サービス電源) は「横に倒した機器が下へ張り出す」ぶんの
+   max(補助行, ピッチ)、補助行の次はどれも補助行ピッチ */
+function kvSeqRows(seq, pitch) {
+  let y = KV_Y0;
+  return seq.map((e, i) => {
+    if (i > 0) {
+      const prev = seq[i - 1];
+      y += prev.io && e.io ? pitch
+        : prev.io && !e.io ? Math.max(KV_AUXROW, pitch)
+        : KV_AUXROW;
+    }
+    return { n: e.n, y, io: e.io, noDrc: e.noDrc };
+  });
+}
+function kvSeqH(seq, pitch) {
+  const rows = kvSeqRows(seq, pitch);
+  return rows[rows.length - 1].y + KV_BOT + 6;
+}
+
 /** 入出力結線図の中身を行ピッチから組み立てる (伸縮シンボルの寸法違いに使う)。
 
     向きは実機のユニットに合わせて入力と出力で鏡像にする:
@@ -198,13 +225,7 @@ const KV_PITCH_MIN = 15, KV_PITCH_MAX = 35, KV_PITCH_DEF = 20;
 function kvBuild(o, pitch) {
   const W = KV_BOXW, TR = KV_TERM_R;
   const flip = o.fieldSide === "right";     // 出力: 現場側が右
-  const rows = [];
-  o.rows.forEach((n, i) => rows.push({ n, y: KV_Y0 + i * pitch, io: true }));
-  /* 補助行 (コモン) は入出力行から 1 ピッチぶん下げる。10mm しか空けないと、
-     最後の行に横に倒して置いた機器の下端 (押しボタンで 15.25mm) にコモンの
-     導体が触れる */
-  const y0 = rows.length ? rows[rows.length - 1].y + Math.max(KV_AUXROW, pitch) : KV_Y0;
-  (o.aux || []).forEach((n, i) => rows.push({ n, y: y0 + i * KV_AUXROW, io: false }));
+  const rows = kvSeqRows(o.seq, pitch);
   const bh = rows[rows.length - 1].y + KV_BOT;
   const pins = [], parts = [];
   /* 端子 (小円) は外郭に接して描き、導体は円の外周で終える。円の中心を外郭線
@@ -221,12 +242,14 @@ function kvBuild(o, pitch) {
      出力はレールから 10mm あける — レール頭の電位名 (+24V は半幅 5.8mm) が
      下線の帯に食い込まないように */
   const FX = flip ? KV_RAIL + 10 : TR * 2 + W + KV_FN_X;
-  let prevIo = null;
   rows.forEach((r, i) => {
-    pins.push({ x: 0, y: r.y, n: r.n, noDrc: r.io, inBody: true, row: i });
+    /* noDrc: 未使用でも黙る端子。入出力点とサービス電源 (0V/24V) は使わない
+       図面が普通にある。コモンは黙らせない — 浮いていれば群ごと動かない */
+    pins.push({ x: 0, y: r.y, n: r.n, noDrc: !!r.noDrc, inBody: true, row: i });
     parts.push(`<circle cx="${flip ? -TR : TR}" cy="${r1(r.y)}" r="${TR}"/>`);
-    if (prevIo === true && !r.io) parts.push(`<path d="M${r1(BX)},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
-    prevIo = r.io;
+    /* 群の区切り線: コモン行 (群の末尾) の次の io 行の上に引く。
+       コモンは自分の群の点と同じ区画に入る */
+    if (i > 0 && !rows[i - 1].io && r.io) parts.push(`<path d="M${r1(BX)},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
     /* 端子名は外郭の内側 (端子の丸のすぐ隣)。外に置くと現場側の配線区画に
        文字が並び、機器のピン番号・線番と同じ帯で読み合わせることになる */
     if (flip) parts.push(kvText(-TR * 2 - KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "end"));
@@ -266,12 +289,11 @@ function kvBuild(o, pitch) {
       // 後方互換 (公開していた旧フィールド。dev.x - gapFrom = 隙間の左端)
       gapFrom: -gapX0, gapTo: -gapX1,
       rows: rows.map(r => ({ y: r.y, io: r.io })) },
-    /* 用紙は「この枚」ではなく「この機種でいちばん行数の多い枚」で決める。
+    /* 用紙は「この枚」ではなく「この機種でいちばん背の高い枚」で決める。
        枚ごとに決めると、行ピッチを広げたとき 1 台の図面集に横と縦が混ざる
-       (綴じた図面をめくるたびに紙を回すことになる) */
+       (綴じた図面をめくるたびに紙を回すことになる)。入力と出力もそろえる */
     sheet: kvSheetFor({ w: flip ? r1(-bounds[0] + FX + KV_FN_W + 2) : r1(KV_RAIL + bounds[2]),
-      h: r1(KV_Y0 + (Math.max(o.maxIo || o.rows.length, 1) - 1) * pitch +
-        Math.max(KV_AUXROW, pitch) + ((o.aux || []).length - 1) * KV_AUXROW + KV_BOT + 6) }),
+      h: r1(Math.max(...(o.allSeqs || [o.seq]).map(q => kvSeqH(q, pitch)))) }),
   };
 }
 
@@ -285,7 +307,8 @@ function mkKvSheet(o) {
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.model,
     stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
       "外郭 + 端子 + 端子名。端子の図記号番号は規格原本との照合が必要)。" +
-      "COM の分割と端子台の刻印は機種の取扱説明書で確認してください。" +
+      "端子の刻印とコモンの分割は取扱説明書の入出力回路図どおり " +
+      "(KV-N14AR は写しで確認済み。AT 形の出力コモンの刻印は未確認)。" +
       "ユニットの電源と接地は別紙の電源回路図に描きます",
     sim: "none", thumbBox: flip ? [-(KV_TERM_R * 2 + KV_BOXW), 0, KV_BOXW, 16] : [0, 0, KV_BOXW, 16],
     /* 機器タグは箱の肩 (入力=左肩・出力=右肩)。1 行目より上なので
@@ -335,68 +358,108 @@ function kvSheetFor(size) {
   return { paper: l.paper, orient: l.orient, scale: KV_SCALE };
 }
 
-/* 1 枚あたりの点数。用紙を A3 横 1 種類にそろえるための上限で、
-   「16 点 = 1 チャネル = 1 枚」ではなく「A3 横に収まる行数 = 1 枚」で切る。
+/* 1 枚に載せる高さの上限 (既定ピッチでの h)。kvSheetFor の A3 横の判定
+   (h + 10 ≤ 作図領域 277 − 表題欄の帯 35) から来る。行数の決め打ちではなく
+   高さで詰める — サービス電源やコモン分割で補助行が増えても A3 横を守る */
+const KV_FIT_H = 232;
 
-   なぜ 16 点をやめたか: 1 行 = 1 機器を横に倒して置くので、行ピッチは
-   ぶつからない距離 (20mm) が要る。16 行だと縦 335mm を超え、A3 には
-   どう置いても入らない。用紙を A2 へ上げると、現場に持ち込む図面集が
-   折らないと綴じられず、複写機にも乗らない。紙ではなく割付のほうを変えた。
-   チャネル (16 点) はまたがない — 1 チャネルを均等に割る */
-const KV_PER_SHEET = 10;
+/* ── 機種の端子データ ─────────────────────────────────────
+   取扱説明書の入出力回路図から。KV-N14AR は写しで確認済み:
+   ・端子の刻印はデバイス番号から R を除いた数字 (入力 000〜 / 出力 500〜)
+   ・コモンの刻印は C0, C1, … (入力は C0 が 1 つ)
+   ・出力コモンは機種で分割が違う — N14AR は C1=500 / C2=501 / C3=502 /
+     C4=503〜505 (リレー出力なので群ごとに別電源を入れられる)
+   ・出力側の端子台にはサービス電源 (0V / 24V) の端子がある (交流電源形)
+   AT 形 (トランジスタ・シンク出力) の出力コモンの刻印は未確認 — COM のまま。
+   outGroups を書けば端子構成ごと差し替わる */
+const KV_UNITS = [
+  ["KV-N14AT", { nIn: 8, nOut: 6 }],
+  ["KV-N24AT", { nIn: 14, nOut: 10 }],
+  ["KV-N40AT", { nIn: 24, nOut: 16 }],
+  ["KV-N14AR", { nIn: 8, relay: true,
+    outGroups: [
+      { pts: ["500"], com: "C1" }, { pts: ["501"], com: "C2" },
+      { pts: ["502"], com: "C3" }, { pts: ["503", "504", "505"], com: "C4" },
+    ] }],
+];
 
-/** KV Nano 基本ユニットの結線図記号。1 枚 = A3 横に収まる行数まで */
-function mkKvUnit(model, nIn, nOut) {
+/** KV Nano 基本ユニットの結線図記号。1 枚 = A3 横に収まる高さまで */
+function mkKvUnit(model, cfg) {
   const out = [];
-  const groups = [];
-  /* まずチャネル (16 点) で切り、そのチャネルを均等に割る。
-     端数を最後の枚へ寄せると 10/4 のように偏るので、行数をそろえる */
-  const addCh = (kind, ch, from, n) => {
-    const sheets = Math.max(1, Math.ceil(n / KV_PER_SHEET));
-    let at = from;
-    for (let k = 0; k < sheets; k++) {
-      const cnt = Math.ceil((n - (at - from)) / (sheets - k));
-      groups.push({ kind, ch, from: at, n: cnt });
-      at += cnt;
-    }
+  /* 枚の中身 (行の並び)。svc = サービス電源 (0V/24V) を頭に載せる。
+     入出力点とサービス電源は未使用でも黙る (noDrc)。コモンは黙らせない */
+  const mkSeq = (gs, svc) => {
+    const seq = [];
+    if (svc) seq.push({ n: "0V", io: false, noDrc: true }, { n: "24V", io: false, noDrc: true });
+    gs.forEach(g => {
+      g.pts.forEach(n => seq.push({ n, io: true, noDrc: true }));
+      seq.push({ n: g.com, io: false });
+    });
+    return seq;
   };
-  for (let i = 0; i < nIn; i += 16) addCh("入力", 0, i, Math.min(16, nIn - i));
-  for (let i = 0; i < nOut; i += 16) addCh("出力", 5, i, Math.min(16, nOut - i));
-  /* ユニットの電源と接地は入出力結線図には描かない (別紙の電源回路図)。
-     入出力結線図が受け持つのは「現場機器 ─ 入出力端子」の対応で、
-     電源の供給元・遮断器・接地の系統は電源回路図で追うもの。ここに混ぜると
-     どちらの図も読みにくくなり、電源端子の呼び (交流電源形は L/N、直流電源形は
-     24V/0V) が機種で変わるぶんの誤りも持ち込むことになる。
-     補助行はコモンだけ (コモンは行の帰り側なので入出力結線図の一部) */
-  groups.forEach((g) => {
-    const rows = [];
-    for (let i = 0; i < g.n; i++) rows.push(kvRelay(g.ch, g.from + i));
-    const aux = ["COM"];
-    const kindId = g.kind === "入力" ? "in" : "out";
-    const sibs = groups.filter(x => x.kind === g.kind);
-    const many = sibs.length > 1;
-    const idx = sibs.indexOf(g) + 1;
-    const no = many ? ` (${idx}/${sibs.length})` : "";
-    out.push(mkKvSheet({
-      id: `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${many ? idx : ""}`,
-      model, title: `${g.kind}${no} ${g.n}点`, rows, aux,
-      maxIo: Math.max(...groups.map(x => x.n)),      // 用紙は機種でそろえる
-      /* シンク (NPN) 形の KV-N□□AT の場合:
-         入力は COM を +24V へ、機器の帰りは 0V。出力は COM を 0V へ、負荷の
-         帰りは +24V。分岐用レールは機器・負荷の帰り側になる。
-         どちらの紙でも「外側 = コモン側 / 内側 = 分岐側」で位置をそろえる */
-      railTags: g.kind === "入力" ? { branch: "0V", supply: "+24V" } : { branch: "+24V", supply: "0V" },
-      /* 実機のユニットに合わせて、入力は現場側が左・出力は現場側が右 (鏡像)。
-         1 台ぶんを並べたとき「入力 → ユニット → 出力」と電流の向きに読める */
-      fieldSide: g.kind === "入力" ? "left" : "right",
-      swapGroup: `kv_nano_${kindId}`,
-      name: `${model} ${g.kind}結線図${no}`, nameEn: `${model} ${g.kind === "入力" ? "input" : "output"} wiring`,
-      desc: `キーエンス KV Nano 基本ユニット ${model} の${g.kind}結線図 (${rows[0]}〜${rows[rows.length - 1]} の${g.n}点)。` +
-        `端子の左は現場側 — プロパティの「結線図の下地を作る」で 0V/+24V のレールと各行の分岐を実線で引きます。` +
-        `右は機能欄で、行ごとの文言はプロパティでまとめて入れられます。` +
-        `ユニットの電源と接地は別紙の電源回路図に描きます (この図には入れません)。`,
-    }));
-  });
+  /* 自動割付 (コモン分割の無い機種): チャネル (16 点) で切り、A3 横に収まる
+     高さまで均等に割る。サービス電源が載る枚は補助行が 2 行増えるぶん
+     背が高くなるので、その姿で入るまで枚数を増やす */
+  const autoSheets = (ch0, n, com, kind) => {
+    const sheets = [];
+    for (let c = 0; c < n; c += 16) {
+      const cnt = Math.min(16, n - c);
+      for (let nSheets = 1; ; nSheets++) {
+        const trial = [];
+        let at = 0;
+        for (let k = 0; k < nSheets; k++) {
+          const take = Math.ceil((cnt - at) / (nSheets - k));
+          const pts = [];
+          for (let i = 0; i < take; i++) pts.push(kvTerm(ch0, c + at + i));
+          trial.push([{ pts, com }]);
+          at += take;
+        }
+        const fits = trial.every((gs, k) =>
+          kvSeqH(mkSeq(gs, kind === "出力" && sheets.length === 0 && k === 0), KV_PITCH_DEF) <= KV_FIT_H);
+        if (fits) { trial.forEach(gs => sheets.push(gs)); break; }
+      }
+    }
+    return sheets;
+  };
+  const inSheets = autoSheets(0, cfg.nIn, "C0", "入力");
+  const outSheets = cfg.outGroups ? [cfg.outGroups] : autoSheets(5, cfg.nOut, "COM", "出力");
+  // 用紙は機種でそろえる (入力・出力ぜんぶの中でいちばん背の高い枚に合わせる)
+  const allSeqs = [
+    ...inSheets.map(gs => mkSeq(gs, false)),
+    ...outSheets.map((gs, i) => mkSeq(gs, i === 0)),
+  ];
+  const build = (kind, sheetsG) => {
+    const many = sheetsG.length > 1;
+    const kindId = kind === "入力" ? "in" : "out";
+    sheetsG.forEach((gs, i) => {
+      const seq = mkSeq(gs, kind === "出力" && i === 0);
+      const pts = gs.flatMap(g => g.pts);
+      const no = many ? ` (${i + 1}/${sheetsG.length})` : "";
+      out.push(mkKvSheet({
+        id: `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${many ? i + 1 : ""}`,
+        model, title: `${kind}${no} ${pts.length}点`, seq, allSeqs,
+        /* シンク (NPN) 形・リレー形とも下地は DC24V の想定:
+           入力はコモンを +24V へ、機器の帰りは 0V。出力はコモンを 0V へ、
+           負荷の帰りは +24V。リレー出力は電源極性が自由なので、交流負荷なら
+           レールのタグを手で描き替える。
+           どちらの紙でも「外側 = コモン側 / 内側 = 分岐側」で位置をそろえる */
+        railTags: kind === "入力" ? { branch: "0V", supply: "+24V" } : { branch: "+24V", supply: "0V" },
+        /* 実機のユニットに合わせて、入力は現場側が左・出力は現場側が右 (鏡像) */
+        fieldSide: kind === "入力" ? "left" : "right",
+        swapGroup: `kv_nano_${kindId}`,
+        name: `${model} ${kind}結線図${no}`,
+        nameEn: `${model} ${kindId === "in" ? "input" : "output"} wiring`,
+        desc: `キーエンス KV Nano 基本ユニット ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点)。` +
+          `端子の刻印は取扱説明書の回路図どおり (デバイス番号は R + 数字)。` +
+          (cfg.relay && kind === "出力" ? `リレー出力でコモンは分割 (${gs.map(g => `${g.com}=${g.pts.join("·")}`).join(" / ")})。` : "") +
+          (kind === "出力" && i === 0 ? `0V/24V はユニットのサービス電源端子。` : "") +
+          `プロパティの「結線図の下地を作る」で 0V/+24V のレールと各行の分岐を実線で引きます。` +
+          `機能欄の文言はプロパティでまとめて入れられます。ユニットの電源と接地は別紙の電源回路図に描きます。`,
+      }));
+    });
+  };
+  build("入力", inSheets);
+  build("出力", outSheets);
   return out;
 }
 
@@ -855,7 +918,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 5;
+const DB_PINNED_VER = 6;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");
@@ -885,8 +948,7 @@ function dbSetPinned(list) {
 
 
 /* キーエンス KV Nano 基本ユニットの入出力結線図 (機種を差し替えれば端子ごと入れ替わる) */
-[["KV-N14AT", 8, 6], ["KV-N24AT", 14, 10], ["KV-N40AT", 24, 16]]
-  .forEach(([m, i, o]) => mkKvUnit(m, i, o).forEach(s2 => DB_SYMBOLS.push(s2)));
+KV_UNITS.forEach(([m, cfg]) => mkKvUnit(m, cfg).forEach(s2 => DB_SYMBOLS.push(s2)));
 
 // 全シンボル辞書へ統合 (描画・配置・部品表・DXFすべてで使える)
 DB_SYMBOLS.forEach(s => { SYMBOLS_BY_ID[s.id] = s; });

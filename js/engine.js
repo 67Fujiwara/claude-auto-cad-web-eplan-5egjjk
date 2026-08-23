@@ -276,7 +276,8 @@ function buildIoScaffold(page, dev) {
      決まっているので、迷わせずに引く。ユニット電源 (L/N/PE) は供給元が
      図面ごとに違うので引かない — 検図が未接続で知らせる */
   sp.rows.forEach((r0, i) => {
-    if (r0.io || !/^COM/.test((sym.pins[i] || {}).n || "")) return;
+    // コモンの刻印は機種で COM / C0 / C1… と分かれる (分割コモンは全部結ぶ)
+    if (r0.io || !/^(COM|C\d+)$/.test((sym.pins[i] || {}).n || "")) return;
     line([[comX, all[i].y], [all[i].x, all[i].y]]);
   });
   App.labelRev++;
