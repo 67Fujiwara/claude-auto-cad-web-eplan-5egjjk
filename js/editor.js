@@ -550,38 +550,56 @@ function escXML(s) {
 /* ══════════════ ヒットテスト ══════════════ */
 function hitTest(wx, wy) {
   const page = curPage();
-  // テキスト
+  const cands = [];
+  // テキスト (最前面)
   for (let i = page.texts.length - 1; i >= 0; i--) {
     const t = page.texts[i];
     const fr = contentScale();
     const th = textHeight(t) * fr;
     const w = t.text.length * th * 0.62 + 2 * fr, h = th + 2 * fr;
-    if (wx > t.x - w / 2 && wx < t.x + w / 2 && wy > t.y - h && wy < t.y + 1.5) return { type: "text", obj: t };
+    if (wx > t.x - w / 2 && wx < t.x + w / 2 && wy > t.y - h && wy < t.y + 1.5) cands.push({ type: "text", obj: t });
   }
-  // デバイス
-  for (let i = page.devices.length - 1; i >= 0; i--) {
-    const d = page.devices[i];
-    const b = devBounds(d);
-    if (wx > b.x - 1.5 && wx < b.x + b.w + 1.5 && wy > b.y - 1.5 && wy < b.y + b.h + 1.5) return { type: "device", obj: d };
-  }
-  // ワイヤ
+  /* ワイヤは機器より先に拾う。機器の外形箱 (bounds) は線より広いので、
+     機器と重なった導体が箱に食われて選べなくなる (囲み記号や端子を貫く線) */
   for (let i = page.wires.length - 1; i >= 0; i--) {
     const w = page.wires[i];
     for (let j = 0; j < w.pts.length - 1; j++) {
-      if (distToSeg(wx, wy, w.pts[j], w.pts[j + 1]) < 1.6) return { type: "wire", obj: w };
+      if (distToSeg(wx, wy, w.pts[j], w.pts[j + 1]) < 1.6) { cands.push({ type: "wire", obj: w }); break; }
     }
   }
-  // 破線枠 (枠線の近傍のみ。内側は空クリック扱いにして中の機器を選べるように)
+  // 破線枠 (枠線の近傍のみ。内側は空クリック扱いにして中の機器を選べるように)。
+  // 機器より先 — 機器の外形箱が枠線に乗ると枠を選べなくなるため
   const zs = pageZones(page);
   for (let i = zs.length - 1; i >= 0; i--) {
     const z = zs[i];
     const near = (a, b) => distToSeg(wx, wy, a, b) < 2;
     if (near([z.x, z.y], [z.x + z.w, z.y]) || near([z.x + z.w, z.y], [z.x + z.w, z.y + z.h]) ||
         near([z.x + z.w, z.y + z.h], [z.x, z.y + z.h]) || near([z.x, z.y + z.h], [z.x, z.y])) {
-      return { type: "zone", obj: z };
+      cands.push({ type: "zone", obj: z });
     }
   }
-  return null;
+  // デバイス
+  for (let i = page.devices.length - 1; i >= 0; i--) {
+    const d = page.devices[i];
+    const sym = symOf(d.sym);
+    if (sym.enclosure) {
+      /* 囲み記号 (多芯ケーブル・シールド) は輪郭の近傍だけを拾う。
+         面全体で拾うと、囲んだ導体や下の破線枠が選べなくなる。
+         輪郭は長円 = 芯 (ローカル (0,0)〜(0,span-10)) から半幅 enclosure の等距離線 */
+      const st = Math.max(0, (sym.span || (sym.stretch && sym.stretch.def) || 25) - 10);
+      const p0 = pinAbs(d, { x: 0, y: 0 }), p1 = pinAbs(d, { x: 0, y: st });
+      if (Math.abs(distToSeg(wx, wy, [p0.x, p0.y], [p1.x, p1.y]) - sym.enclosure) < 2.5) {
+        cands.push({ type: "device", obj: d });
+      }
+      continue;
+    }
+    const b = devBounds(d);
+    if (wx > b.x - 1.5 && wx < b.x + b.w + 1.5 && wy > b.y - 1.5 && wy < b.y + b.h + 1.5) cands.push({ type: "device", obj: d });
+  }
+  if (!cands.length) return null;
+  // 選択中のものが重なりの中にあればそれを返す (選択済みの機器を、上に重なる
+  // 導体や枠線ごしにつまんでドラッグ・shift+クリックで外せるように)
+  return cands.find(c => App.selection.has(c.obj.id)) || cands[0];
 }
 /** 直交線分と矩形の交差判定 (交差選択用) */
 function segIntersectsRect(a, b, x0, y0, x1, y1) {

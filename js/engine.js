@@ -3343,8 +3343,10 @@ function runDRC() {
       });
       /* タグ重複 (電位リンクは同タグで対にするのが仕様なので除外)。
          入出力結線図のように 1 台の機器を複数枚に分けて描く記号は、
-         同じ機種どうしなら同じタグでよい (同じ実機の別の葉) */
-      if (dev.tag && !dev.linkTo && sym.sim !== "link") {
+         同じ機種どうしなら同じタグでよい (同じ実機の別の葉)。
+         囲み記号 (多芯ケーブル・シールド = enclosure) は機器ではなく
+         導体への注記なので、同じ呼び (例 -sq1.25) を何個置いてもよい */
+      if (dev.tag && !dev.linkTo && sym.sim !== "link" && !sym.enclosure) {
         const prev = tagSeen.get(dev.tag);
         const sameUnit = prev && sym.unitSheet && symOf(prev.sym || "").unitSheet &&
           symOf(prev.sym || "").typ === sym.typ;
