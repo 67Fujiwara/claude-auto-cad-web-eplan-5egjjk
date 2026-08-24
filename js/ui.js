@@ -26,14 +26,22 @@ function h(html) {
 }
 
 /* ══════════════ シンボルパレット ══════════════ */
+/** ライブラリ+DBの全シンボル (id 重複なし)。分類の入れ替えは symCatOf で効く */
+function allSymbols() {
+  const seen = new Set();
+  return [...SYMBOLS, ...DB_SYMBOLS].filter(s => seen.has(s.id) ? false : (seen.add(s.id), true));
+}
 UI.buildPalette = (filter = "") => {
   const tree = document.getElementById("symTree");
   tree.innerHTML = "";
   const f = filter.trim().toLowerCase();
   const pinned = new Set(dbPinnedList());
+  const all = allSymbols();
   Object.entries(SYM_CATS).forEach(([catId, cat]) => {
-    // "データベース" 分類は DB からパレットに追加されたものだけを出す
-    const source = catId === "db" ? DB_SYMBOLS.filter(s => pinned.has(s.id)) : SYMBOLS.filter(s => s.cat === catId);
+    // 分類はデータベースで記号ごとに入れ替えられる (symCatOf)。
+    // "データベース" 分類はパレットに追加 (ピン) されたものだけを出す
+    const source = catId === "db" ? all.filter(s => symCatOf(s) === "db" && pinned.has(s.id))
+      : all.filter(s => symCatOf(s) === catId);
     const syms = source.filter(s =>
       (!f || s.name.toLowerCase().includes(f) || s.nameEn.toLowerCase().includes(f) || (s.desc || "").toLowerCase().includes(f) || (s.jis || "").includes(f)));
     if (!syms.length) return;
@@ -310,7 +318,7 @@ UI.showProps = (focusTag = false) => {
   if (selDevs.length === 1 && only1) {
     const dev = selDevs[0];
     const sym = symOf(dev.sym);
-    const cat = SYM_CATS[sym.cat];
+    const cat = SYM_CATS[symCatOf(sym)];
     const coils = [];
     App.project.pages.forEach(pg => pg.devices.forEach(d => {
       if (symOf(d.sym).mirror) coils.push(d);
@@ -1430,7 +1438,11 @@ function loadImportedSymbols() {
     const raw = localStorage.getItem("electracad.importedSyms");
     if (!raw) return;
     JSON.parse(raw).forEach(sym => {
-      if (SYMBOLS_BY_ID[sym.id]) return;
+      if (SYMBOLS_BY_ID[sym.id]) {
+        // 規格ライブラリの記号を編集で上書きしたもの: 元を控えてから置き換える
+        if (sym.edited) symOverrideStd(sym);
+        return;
+      }
       DB_SYMBOLS.push(sym);
       SYMBOLS_BY_ID[sym.id] = sym;
     });
@@ -1574,7 +1586,10 @@ UI.insertZone = () => {
 UI.openSymDB = () => {
   let pinned = new Set(dbPinnedList());
   let query = "", group = "";
-  const groups = [...new Set(DB_SYMBOLS.map(s => s.group))];
+  // ライブラリの全記号を載せる。分類 (パレットの棚) は記号ごとに入れ替えられる
+  const all = allSymbols();
+  const groupOf = s => s.group || (SYM_CATS[s.cat] ? SYM_CATS[s.cat].name : "その他");
+  const groups = [...new Set(all.map(groupOf))];
   const body = h(`<div>
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
       <div class="side-search" style="margin:0;flex:1;min-width:200px">
@@ -1595,19 +1610,31 @@ UI.openSymDB = () => {
   function renderGrid() {
     const grid = body.querySelector("#dbGrid");
     const q = query.toLowerCase();
-    const list = DB_SYMBOLS.filter(s =>
-      (!group || s.group === group) &&
+    const list = all.filter(s =>
+      (!group || groupOf(s) === group) &&
       (!q || s.name.toLowerCase().includes(q) || (s.jis || "").includes(q) || s.nameEn.toLowerCase().includes(q)));
-    grid.innerHTML = list.map(s => `
-      <div class="wiz-card ${pinned.has(s.id) ? "sel" : ""}" data-id="${s.id}" style="cursor:default">
+    grid.innerHTML = list.map(s => {
+      const cat = symCatOf(s);
+      // 分類が「データベース」の記号だけピン (パレットへの引き出し) が要る。
+      // それ以外の分類はその棚に常時出る
+      const pinBtn = cat === "db"
+        ? `<button class="btn-solid ${pinned.has(s.id) ? "" : "primary"}" data-pin="${s.id}"
+            style="flex:0 0 auto;padding:4px 8px;font-size:11px">${pinned.has(s.id) ? "✓ 外す" : "追加"}</button>` : "";
+      return `
+      <div class="wiz-card ${pinned.has(s.id) && cat === "db" ? "sel" : ""}" data-id="${s.id}" style="cursor:default">
         <div class="wc-thumb">${symThumbSVG(s, 46)}</div>
-        <div class="wc-name">${s.name}</div>
+        <div class="wc-name">${s.name}${s.edited ? ' <span style="color:var(--warn);font-size:10px">(編集済)</span>' : ""}</div>
         <div class="wc-desc">${[s.jis ? `JIS C 0617 ${s.jis}` : "", s.stdNote || "",
-          (!s.jis && s.nonstd) ? "規格外 (JIS C 0617 に該当図記号なし)" : ""].filter(Boolean).join(" — ") || s.group}</div>
-        <button class="btn-solid ${pinned.has(s.id) ? "" : "primary"}" data-pin="${s.id}"
-          style="flex:0 0 auto;padding:4px 10px;font-size:11px;margin-top:4px">
-          ${pinned.has(s.id) ? "✓ パレットから外す" : "パレットに追加"}</button>
-      </div>`).join("");
+          (!s.jis && s.nonstd) ? "規格外 (JIS C 0617 に該当図記号なし)" : ""].filter(Boolean).join(" — ") || groupOf(s)}</div>
+        <div style="display:flex;gap:4px;margin-top:4px;align-items:center;flex-wrap:wrap">
+          <select data-cat="${s.id}" title="パレットの分類 (棚) を入れ替える" style="flex:1;min-width:0;font-size:11px;padding:3px 4px;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--text)">
+            ${Object.entries(SYM_CATS).map(([cid, c]) => `<option value="${cid}"${cid === cat ? " selected" : ""}>${c.name}</option>`).join("")}
+          </select>
+          ${pinBtn}
+          <button class="btn-solid" data-edit="${s.id}" style="flex:0 0 auto;padding:4px 8px;font-size:11px">編集</button>
+        </div>
+      </div>`;
+    }).join("");
     grid.querySelectorAll("[data-pin]").forEach(b => b.addEventListener("click", () => {
       const id = b.dataset.pin;
       if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
@@ -1615,13 +1642,23 @@ UI.openSymDB = () => {
       UI.buildPalette(document.getElementById("symSearch").value);
       renderGrid();
     }));
+    grid.querySelectorAll("[data-cat]").forEach(sel => sel.addEventListener("change", () => {
+      setSymCat(sel.dataset.cat, sel.value);
+      UI.buildPalette(document.getElementById("symSearch").value);
+      renderGrid();
+      UI.setMsg(`「${SYMBOLS_BY_ID[sel.dataset.cat].name}」を分類「${SYM_CATS[sel.value].name}」へ移しました`);
+    }));
+    grid.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => {
+      m.close();
+      UI.openSymbolEditor(b.dataset.edit);
+    }));
   }
   body.querySelector("#dbSearch").addEventListener("input", e => { query = e.target.value; renderGrid(); });
   renderGroups();
   renderGrid();
-  UI.openModal({
+  const m = UI.openModal({
     title: "シンボルデータベース",
-    sub: `JIS C 0617 / IEC 60617 の規格図記号 ${DB_SYMBOLS.length} 種 — 「パレットに追加」で左のライブラリにいつでも引き出せます`,
+    sub: `ライブラリの全図記号 ${all.length} 種 — 分類の入れ替え・編集・パレットへの追加ができます`,
     body, wide: true,
   });
 };
@@ -2011,11 +2048,13 @@ UI.openWizard = () => {
     { key: "confirm", title: "AI 生成", sub: "選択内容を確認して回路を自動生成" },
   ];
   // ウィザードに出すシンボル (ロジックはコイル系のみ)
+  // 分類の入れ替え (symCatOf) を反映する。寸法違い・結線図の下地はウィザードでは扱えない
+  const wizAll = allSymbols().filter(s => !s.stretch && !s.stretchOf && !s.unitSheet);
   const wizSyms = {
-    input: SYMBOLS.filter(s => s.cat === "input"),
-    logic: SYMBOLS.filter(s => ["coil", "cont_coil", "timer_on", "timer_off", "safety_relay", "plc_di"].includes(s.id))
+    input: wizAll.filter(s => symCatOf(s) === "input"),
+    logic: wizAll.filter(s => ["coil", "cont_coil", "timer_on", "timer_off", "safety_relay", "plc_di"].includes(s.id))
       .map(s => s.id === "plc_di" ? { ...s, name: "PLC制御", desc: "入出力をPLCに割付け" } : s),
-    output: SYMBOLS.filter(s => s.cat === "output" && s.id !== "main_cont"),
+    output: wizAll.filter(s => symCatOf(s) === "output" && s.id !== "main_cont"),
   };
 
   const body = h(`<div style="min-height:430px"></div>`);

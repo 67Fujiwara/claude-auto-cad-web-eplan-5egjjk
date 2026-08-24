@@ -61,12 +61,20 @@ function symSnap(v, g) { return Math.round(v / g) * g; }
 
 /** 図形1つを SVG 文字列に */
 function symShapeSVG(sh, opts = {}) {
+  // 破線は図形ごとの寸法 (sh.dash) を優先。無ければ従来の機械リンク寸法 3/0.75
   const dash = sh.style === "dash"
-    ? ` stroke-dasharray="3 0.75" stroke-width="${LINE_W.thin}" stroke-linecap="butt"` : "";
+    ? ` stroke-dasharray="${sh.dash || "3 0.75"}" stroke-width="${sh.lw || LINE_W.thin}" stroke-linecap="butt"`
+    : (sh.lw ? ` stroke-width="${sh.lw}"` : "");
   const extra = opts.hl ? ` stroke="${SEL}" stroke-width="0.8"` : "";
+  if (sh.k === "raw") {
+    // 分解できない要素 (曲線など)。translate + rotate で移動・回転はできる
+    const tf = (sh.dx || sh.dy || sh.rot)
+      ? ` transform="translate(${+(sh.dx || 0).toFixed(2)},${+(sh.dy || 0).toFixed(2)}) rotate(${sh.rot || 0})"` : "";
+    return `<g${tf}${opts.hl ? ` stroke="${SEL}"` : ""}>${sh.body}</g>`;
+  }
   if (sh.k === "line") {
     const d = sh.pts.map((p, i) => `${i ? "L" : "M"}${+p[0].toFixed(2)},${+p[1].toFixed(2)}`).join(" ");
-    return `<path d="${d}${sh.closed ? " Z" : ""}"${dash}${extra}/>`;
+    return `<path d="${d}${sh.closed ? " Z" : ""}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
   }
   if (sh.k === "rect") {
     return `<rect x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" width="${+sh.w.toFixed(2)}" height="${+sh.h.toFixed(2)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
@@ -93,9 +101,9 @@ function symShapeSVG(sh, opts = {}) {
     return `<path d="M${+x0.toFixed(2)},${+y0.toFixed(2)} A${+sh.r.toFixed(2)},${+sh.r.toFixed(2)} 0 ${large} 1 ${+x1.toFixed(2)},${+y1.toFixed(2)}"${dash}${extra}/>`;
   }
   if (sh.k === "text") {
-    const fam = sh.mono ? "monospace" : "sans-serif";
+    const fam = sh.mono ? "monospace" : sh.serif ? "serif" : "sans-serif";
     // data-h (文字の呼び高さ) を必ず残す。検図が用紙上の文字高を測るのに使う
-    return `<text x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" data-h="${sh.h || TEXT_H.normal}" font-size="${svgFontSizeFor(sh.text, sh.h || TEXT_H.normal, !!sh.mono, { noMin: true })}" text-anchor="middle" fill="currentColor" stroke="none" font-family="${fam}">${escXML(sh.text)}</text>`;
+    return `<text x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" data-h="${sh.h || TEXT_H.normal}" font-size="${svgFontSizeFor(sh.text, sh.h || TEXT_H.normal, !!sh.mono, { noMin: true, bold: !!sh.bold })}" text-anchor="${sh.anchor || "middle"}" fill="currentColor" stroke="none" font-family="${fam}"${sh.bold ? ' font-weight="bold"' : ""}${sh.italic ? ' font-style="italic"' : ""}>${escXML(sh.text)}</text>`;
   }
   return "";
 }
@@ -177,6 +185,174 @@ function dxfEntsToShapes(ents, opt = {}) {
   return out;
 }
 
+/* ── 既存シンボル body (SVG 文字列) → 作画図形への分解 ──
+   全シンボルを同じ画面で編集できるようにするための逆変換。
+   直線 (M/L/H/V/Z)・真円弧 (A rx=ry)・rect・circle・text は個々の図形へ、
+   ベジェ曲線などは要素ごと raw 図形 (移動・回転できる塊) として残す */
+
+/** SVG の端点式円弧 → 中心式 (作画図形の arc)。楕円は対象外 (null) */
+function svgArcShape(x1, y1, x2, y2, r, large, sweep, props) {
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const d2 = dx * dx + dy * dy;
+  if (d2 < 1e-9) return null;
+  if (r * r < d2) r = Math.sqrt(d2);                 // SVG 仕様の半径補正 (弦が届く最小へ)
+  const f = Math.sqrt(Math.max(0, r * r / d2 - 1)) * (large !== sweep ? 1 : -1);
+  const cx = f * dy + (x1 + x2) / 2, cy = -f * dx + (y1 + y2) / 2;
+  const aOf = (px, py) => Math.atan2(py - cy, px - cx) * 180 / Math.PI;
+  const a1v = aOf(x1, y1), a2v = aOf(x2, y2);
+  // 作画図形の arc は a0 → a1 の時計回り (掃引 1) で描く
+  const r2 = v => Math.round(v * 100) / 100;
+  if (sweep) {
+    const span = ((a2v - a1v) % 360 + 360) % 360;
+    return { k: "arc", x: r2(cx), y: r2(cy), r: r2(r), a0: r2(a1v), a1: r2(a1v + span), ...props };
+  }
+  const span = ((a1v - a2v) % 360 + 360) % 360;
+  return { k: "arc", x: r2(cx), y: r2(cy), r: r2(r), a0: r2(a2v), a1: r2(a2v + span), ...props };
+}
+
+/** path の d → 作画図形の列。対応しないコマンドがあれば null (要素ごと raw に) */
+function symPathToShapes(d, ox, oy, st) {
+  if (/[^MLHVAZmlhvaz\s,\-.\d]/.test(d)) return null;         // C/S/Q/T (曲線) などは分解しない
+  if (st.fill && /[Aa]/.test(d)) return null;                 // 塗り+弧 (きのこ頭など) は形が変わるので分解しない
+  const toks = d.match(/[MLHVAZmlhvaz]|-?(?:\d+\.?\d*|\.\d+)/g) || [];
+  const out = [];
+  const r2 = v => Math.round(v * 100) / 100;
+  const props = () => {
+    const o = {};
+    if (st.style === "dash") { o.style = "dash"; if (st.dash) o.dash = st.dash; }
+    if (st.lw) o.lw = st.lw;
+    if (st.fill) o.fill = true;
+    return o;
+  };
+  let i = 0, cur = null, x = 0, y = 0, sx = 0, sy = 0, poly = null;
+  const num = () => +toks[i++];
+  const endPoly = (closed) => {
+    if (poly && poly.length >= 2) out.push({ k: "line", pts: poly, ...(closed ? { closed: true } : {}), ...props() });
+    poly = null;
+  };
+  while (i < toks.length) {
+    if (/[A-Za-z]/.test(toks[i])) {
+      cur = toks[i++];
+      if (cur === "Z" || cur === "z") { endPoly(true); x = sx; y = sy; cur = null; continue; }
+      continue;
+    }
+    if (!cur) return null;
+    const rel = cur === cur.toLowerCase(), C = cur.toUpperCase();
+    if (C === "M") {
+      endPoly(false);
+      const nx = num(), ny = num();
+      x = rel ? x + nx : nx; y = rel ? y + ny : ny;
+      sx = x; sy = y;
+      poly = [[r2(x + ox), r2(y + oy)]];
+      cur = rel ? "l" : "L";                          // 後続の座標対は線分
+      continue;
+    }
+    if (C === "L") { const nx = num(), ny = num(); x = rel ? x + nx : nx; y = rel ? y + ny : ny; }
+    else if (C === "H") { const nx = num(); x = rel ? x + nx : nx; }
+    else if (C === "V") { const ny = num(); y = rel ? y + ny : ny; }
+    else if (C === "A") {
+      const rx = num(), ry = num(); num();
+      const large = num() ? 1 : 0, sweep = num() ? 1 : 0;
+      const nx = num(), ny = num();
+      const ex = rel ? x + nx : nx, ey = rel ? y + ny : ny;
+      if (Math.abs(rx - ry) > 0.01) return null;      // 楕円弧は raw のまま
+      endPoly(false);
+      const arc = svgArcShape(x + ox, y + oy, ex + ox, ey + oy, rx, large, sweep, props());
+      if (!arc) { x = ex; y = ey; poly = [[r2(x + ox), r2(y + oy)]]; continue; }  // 長さ0の弧は捨てる
+      out.push(arc);
+      x = ex; y = ey;
+      poly = [[r2(x + ox), r2(y + oy)]];              // 弧の終点から折れ線を続けられる
+      continue;
+    } else return null;
+    if (!poly) poly = [[r2(x + ox), r2(y + oy)]];
+    else poly.push([r2(x + ox), r2(y + oy)]);
+  }
+  endPoly(false);
+  return out;
+}
+
+/** body (SVG 文字列) → 作画図形の列 */
+function symBodyToShapes(body) {
+  const doc = new DOMParser().parseFromString(
+    `<svg xmlns="http://www.w3.org/2000/svg"><g>${body}</g></svg>`, "image/svg+xml");
+  if (doc.querySelector("parsererror")) return [{ k: "raw", body, dx: 0, dy: 0, rot: 0 }];
+  const out = [];
+  const walk = (el, ox, oy) => {
+    for (const ch of el.children) {
+      const tag = ch.tagName.toLowerCase();
+      const st = {};
+      const dashA = ch.getAttribute("stroke-dasharray");
+      const lwA = parseFloat(ch.getAttribute("stroke-width"));
+      if (dashA) { st.style = "dash"; st.dash = dashA; }
+      if (isFinite(lwA)) st.lw = lwA;
+      const fillA = ch.getAttribute("fill");
+      st.fill = !!fillA && fillA !== "none";
+      if (tag === "g") {
+        // translate(x,y) の g は中へ潜る。回転・拡大付きの g はまるごと raw
+        const tr = ch.getAttribute("transform") || "";
+        const tm = /^\s*translate\(\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?\s*\)\s*$/.exec(tr);
+        if (!tr || tm) { walk(ch, ox + (tm ? +tm[1] : 0), oy + (tm && tm[2] !== undefined ? +tm[2] : 0)); continue; }
+        out.push({ k: "raw", body: ch.outerHTML, dx: ox, dy: oy, rot: 0 });
+      } else if (tag === "rect") {
+        out.push({ k: "rect", x: +(ch.getAttribute("x") || 0) + ox, y: +(ch.getAttribute("y") || 0) + oy,
+          w: +ch.getAttribute("width"), h: +ch.getAttribute("height"),
+          ...(st.fill ? { fill: true } : {}), ...(st.style ? { style: "dash", dash: st.dash } : {}), ...(st.lw ? { lw: st.lw } : {}) });
+      } else if (tag === "circle") {
+        out.push({ k: "circle", x: +(ch.getAttribute("cx") || 0) + ox, y: +(ch.getAttribute("cy") || 0) + oy,
+          r: +ch.getAttribute("r"),
+          ...(st.fill ? { fill: true } : {}), ...(st.style ? { style: "dash", dash: st.dash } : {}), ...(st.lw ? { lw: st.lw } : {}) });
+      } else if (tag === "text") {
+        const fam = ch.getAttribute("font-family") || "";
+        const mono = fam.includes("mono");
+        const serif = !mono && fam.includes("serif") && !fam.includes("sans");
+        const italic = (ch.getAttribute("font-style") || "") === "italic";
+        const bold = (ch.getAttribute("font-weight") || "") === "bold";
+        const hAttr = parseFloat(ch.getAttribute("data-h"));
+        const fs = parseFloat(ch.getAttribute("font-size"));
+        const h2 = isFinite(hAttr) ? hAttr
+          : isFinite(fs) ? +((fs * capRatio((mono ? "mono" : "sans") + (bold ? "+b" : ""))).toFixed(2)) : TEXT_H.normal;
+        const anc = ch.getAttribute("text-anchor") || "start";   // SVG の既定は start
+        out.push({ k: "text", x: +(ch.getAttribute("x") || 0) + ox, y: +(ch.getAttribute("y") || 0) + oy,
+          text: ch.textContent, h: h2, mono,
+          ...(bold ? { bold: true } : {}), ...(serif ? { serif: true } : {}), ...(italic ? { italic: true } : {}),
+          ...(anc !== "middle" ? { anchor: anc } : {}) });
+      } else if (tag === "path") {
+        const shapes = symPathToShapes(ch.getAttribute("d") || "", ox, oy, st);
+        if (shapes) out.push(...shapes);
+        else out.push({ k: "raw", body: ch.outerHTML, dx: ox, dy: oy, rot: 0 });
+      } else {
+        out.push({ k: "raw", body: ch.outerHTML, dx: ox, dy: oy, rot: 0 });
+      }
+    }
+  };
+  walk(doc.documentElement.firstElementChild, 0, 0);
+  return out;
+}
+
+/** raw 図形のローカル外接箱 (キャッシュ) を dx/dy/rot 込みで返す [x0,y0,x1,y1] */
+const _rawBBCache = new WeakMap();
+function rawShapeBB(sh) {
+  let bb = _rawBBCache.get(sh);
+  if (!bb) {
+    const NS = "http://www.w3.org/2000/svg";
+    const probe = document.createElementNS(NS, "svg");
+    probe.style.cssText = "position:absolute;left:-9999px;top:-9999px";
+    document.body.appendChild(probe);
+    const g = document.createElementNS(NS, "g");
+    g.innerHTML = sh.body;
+    probe.appendChild(g);
+    try { const b = g.getBBox(); bb = [b.x, b.y, b.x + b.width, b.y + b.height]; }
+    catch (e) { bb = [0, 0, 0, 0]; }
+    probe.remove();
+    _rawBBCache.set(sh, bb);
+  }
+  const a = ((sh.rot || 0) % 360) * Math.PI / 180;
+  const cs = [[bb[0], bb[1]], [bb[2], bb[1]], [bb[0], bb[3]], [bb[2], bb[3]]].map(([px, py]) =>
+    [px * Math.cos(a) - py * Math.sin(a) + (sh.dx || 0), px * Math.sin(a) + py * Math.cos(a) + (sh.dy || 0)]);
+  const xs = cs.map(c => c[0]), ys = cs.map(c => c[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
 /* ══════════════ 画面 ══════════════ */
 UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
@@ -186,19 +362,30 @@ UI.openSymbolEditor = (symId = null) => {
   S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
+  let asCopy = false;
   if (symId && SYMBOLS_BY_ID[symId]) {
-    const src = SYMBOLS_BY_ID[symId];
-    S.editingId = symId;
+    let src = SYMBOLS_BY_ID[symId];
+    // 寸法違い (stretch)・機種で自動生成する下地 (unitSheet) は上書き編集できない
+    // → 既定寸法の姿を静的な複製として開く (保存すると新しいシンボルになる)
+    if (src.stretch || src.stretchOf || src.unitSheet) {
+      asCopy = true;
+      if (src.stretch) src = symStretchVariant(src, src.stretch.def);
+    }
+    S.editingId = asCopy ? null : symId;
     meta = {
-      name: src.name || "", nameEn: src.nameEn || "", letter: src.letter || "E",
-      typ: src.typ || "", desc: src.desc || "", group: src.group || "自作", sim: src.sim || "none",
+      name: (src.name || "") + (asCopy ? " (複製)" : ""), nameEn: src.nameEn || "", letter: src.letter || "E",
+      typ: src.typ || "", desc: src.desc || "",
+      group: src.group || (SYM_CATS[src.cat] ? SYM_CATS[src.cat].name : "自作"),
+      sim: src.sim || "none",
     };
     S.pins = (src.pins || []).map(p => ({ x: p.x, y: p.y, n: p.n || "" }));
     S.funcs = Array.isArray(src.funcs) ? deepCopy(src.funcs) : [];
     S.shapes = Array.isArray(src.shapes) ? deepCopy(src.shapes) : [];
+    if (src.lw) S.lw = src.lw;
     if (!S.shapes.length && src.body) {
-      // 図形一覧を持たない (DXF取り込み等) シンボルは、そのまま1つの図形として扱う
-      S.shapes = [{ k: "raw", body: src.body }];
+      // 図形一覧を持たないシンボル (規格ライブラリ・DXF取り込み) は
+      // body を作画図形へ分解して、個々の線・円・文字として編集できるようにする
+      S.shapes = symBodyToShapes(src.body);
     }
     // 保存済みの枠 (bounds) が自動計算と違えば「手で決めた枠」として引き継ぐ
     const auto = symShapesBounds(S.shapes, S.pins);
@@ -224,6 +411,12 @@ UI.openSymbolEditor = (symId = null) => {
     <div class="se-left">
       <div class="se-tools" id="seTools"></div>
       <div class="prop-note" id="seHint" style="margin:8px 0 0">折れ線: クリックで頂点、ダブルクリックか Enter で確定</div>
+      <div class="prop-sect">選択の操作</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn-solid" id="seDup" style="padding:4px 10px;font-size:11.5px" title="選択した図形・端子を +5mm ずらして複製 (Ctrl+D)">複製</button>
+        <button class="btn-solid" id="seRot" style="padding:4px 10px;font-size:11.5px" title="選択を 90° 回転。未選択なら全体を回転 (R)">回転 90°</button>
+      </div>
+      <div class="prop-note" style="margin-top:4px">Ctrl+C コピー / Ctrl+X 切り取り / Ctrl+V 貼り付け / Ctrl+D 複製 / R 回転90°。未選択で回転すると全体が回ります。</div>
       <div class="prop-sect">線種</div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="solid" checked/><span>実線 (導体・図記号)</span></label></div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="dash"/><span>破線 (機械リンク・囲い)</span></label></div>
@@ -255,11 +448,15 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-row"><label>分類</label><input id="seGroup" value="${escAttr(meta.group)}" placeholder="自作"/></div>
       <div class="prop-row"><label>説明</label><input id="seDesc" value="${escAttr(meta.desc)}" placeholder="用途・注意点"/></div>
       <div class="prop-row"><label>回路の働き<br><span class="rp-dim">(機能を追加すると無効)</span></label><select id="seSim">
-        ${[["none", "なし (作図のみ)"], ["passthru", "素通し (端子台・接続)"],
-           ["contact_no", "a接点 (メーク)"], ["contact_nc", "b接点 (ブレーク)"],
-           ["coil", "コイル (励磁で接点が動く)"], ["load", "負荷 (ランプ・ソレノイド)"],
-           ["breaker", "遮断器 (手動開閉)"]].map(([v, t]) =>
-          `<option value="${v}"${meta.sim === v ? " selected" : ""}>${t}</option>`).join("")}
+        ${(() => {
+          const opts = [["none", "なし (作図のみ)"], ["passthru", "素通し (端子台・接続)"],
+            ["contact_no", "a接点 (メーク)"], ["contact_nc", "b接点 (ブレーク)"],
+            ["coil", "コイル (励磁で接点が動く)"], ["load", "負荷 (ランプ・ソレノイド)"],
+            ["breaker", "遮断器 (手動開閉)"]];
+          // 一覧に無い働き (切替接点・電位リンク等) の記号を編集しても、働きを失わないように残す
+          if (meta.sim && !opts.some(o => o[0] === meta.sim)) opts.push([meta.sim, `現状のまま (${meta.sim})`]);
+          return opts.map(([v, t]) => `<option value="${v}"${meta.sim === v ? " selected" : ""}>${t}</option>`).join("");
+        })()}
       </select></div>
       <div class="prop-sect" id="seFnHead">機能 (複数可)</div>
       <div class="prop-note" style="margin-top:0">
@@ -278,6 +475,7 @@ UI.openSymbolEditor = (symId = null) => {
 
   const foot = h(`<div style="display:flex;gap:10px;align-items:center;width:100%">
     <button class="btn-solid" id="seDxf">DXF を読み込む…</button>
+    <button class="btn-solid" id="seIns">シンボルを挿入…</button>
     <button class="btn-solid" id="seUndo">元に戻す</button>
     <button class="btn-solid" id="seClear">全消去</button>
     <span style="flex:1"></span>
@@ -346,7 +544,7 @@ UI.openSymbolEditor = (symId = null) => {
     }
     // 図形
     out += `<g fill="none" stroke="#e6edf7" stroke-width="${S.lw}" stroke-linecap="round" stroke-linejoin="round" color="#e6edf7">`;
-    S.shapes.forEach((sh, i) => { out += sh.k === "raw" ? sh.body : symShapeSVG(sh, { hl: i === S.sel || S.msel.shapes.includes(i) }); });
+    S.shapes.forEach((sh, i) => { out += symShapeSVG(sh, { hl: i === S.sel || S.msel.shapes.includes(i) }); });
     out += `</g>`;
     // 範囲選択の矩形
     if (S.marquee) {
@@ -375,7 +573,7 @@ UI.openSymbolEditor = (symId = null) => {
         : ` <span class="rp-dim">(自動。選択ツールで角をドラッグして変更)</span>`);
     const fr = bEl.querySelector("#seFrameReset");
     if (fr) fr.addEventListener("click", () => { S.frame = null; draw(); });
-    const prevSym = { bounds: bd, lw: S.lw, body: symShapesToBody(S.shapes.filter(s => s.k !== "raw")) + S.shapes.filter(s => s.k === "raw").map(s => s.body).join("") };
+    const prevSym = { bounds: bd, lw: S.lw, body: symShapesToBody(S.shapes) };
     body.querySelector("#sePrev").innerHTML = prevSym.body ? symThumbSVG(prevSym, 90) : '<span class="se-empty">図形がありません</span>';
     const ph = body.querySelector("#sePinHead");
     if (ph) ph.textContent = S.pins.length ? `端子 (${S.pins.length} 点)` : "端子 (未設定)";
@@ -448,7 +646,10 @@ UI.openSymbolEditor = (symId = null) => {
       if (sh.k === "rect" && x > sh.x - 1 && x < sh.x + sh.w + 1 && y > sh.y - 1 && y < sh.y + sh.h + 1) return i;
       if ((sh.k === "circle" || sh.k === "arc" || sh.k === "half") && Math.abs(Math.hypot(x - sh.x, y - sh.y) - sh.r) < 2) return i;
       if (sh.k === "text" && Math.abs(x - sh.x) < 6 && Math.abs(y - sh.y) < 3) return i;
-      if (sh.k === "raw" && i === S.shapes.length - 1) return i;
+      if (sh.k === "raw") {
+        const b = rawShapeBB(sh);
+        if (x > b[0] - 1 && x < b[2] + 1 && y > b[1] - 1 && y < b[3] + 1) return i;
+      }
     }
     return -1;
   };
@@ -461,6 +662,7 @@ UI.openSymbolEditor = (symId = null) => {
     if (sh.k === "rect") return [sh.x, sh.y, sh.x + sh.w, sh.y + sh.h];
     if (sh.k === "circle" || sh.k === "arc" || sh.k === "half") return [sh.x - sh.r, sh.y - sh.r, sh.x + sh.r, sh.y + sh.r];
     if (sh.k === "text") return [sh.x - 5, sh.y - 3, sh.x + 5, sh.y + 1];
+    if (sh.k === "raw") return rawShapeBB(sh);
     return null;
   };
   const clearMsel = () => { S.msel = { shapes: [], pins: [] }; };
@@ -502,6 +704,7 @@ UI.openSymbolEditor = (symId = null) => {
             const t = t2.pi >= 0 ? S.pins[t2.pi] : S.shapes[t2.i], o = t2.orig;
             if (!t) return;
             if (o.k === "line") t.pts = o.pts.map(q => [q[0] + dx, q[1] + dy]);
+            else if (o.k === "raw") { t.dx = (o.dx || 0) + dx; t.dy = (o.dy || 0) + dy; }
             else { t.x = o.x + dx; t.y = o.y + dy; }    // rect/circle/half/arc/text/端子は x,y 起点
           };
           if (m.multi) m.targets.forEach(apply); else apply(m);
@@ -543,6 +746,7 @@ UI.openSymbolEditor = (symId = null) => {
     S.suppressClick = false;
     S.lastNudgeAt = 0;   // マウス操作で微調整の連打まとめを打ち切る (undo の粒度を守る)
     S.downAt = { x: e.clientX, y: e.clientY };
+    if (S.pendingInsert) return;                 // 挿入待ち: click 側で配置する
     if (S.draft) return;
     if (S.tool === "select") {
       const p = symEditXY(e);
@@ -568,7 +772,7 @@ UI.openSymbolEditor = (symId = null) => {
         S.moving = {
           multi: true, px: p.x, py: p.y, pushed: false,
           targets: [
-            ...S.msel.shapes.filter(ix => S.shapes[ix] && S.shapes[ix].k !== "raw").map(ix => ({ i: ix, pi: -1, orig: deepCopy(S.shapes[ix]) })),
+            ...S.msel.shapes.filter(ix => S.shapes[ix]).map(ix => ({ i: ix, pi: -1, orig: deepCopy(S.shapes[ix]) })),
             ...S.msel.pins.map(ix => ({ i: -1, pi: ix, orig: deepCopy(S.pins[ix]) })),
           ],
         };
@@ -578,7 +782,7 @@ UI.openSymbolEditor = (symId = null) => {
       clearMsel();
       S.sel = pi >= 0 ? -2 - pi : i;
       const t = pi >= 0 ? S.pins[pi] : S.shapes[i];
-      if (t.k !== "raw") S.moving = { pi, i, px: p.x, py: p.y, orig: deepCopy(t), pushed: false };
+      S.moving = { pi, i, px: p.x, py: p.y, orig: deepCopy(t), pushed: false };
       draw();
       return;
     }
@@ -659,6 +863,22 @@ UI.openSymbolEditor = (symId = null) => {
     const p = symEditXY(e);
     const g = S.tool === "pin" ? GRID : S.snap;
     const x = symSnap(p.x, g), y = symSnap(p.y, g);
+    if (S.pendingInsert) {
+      // 「シンボルを挿入…」で選んだ記号を、クリックした位置 (5mm グリッド) へ置く
+      const ins = S.pendingInsert; S.pendingInsert = null;
+      push();
+      const bx = symSnap(p.x, GRID), by = symSnap(p.y, GRID);
+      const i0 = S.shapes.length, p0 = S.pins.length;
+      ins.shapes.forEach(sh => { const c = deepCopy(sh); moveShape(c, bx, by); S.shapes.push(c); });
+      ins.pins.forEach(pn => S.pins.push({ x: pn.x + bx, y: pn.y + by, n: pn.n }));
+      S.msel = { shapes: S.shapes.map((_, i2) => i2).slice(i0), pins: S.pins.map((_, i2) => i2).slice(p0) };
+      S.sel = -1;
+      const t0 = SYMEDIT_TOOLS.find(x2 => x2[0] === S.tool);
+      hintEl.textContent = t0 ? t0[2] : "";
+      fitCanvas(); draw();
+      UI.setMsg(`「${ins.name}」を挿入しました (図形 ${ins.shapes.length}・端子 ${ins.pins.length}) — そのままドラッグで動かせます`);
+      return;
+    }
     if (S.tool === "select") {
       // スナップ前の座標で当たり判定する (mousedown のつまみ判定と一致させる)
       const i = hitShape(p.x, p.y);
@@ -712,6 +932,162 @@ UI.openSymbolEditor = (symId = null) => {
     if (d.fixed.length >= 2) { push(); S.shapes.push({ k: "line", pts: deepCopy(d.fixed), style: d.style }); }
     S.draft = null; draw();
   };
+
+  // ── 選択の操作 (複製・コピー・回転) と既存シンボルの挿入 ──
+  const moveShape = (sh, dx, dy) => {
+    const r2 = v => Math.round(v * 100) / 100;
+    if (sh.k === "line") sh.pts = sh.pts.map(q => [r2(q[0] + dx), r2(q[1] + dy)]);
+    else if (sh.k === "raw") { sh.dx = r2((sh.dx || 0) + dx); sh.dy = r2((sh.dy || 0) + dy); }
+    else { sh.x = r2(sh.x + dx); sh.y = r2(sh.y + dy); }
+  };
+  /** 図形が収まらなければ作画範囲を1段広げる */
+  const fitCanvas = () => {
+    const bd = symShapesBounds(S.shapes, S.pins);
+    const need = Math.max(Math.abs(bd[0]), Math.abs(bd[1]), Math.abs(bd[0] + bd[2]), Math.abs(bd[1] + bd[3])) * 2 + 8;
+    const want = [40, 60, 100, 160, 240, 320].find(v => v >= need) || 320;
+    if (want > S.W) {
+      S.W = S.H = want;
+      S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);
+      const sz = body.querySelector("#seSize");
+      if (sz) sz.value = String(want);
+    }
+  };
+  const selIdx = () => {
+    if (S.msel.shapes.length || S.msel.pins.length) return { s: [...S.msel.shapes], p: [...S.msel.pins] };
+    if (S.sel >= 0) return { s: [S.sel], p: [] };
+    if (S.sel <= -2) return { s: [], p: [-2 - S.sel] };
+    return { s: [], p: [] };
+  };
+  const copySel = (silent) => {
+    const { s, p } = selIdx();
+    if (!s.length && !p.length) { UI.setMsg("コピーするものを選択してください (選択ツールでクリック / 範囲選択)"); return false; }
+    S.clip = { shapes: s.map(i => deepCopy(S.shapes[i])).filter(Boolean), pins: p.map(i => deepCopy(S.pins[i])).filter(Boolean), n: 0 };
+    if (!silent) UI.setMsg(`${s.length + p.length} 個をコピーしました (Ctrl+V で貼り付け)`);
+    return true;
+  };
+  const pasteClip = () => {
+    if (!S.clip || (!S.clip.shapes.length && !S.clip.pins.length)) { UI.setMsg("コピーしたものがありません (Ctrl+C でコピー)"); return; }
+    push();
+    S.clip.n++;
+    const off = 5 * S.clip.n;
+    const i0 = S.shapes.length, p0 = S.pins.length;
+    S.clip.shapes.forEach(sh => { const c = deepCopy(sh); moveShape(c, off, off); S.shapes.push(c); });
+    S.clip.pins.forEach(pn => S.pins.push({ x: pn.x + off, y: pn.y + off, n: pn.n }));
+    S.msel = { shapes: S.shapes.map((_, i) => i).slice(i0), pins: S.pins.map((_, i) => i).slice(p0) };
+    S.sel = -1;
+    fitCanvas(); draw();
+    UI.setMsg(`貼り付けました (+${off}mm) — そのままドラッグで動かせます`);
+  };
+  const dupSel = () => { if (copySel(true)) pasteClip(); };
+  /** 選択 (無ければ全体) を 90° 時計回りに回転する。中心は対象の外接箱の
+      中心を 5mm グリッドへ丸めた点 — 端子がグリッドから外れないように */
+  const rotateSel = () => {
+    const has = S.msel.shapes.length || S.msel.pins.length || S.sel !== -1;
+    const idx = has ? selIdx() : { s: S.shapes.map((_, i) => i), p: S.pins.map((_, i) => i) };
+    if (!idx.s.length && !idx.p.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    idx.s.forEach(i => {
+      const b = S.shapes[i] && shapeBBox(S.shapes[i]);
+      if (b) { x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+    });
+    idx.p.forEach(i => { const p = S.pins[i]; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); });
+    if (!isFinite(x0)) return;
+    const cx = symSnap((x0 + x1) / 2, GRID), cy = symSnap((y0 + y1) / 2, GRID);
+    push();
+    const R = (px, py) => [cx - (py - cy), cy + (px - cx)];      // 時計回り 90°
+    const r2 = v => Math.round(v * 100) / 100;
+    idx.s.forEach(i => {
+      const sh = S.shapes[i];
+      if (!sh) return;
+      if (sh.k === "line") sh.pts = sh.pts.map(([px, py]) => R(px, py).map(r2));
+      else if (sh.k === "rect") {
+        const [nx, ny] = R(sh.x, sh.y + sh.h);
+        sh.x = r2(nx); sh.y = r2(ny);
+        const w0 = sh.w; sh.w = sh.h; sh.h = w0;
+      } else if (sh.k === "arc") {
+        const [nx, ny] = R(sh.x, sh.y);
+        sh.x = r2(nx); sh.y = r2(ny); sh.a0 = r2(sh.a0 + 90); sh.a1 = r2(sh.a1 + 90);
+      } else if (sh.k === "half") {
+        const [nx, ny] = R(sh.x, sh.y);
+        sh.x = r2(nx); sh.y = r2(ny);
+        sh.dir = { right: "down", down: "left", left: "up", up: "right" }[sh.dir || "right"];
+      } else if (sh.k === "raw") {
+        const [nx, ny] = R(sh.dx || 0, sh.dy || 0);
+        sh.dx = r2(nx); sh.dy = r2(ny); sh.rot = ((sh.rot || 0) + 90) % 360;
+      } else {  // circle / text (文字は位置だけ回し、向きは水平のまま)
+        const [nx, ny] = R(sh.x, sh.y);
+        sh.x = r2(nx); sh.y = r2(ny);
+      }
+    });
+    idx.p.forEach(i => { const p = S.pins[i]; const [nx, ny] = R(p.x, p.y); p.x = r2(nx); p.y = r2(ny); });
+    fitCanvas(); draw();
+    UI.setMsg(has ? "選択を 90° 回転しました" : "全体を 90° 回転しました");
+  };
+  const deleteSel = () => {
+    if (S.msel.shapes.length || S.msel.pins.length) {
+      push();
+      const rmS = new Set(S.msel.shapes.filter(i => S.shapes[i]));
+      S.shapes = S.shapes.filter((_, i) => !rmS.has(i));
+      const rmP = new Set(S.msel.pins);
+      const remap = new Map(); let k2 = 0;
+      S.pins.forEach((_, i) => { if (!rmP.has(i)) remap.set(i, k2++); });
+      S.pins = S.pins.filter((_, i) => !rmP.has(i));
+      S.funcs.forEach(f => { f.pins = (f.pins || []).map(v => (remap.has(v) ? remap.get(v) : null)); });
+      S.funcs = S.funcs.filter(f => (f.pins || []).every(v => v != null));
+      clearMsel(); S.sel = -1; draw();
+      return true;
+    }
+    if (S.sel !== -1) {
+      push();
+      if (S.sel <= -2) S.pins.splice(-2 - S.sel, 1); else S.shapes.splice(S.sel, 1);
+      S.sel = -1; draw();
+      return true;
+    }
+    return false;
+  };
+  body.querySelector("#seDup").addEventListener("click", dupSel);
+  body.querySelector("#seRot").addEventListener("click", rotateSel);
+
+  /** 既存シンボルを作画へ挿入する (組み合わせて新しいシンボルを作る) */
+  const openInsertDialog = () => {
+    let q2 = "";
+    const seen = new Set();
+    const list0 = [...SYMBOLS, ...DB_SYMBOLS]
+      .filter(s => seen.has(s.id) ? false : (seen.add(s.id), true))
+      .filter(s => !s.unitSheet && s.id !== S.editingId);   // 結線図の下地と編集中の自分は除く
+    const ib = h(`<div>
+      <div class="side-search" style="margin:0 0 10px">
+        <svg viewBox="0 0 16 16" width="13" height="13"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="siSearch" placeholder="名称・図記号番号で検索…"/>
+      </div>
+      <div id="siGrid" class="wiz-cards" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));max-height:56vh;overflow:auto"></div>
+    </div>`);
+    const im = UI.openModal({ title: "シンボルの挿入", sub: "既存の図記号を作画へ取り込み、組み合わせて新しいシンボルを作れます", body: ib, wide: true });
+    const renderIns = () => {
+      const q3 = q2.toLowerCase();
+      const list = list0.filter(s => !q3 || s.name.toLowerCase().includes(q3) || (s.nameEn || "").toLowerCase().includes(q3) || (s.jis || "").includes(q3));
+      ib.querySelector("#siGrid").innerHTML = list.map(s => `
+        <div class="wiz-card" data-ins="${s.id}" style="cursor:pointer">
+          <div class="wc-thumb">${symThumbSVG(s, 40)}</div>
+          <div class="wc-name">${s.name}</div>
+        </div>`).join("") || '<div class="se-empty" style="padding:16px">該当する記号がありません</div>';
+      ib.querySelectorAll("[data-ins]").forEach(c => c.addEventListener("click", () => {
+        let src = symOf(c.dataset.ins);
+        if (src.stretch) src = symStretchVariant(src, src.stretch.def);   // 寸法違いは既定寸法で
+
+        const shapes = Array.isArray(src.shapes) && src.shapes.length ? deepCopy(src.shapes) : symBodyToShapes(src.body || "");
+        S.pendingInsert = { shapes, pins: (src.pins || []).map(p => ({ x: p.x, y: p.y, n: p.n || "" })), name: src.name };
+        im.close();
+        S.tool = "select"; S.draft = null;
+        toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === "select"));
+        hintEl.textContent = `「${src.name}」を挿入します — 置きたい位置をクリック (Esc で中止)`;
+        UI.setMsg(`「${src.name}」を挿入します — 置きたい位置をクリックしてください`);
+      }));
+    };
+    ib.querySelector("#siSearch").addEventListener("input", e => { q2 = e.target.value; renderIns(); });
+    renderIns();
+  };
+  foot.querySelector("#seIns").addEventListener("click", openInsertDialog);
 
   /** 多極コネクタ (CN3 など) を1番ピンの位置から生成する */
   const openConnDialog = (x0, y0) => {
@@ -804,6 +1180,12 @@ UI.openSymbolEditor = (symId = null) => {
       ae.tagName === "SELECT" || ae.isContentEditable);
     if (typing) return;
     if (e.key === "Enter") { finishLine(); e.stopPropagation(); e.preventDefault(); return; }
+    // コピー・貼り付け・複製・回転
+    if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) { copySel(); e.stopPropagation(); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "x" || e.key === "X")) { if (copySel(true)) { deleteSel(); UI.setMsg("切り取りました (Ctrl+V で貼り付け)"); } e.stopPropagation(); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) { pasteClip(); e.stopPropagation(); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "d" || e.key === "D")) { dupSel(); e.stopPropagation(); e.preventDefault(); return; }
+    if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) { rotateSel(); e.stopPropagation(); e.preventDefault(); return; }
     // 矢印キーで選択中の図形・端子を微調整移動する
     // 図形のみ: 0.5mm (Shift で 5mm)。端子を含むときは 5mm グリッドを保つ
     const ARROWS = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
@@ -815,8 +1197,9 @@ UI.openSymbolEditor = (symId = null) => {
       if (!S.lastNudgeAt || now - S.lastNudgeAt > 800) push();  // 連打・長押しは1回の undo にまとめる
       S.lastNudgeAt = now;
       const mv = (t) => {
-        if (!t || t.k === "raw") return;
+        if (!t) return;
         if (t.k === "line") t.pts = t.pts.map(q => [q[0] + dx, q[1] + dy]);
+        else if (t.k === "raw") { t.dx = (t.dx || 0) + dx; t.dy = (t.dy || 0) + dy; }
         else { t.x += dx; t.y += dy; }             // rect/circle/half/arc/text/端子は x,y 起点
       };
       if (S.msel.shapes.length || S.msel.pins.length) {
@@ -829,28 +1212,17 @@ UI.openSymbolEditor = (symId = null) => {
     if (e.key === "Escape") {
       // Esc は作画中の図形のキャンセルに使う (画面は閉じない)
       e.stopPropagation(); e.preventDefault();
-      if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; S.marquee = null; draw(); UI.setMsg("作画をキャンセルしました"); }
+      if (S.pendingInsert) {
+        S.pendingInsert = null;
+        const t0 = SYMEDIT_TOOLS.find(x2 => x2[0] === S.tool);
+        hintEl.textContent = t0 ? t0[2] : "";
+        UI.setMsg("挿入を中止しました");
+      } else if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; S.marquee = null; draw(); UI.setMsg("作画をキャンセルしました"); }
       else if (S.sel !== -1 || S.msel.shapes.length || S.msel.pins.length) { S.sel = -1; clearMsel(); S.moving = null; S.marquee = null; S.frameDrag = null; draw(); }
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && (S.msel.shapes.length || S.msel.pins.length)) {
-      // 範囲選択したものをまとめて削除。端子は機能の割り当ても詰め直す
-      push();
-      const rmS = new Set(S.msel.shapes.filter(i => S.shapes[i] && S.shapes[i].k !== "raw"));
-      S.shapes = S.shapes.filter((_, i) => !rmS.has(i));
-      const rmP = new Set(S.msel.pins);
-      const remap = new Map(); let k2 = 0;
-      S.pins.forEach((_, i) => { if (!rmP.has(i)) remap.set(i, k2++); });
-      S.pins = S.pins.filter((_, i) => !rmP.has(i));
-      S.funcs.forEach(f => { f.pins = (f.pins || []).map(v => (remap.has(v) ? remap.get(v) : null)); });
-      S.funcs = S.funcs.filter(f => (f.pins || []).every(v => v != null));
-      clearMsel(); S.sel = -1; draw(); e.stopPropagation(); e.preventDefault();
-      return;
-    }
-    if ((e.key === "Delete" || e.key === "Backspace") && S.sel !== -1) {
-      push();
-      if (S.sel <= -2) S.pins.splice(-2 - S.sel, 1); else S.shapes.splice(S.sel, 1);
-      S.sel = -1; draw(); e.stopPropagation(); e.preventDefault();
+    if ((e.key === "Delete" || e.key === "Backspace") && deleteSel()) {
+      e.stopPropagation(); e.preventDefault();
     }
   };
   document.addEventListener("keydown", onKey, true);
@@ -925,16 +1297,7 @@ UI.openSymbolEditor = (symId = null) => {
       S.lw = lw;
       const lwSel = body.querySelector("#seLw");
       if (lwSel) lwSel.value = String(lw);
-      // 収まる作画範囲へ広げる
-      const bd = symShapesBounds(S.shapes, S.pins);
-      const need = Math.max(Math.abs(bd[0]), Math.abs(bd[1]), Math.abs(bd[0] + bd[2]), Math.abs(bd[1] + bd[3])) * 2 + 8;
-      const want = [40, 60, 100, 160, 240, 320].find(v => v >= need) || 320;
-      if (want > S.W) {
-        S.W = S.H = want;
-        S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);
-        const sz = body.querySelector("#seSize");
-        if (sz) sz.value = String(want);
-      }
+      fitCanvas();                                     // 収まる作画範囲へ広げる
       S.tool = "select"; S.draft = null;
       toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === "select"));
       draw();
@@ -967,8 +1330,7 @@ UI.openSymbolEditor = (symId = null) => {
     const name = q("#seName").value.trim();
     if (!name) { alert("名称を入力してください"); q("#seName").focus(); return; }
     if (!S.shapes.length) { alert("図形が1つもありません。左のツールで作画してください"); return; }
-    const bodySVG = symShapesToBody(S.shapes.filter(s => s.k !== "raw")) +
-      S.shapes.filter(s => s.k === "raw").map(s => s.body).join("");
+    const bodySVG = symShapesToBody(S.shapes);
     const sim = q("#seSim").value;
     if (S.pins.length < 2 && sim !== "none" && !S.funcs.length) {
       if (!confirm("端子が2点未満です。回路の働きを設定しても通電計算はされません。\nこのまま登録しますか？")) return;
@@ -977,8 +1339,13 @@ UI.openSymbolEditor = (symId = null) => {
     if (dupName && !confirm(`「${name}」という名前のシンボルが既にあります。\nこのまま登録しますか？`)) return;
 
     const id = S.editingId || ("usr_" + uid("s"));
+    const orig = S.editingId ? SYMBOLS_BY_ID[S.editingId] : null;
+    const isStd = !!(orig && !orig.custom && !orig.imported) || !!(orig && orig.edited);  // 規格ライブラリの上書き
     const sym = {
-      id, db: true, group: q("#seGroup").value.trim() || "自作", cat: "db",
+      ...(orig || {}),                 // jis / stdNote / enclosure など元の付帯情報を引き継ぐ
+      id, db: true,
+      group: q("#seGroup").value.trim() || (orig && orig.group) || "自作",
+      cat: orig ? (orig.cat || "db") : "db",
       letter: (q("#seLetter").value.trim() || "E").toUpperCase(),
       name, nameEn: q("#seNameEn").value.trim() || name,
       desc: q("#seDesc").value.trim() || "自作シンボル",
@@ -991,20 +1358,28 @@ UI.openSymbolEditor = (symId = null) => {
       body: bodySVG,
       shapes: deepCopy(S.shapes),      // 再編集できるように図形一覧も保存する
       imported: true,                  // localStorage へ保存する対象
-      custom: true,                    // 自作 (シンボル作成で描いたもの)
-      nonstd: true,                    // 規格記号ではないことを明示
+      custom: orig ? !!orig.custom : true,   // 自作 (シンボル作成で描いたもの)
+      nonstd: orig ? !!orig.nonstd : true,   // 規格記号ではないことを明示
+      edited: isStd || undefined,      // 規格記号の上書き (「自作シンボルの管理」で元に戻せる)
     };
-    const at = DB_SYMBOLS.findIndex(s => s.id === id);
-    if (at >= 0) DB_SYMBOLS[at] = sym; else DB_SYMBOLS.push(sym);
-    SYMBOLS_BY_ID[id] = sym;
+    if (isStd) {
+      // 規格ライブラリの記号を上書き: 元を控えてから全域 (パレット・図面) で置き換える
+      symOverrideStd(sym);
+    } else {
+      const at = DB_SYMBOLS.findIndex(s => s.id === id);
+      if (at >= 0) DB_SYMBOLS[at] = sym; else DB_SYMBOLS.push(sym);
+      SYMBOLS_BY_ID[id] = sym;
+    }
     _symRectCache.delete(id);   // 同一 id で body を再編集した場合に古い箱をラベル障害物に使わない
     saveImportedSymbols();
     syncProjectSymbols();
-    dbSetPinned([...new Set([...dbPinnedList(), id])]);
+    if (symCatOf(sym) === "db") dbSetPinned([...new Set([...dbPinnedList(), id])]);
     UI.buildPalette();
     requestRender();
     m.close();
-    UI.setMsg(`シンボル「${name}」を${S.editingId ? "更新" : "登録"}しました (左のライブラリ「データベース」に表示)`);
+    UI.setMsg(isStd
+      ? `シンボル「${name}」を上書きしました (「自作シンボルの管理」からいつでも元の規格図形に戻せます)`
+      : `シンボル「${name}」を${S.editingId ? "更新" : "登録"}しました (左のライブラリに表示)`);
   });
 
   draw();
@@ -1015,8 +1390,8 @@ UI.manageCustomSymbols = () => {
   const list = () => DB_SYMBOLS.filter(s => s.custom || s.imported);
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">
-      自作シンボルと DXF から取り込んだシンボルの一覧です。<br>
-      編集するとこのブラウザに保存され、図面にも埋め込まれます。
+      自作シンボル・DXF から取り込んだシンボル・規格記号の上書きの一覧です。<br>
+      編集するとこのブラウザに保存され、図面にも埋め込まれます。上書きした規格記号は「元に戻す」で復元できます。
     </div>
     <div id="csRows" style="max-height:56vh;overflow:auto"></div>
   </div>`);
@@ -1033,16 +1408,30 @@ UI.manageCustomSymbols = () => {
         <div class="cs-thumb">${symThumbSVG(s, 44)}</div>
         <div class="cs-info">
           <div class="cs-name">${escXML(s.name)}</div>
-          <div class="cs-sub">${escXML(s.desc || "")} — 端子 ${(s.pins || []).length} 点 / ${s.custom ? "自作" : "DXF取り込み"}</div>
+          <div class="cs-sub">${escXML(s.desc || "")} — 端子 ${(s.pins || []).length} 点 / ${s.edited ? "規格記号の上書き" : s.custom ? "自作" : "DXF取り込み"}</div>
         </div>
         <button class="btn-solid cs-edit" data-id="${s.id}">編集</button>
-        <button class="btn-solid cs-del" data-id="${s.id}">削除</button>
+        <button class="btn-solid cs-del" data-id="${s.id}">${s.edited ? "元に戻す" : "削除"}</button>
       </div>`).join("") : '<div class="se-empty" style="padding:18px">まだありません</div>';
     body.querySelectorAll(".cs-edit").forEach(b => b.addEventListener("click", () => {
       m.close(); UI.openSymbolEditor(b.dataset.id);
     }));
     body.querySelectorAll(".cs-del").forEach(b => b.addEventListener("click", () => {
       const id = b.dataset.id;
+      const sym0 = SYMBOLS_BY_ID[id];
+      if (sym0 && sym0.edited) {
+        // 規格記号の上書き: 削除ではなく元の規格図形へ復元する
+        if (!confirm(`「${sym0.name}」を元の規格図形に戻しますか？`)) return;
+        symRestoreStd(id);
+        _symRectCache.delete(id);
+        saveImportedSymbols();
+        syncProjectSymbols();
+        UI.buildPalette();
+        requestRender();
+        render();
+        UI.setMsg(`「${SYMBOLS_BY_ID[id].name}」を元の規格図形に戻しました`);
+        return;
+      }
       const used = App.project.pages.some(pg => pg.devices.some(d => d.sym === id));
       if (used) { alert("この図面で使用中のシンボルは削除できません。先に機器を削除してください。"); return; }
       if (!confirm(`シンボル「${SYMBOLS_BY_ID[id].name}」を削除しますか？`)) return;

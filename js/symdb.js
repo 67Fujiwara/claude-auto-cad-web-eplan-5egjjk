@@ -956,6 +956,53 @@ function dbSetPinned(list) {
   } catch (e) { }
 }
 
+/* ── シンボルの分類の入れ替え (localStorage) ──
+   ライブラリの全記号はデータベースに載っていて、パレット上の分類
+   (インプット機器 / ロジック機器 / アウトプット機器 …) を記号ごとに
+   移し替えられる。id → SYM_CATS のキー。元の分類に戻したら記録を消す */
+let SYM_CAT_OVR = {};
+(function symCatLoad() {
+  try {
+    const s = localStorage.getItem("electracad.symCats");
+    const v = s ? JSON.parse(s) : {};
+    SYM_CAT_OVR = (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+  } catch (e) { SYM_CAT_OVR = {}; }
+})();
+function symCatOf(s) { return SYM_CAT_OVR[s.id] || s.cat || "db"; }
+function setSymCat(id, cat) {
+  const base = SYMBOLS_BY_ID[id];
+  if (!base || !SYM_CATS[cat]) return;
+  if (cat === (base.cat || "db")) delete SYM_CAT_OVR[id];
+  else SYM_CAT_OVR[id] = cat;
+  try { localStorage.setItem("electracad.symCats", JSON.stringify(SYM_CAT_OVR)); } catch (e) { }
+}
+
+/* 規格ライブラリの記号を編集で上書きしたときの、元 (規格原本) の控え。
+   起動のたびにソースから組み直されるので、上書き前にここへ挟んでおけば
+   「元に戻す」でいつでも復元できる */
+const SYM_ORIGINALS = new Map();
+function symOverrideStd(sym) {
+  const cur = SYMBOLS_BY_ID[sym.id];
+  if (cur && !SYM_ORIGINALS.has(sym.id)) SYM_ORIGINALS.set(sym.id, cur);
+  const si = SYMBOLS.findIndex(s => s.id === sym.id);
+  if (si >= 0) SYMBOLS[si] = sym;
+  // DB 側にも必ず載せる (localStorage への保存対象は DB_SYMBOLS の imported。
+  // 一覧は id で重複を除くので二重には出ない)
+  const di = DB_SYMBOLS.findIndex(s => s.id === sym.id);
+  if (di >= 0) DB_SYMBOLS[di] = sym; else DB_SYMBOLS.push(sym);
+  SYMBOLS_BY_ID[sym.id] = sym;
+}
+function symRestoreStd(id) {
+  const orig = SYM_ORIGINALS.get(id);
+  if (!orig) return false;
+  const si = SYMBOLS.findIndex(s => s.id === id);
+  if (si >= 0) SYMBOLS[si] = orig;
+  const di = DB_SYMBOLS.findIndex(s => s.id === id);
+  if (di >= 0) { if (orig.db) DB_SYMBOLS[di] = orig; else DB_SYMBOLS.splice(di, 1); }
+  SYMBOLS_BY_ID[id] = orig;
+  SYM_ORIGINALS.delete(id);
+  return true;
+}
 
 /* キーエンス KV Nano 基本ユニットの入出力結線図 (機種を差し替えれば端子ごと入れ替わる) */
 KV_UNITS.forEach(([m, cfg]) => mkKvUnit(m, cfg).forEach(s2 => DB_SYMBOLS.push(s2)));
