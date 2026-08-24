@@ -487,7 +487,10 @@ UI.openSymbolEditor = (symId = null) => {
     title: S.editingId ? "シンボルの編集" : "シンボルの作成",
     sub: "図形を描いて端子を置くと、自作の機器としてライブラリに登録できます (Esc = 作画のキャンセル)",
     body, foot, wide: true, noEsc: true,
-    onclose: () => { document.removeEventListener("keydown", onKey, true); },
+    onclose: () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousemove", onDocMove, true);
+    },
   });
 
   S.svg = body.querySelector("#seCanvas");
@@ -521,6 +524,26 @@ UI.openSymbolEditor = (symId = null) => {
 
   // ── 描画 ──
   const push = () => { S.undo.push({ shapes: deepCopy(S.shapes), pins: deepCopy(S.pins), funcs: deepCopy(S.funcs) }); if (S.undo.length > 60) S.undo.shift(); };
+  /* カーソル (細い十字線 + スナップ枠)。OS のカーソルは隠してあるので、
+     スナップ済みの座標 = 実際にクリックが落ちる点をこれで示す。
+     mousemove では属性だけ動かす (innerHTML を触ると click が失われる) */
+  const cursorAp = () => Math.max(1.4, S.W * 0.022);   // スナップ枠の一辺 (見かけの大きさを一定に)
+  const moveCursor = (x, y) => {
+    S.cursorPos = [x, y];
+    const c = S.svg.querySelector("#seCursor");
+    if (!c) return;
+    c.style.display = "";
+    const cv = c.querySelector(".cv"), ch = c.querySelector(".ch"), cp = c.querySelector(".cp");
+    cv.setAttribute("x1", x); cv.setAttribute("x2", x);
+    ch.setAttribute("y1", y); ch.setAttribute("y2", y);
+    const ap = cursorAp();
+    cp.setAttribute("x", x - ap / 2); cp.setAttribute("y", y - ap / 2);
+  };
+  const hideCursor = () => {
+    S.cursorPos = null;
+    const c = S.svg.querySelector("#seCursor");
+    if (c) c.style.display = "none";
+  };
   const draw = () => {
     const g = 1, G = 5;
     let out = "";
@@ -560,7 +583,15 @@ UI.openSymbolEditor = (symId = null) => {
       out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${S.sel === -2 - i || S.msel.pins.includes(i) ? SEL : "#e5484d"}" stroke="none"/>`;
       if (p.n) out += `<text x="${p.x + 1.6}" y="${p.y - 1.2}" font-size="2.6" fill="#8b96ab" font-family="monospace">${escXML(p.n)}</text>`;
     });
+    // カーソル (最前面・当たり判定なし)。線は vector-effect で常に 1px の髪線
+    const ap = cursorAp();
+    out += `<g id="seCursor" style="display:none" pointer-events="none">
+      <line class="cv" x1="0" x2="0" y1="${-S.H / 2}" y2="${S.H / 2}" stroke="rgba(75,159,255,.5)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+      <line class="ch" y1="0" y2="0" x1="${-S.W / 2}" x2="${S.W / 2}" stroke="rgba(75,159,255,.5)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+      <rect class="cp" x="${-ap / 2}" y="${-ap / 2}" width="${ap}" height="${ap}" fill="none" stroke="#4b9fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </g>`;
     S.svg.innerHTML = out;
+    if (S.cursorPos) moveCursor(S.cursorPos[0], S.cursorPos[1]);   // 再描画で消えた十字線を戻す
     refreshSide();
   };
   const refreshSide = () => {
@@ -671,6 +702,7 @@ UI.openSymbolEditor = (symId = null) => {
     const g = S.tool === "pin" ? GRID : S.snap;
     const x = symSnap(p.x, g), y = symSnap(p.y, g);
     statusEl.textContent = `X: ${x.toFixed(1)}  Y: ${y.toFixed(1)}`;
+    moveCursor(x, y);
     if (S.marquee) {
       if (!(e.buttons & 1)) { S.marquee = null; }
       else { S.marquee.x1 = p.x; S.marquee.y1 = p.y; draw(); return; }
@@ -738,6 +770,11 @@ UI.openSymbolEditor = (symId = null) => {
     }
     draw();
   });
+  S.svg.addEventListener("mouseleave", hideCursor);
+  /* innerHTML の描き直し後は mouseleave が落ちないことがある (ホバー連鎖が
+     切れるため)。文書全体の move でキャンバス外を検知して確実に消す */
+  const onDocMove = (e) => { if (S.cursorPos && !S.svg.contains(e.target)) hideCursor(); };
+  document.addEventListener("mousemove", onDocMove, true);
   // ドラッグ (押しながら動かして離す) でも図形を確定できるようにする。
   // クリック2回で描く従来の操作もそのまま使える。
   S.svg.addEventListener("mousedown", e => {

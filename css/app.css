@@ -540,7 +540,9 @@ input, textarea { user-select: text; }
 .se-wrap { display: grid; grid-template-columns: 210px 1fr 270px; gap: 14px; align-items: start; }
 .se-left, .se-right { min-width: 0; }
 .se-mid { position: relative; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-#seCanvas { display: block; width: 100%; height: min(58vh, 520px); background: var(--bg); cursor: crosshair; }
+/* OS のカーソルは太くて先端が読めないので隠し、SVG 側に細い十字線と
+   スナップ枠 (実際にクリックが落ちる点) を描く — CAD の作法 */
+#seCanvas { display: block; width: 100%; height: min(58vh, 520px); background: var(--bg); cursor: none; }
 .se-status { position: absolute; left: 10px; bottom: 8px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); pointer-events: none; }
 .se-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .se-tool { padding: 7px 6px; font-size: 12px; border-radius: 7px; border: 1px solid var(--line);
