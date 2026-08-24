@@ -472,7 +472,8 @@ function textsSVG(page, opts = {}) {
       const wApprox = t.text.length * h * 0.62 + 2 * fr;
       out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"/>`;
     }
-    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h)}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
+    // noMin: 取り込んだ図面の文字は元の寸法に忠実に (和文の最小呼びへ持ち上げない)
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
   });
   return out;
 }

@@ -1528,7 +1528,9 @@ function rectsOverlap(a, b, ratio = 0) {
 
 /** 注記テキストの概算 bbox */
 function textBounds(t) {
-  const h = textHeightMM(t.text || "", (t.size || TEXT_H.normal) * contentScale());
+  // noMin: 取り込んだ図面の文字は和文の最小呼びへ持ち上げない (見た目と一致させる)
+  const h = t.noMin ? (t.size || TEXT_H.normal) * contentScale()
+    : textHeightMM(t.text || "", (t.size || TEXT_H.normal) * contentScale());
   const w = textWidthMM(t.text || "", h);
   const anchor = t.anchor || "middle";
   const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;

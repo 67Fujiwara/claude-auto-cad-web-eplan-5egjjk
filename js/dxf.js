@@ -848,7 +848,12 @@ function dxfEntsToSVG(ents, opt = {}) {
     } else if (e.type === "SOLID") {
       if (isFinite(e.x1) && isFinite(e.x2)) out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}"/>`;
     } else if (e.type === "TEXT" || e.type === "MTEXT") {
-      const sz = Math.max(2.5, (e.size || 3.5) * k);
+      /* 文字高さは DXF の値に倍率をかけたまま使う (下限で持ち上げない)。
+         2.5mm へ持ち上げると、縮小して取り込んだとき図形だけ縮んで
+         文字が相対的に巨大化し、DXF の見た目と別物になる。
+         元の寸法に忠実であるべき取り込み文字は JIS の最小呼びの対象外
+         (読めるかどうかは検図の「尺度と用紙上の寸法」が知らせる) */
+      const sz = Math.max(0.3, (e.size || 3.5) * k);
       out += `<text x="${X(e.x1)}" y="${Y(e.y1)}" font-size="${svgFontSize(sz)}" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;
     }
   });
