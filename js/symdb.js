@@ -575,20 +575,26 @@ const DB_SYMBOLS = [
   {
     id: "prot_earth", db: true, group: "接地", jis: "02-15-03", cat: "db", letter: "E",
     name: "保護接地 (PE)", nameEn: "Protective earth", desc: "保護接地。接地記号を円で囲む",
-    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-8,-2, 16, 20],
-    body: `<path d="M0,0 V4"/><circle cx="0" cy="10" r="6"/><path d="M0,4 V7.4 M-3.6,7.4 H3.6 M-2.4,9.8 H2.4 M-1.2,12.2 H1.2"/>`,
+    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-6.5,-2, 13, 16.6],
+    /* 一般接地と同じ比率 (横棒 5/3.33/1.67・間隔 1.25 = 最長棒の 1/4) の縮小版を
+       円 r4.2 で囲む。中段の棒を円の中心に重ね、棒端と円周の隙は 1.4mm 以上 */
+    body: `<path d="M0,0 V4.2"/><circle cx="0" cy="8.4" r="4.2"/><path d="M0,4.2 V7.15 M-2.5,7.15 H2.5 M-1.67,8.4 H1.67 M-0.83,9.65 H0.83"/>`,
   },
   {
     id: "func_earth", db: true, group: "接地", jis: "02-15-02", cat: "db", letter: "E",
     name: "機能接地 (FE)", nameEn: "Functional earth", desc: "雑音のない (機能) 接地。接地記号をひし形で囲む",
-    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-9,-2, 18, 20],
-    body: `<path d="M0,0 V4"/><path d="M0,4 L-7,10 L0,16 L7,10 Z"/><path d="M0,4 V7.4 M-3.6,7.4 H3.6 M-2.4,9.8 H2.4 M-1.2,12.2 H1.2"/>`,
+    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-7.6,-2, 15.2, 17.8],
+    /* 保護接地と同じ中身をひし形 (半幅 5.6 × 半高 4.8) で囲む。ひし形は内接余地が
+       円より狭いので一回り大きくし、最長棒と斜辺の隙を 0.55mm 以上確保する */
+    body: `<path d="M0,0 V4.2"/><path d="M0,4.2 L-5.6,9 L0,13.8 L5.6,9 Z"/><path d="M0,4.2 V7.75 M-2.5,7.75 H2.5 M-1.67,9 H1.67 M-0.83,10.25 H0.83"/>`,
   },
   {
     id: "chassis_earth", db: true, group: "接地", jis: "02-15-04", cat: "db", letter: "E",
     name: "フレーム接続 (FG・シャーシ)", nameEn: "Frame / chassis", desc: "機器フレーム・シャーシへの接続",
-    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-10.5,-2, 18.5, 12.5],
-    body: `<path d="M0,0 V5 M-6,5 H6 M-6,5 L-8.5,8.5 M-1.5,5 L-4,8.5 M3,5 L0.5,8.5 M6,5 L3.5,8.5"/>`,
+    pins: [{x:0,y:0,n:""}], sim: "none", bounds: [-8.4,-2, 14.4, 11.4],
+    /* 一般接地と同じ横棒 8mm に 45° の斜線 4 本 (dx = dy = 2.4)。
+       始点は ±4 / ±1.33 の左右対称・8/3 mm 等ピッチ */
+    body: `<path d="M0,0 V5 M-4,5 H4 M-4,5 L-6.4,7.4 M-1.33,5 L-3.73,7.4 M1.33,5 L-1.07,7.4 M4,5 L1.6,7.4"/>`,
   },
 
   /* ── 受動部品 (JIS C 0617-4) ── */
