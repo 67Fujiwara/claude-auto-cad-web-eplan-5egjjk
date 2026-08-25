@@ -8,7 +8,11 @@
    ・labelSize    : コメントの文字高をプロパティで変えられ、描画にも効く
    ・labelDrag    : コメントをマウスでつまんで動かせる (枠そのものは動かない)
    ・labelReset   : 「既定に戻す」で枠の左上へ戻る
-   ・labelFollows : 枠を動かすとコメントも一緒に動く (位置は枠からの相対) */
+   ・labelFollows : 枠を動かすとコメントも一緒に動く (位置は枠からの相対)
+   ・fineMove     : 枠だけを動かすときは 0.5mm 刻み (導体の 5mm 格子に縛られない)
+   ・fineResize   : 枠のつまみも 0.5mm 刻み
+   ・gridKept     : 機器を含めて動かすときは従来どおり 5mm 刻み
+                    (端子が格子から外れると配線がつながらなくなる) */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -121,7 +125,73 @@ R.reset = await p.evaluate(async () => {
     follows: Math.abs(after.x - before.x - 25) < 0.01 && Math.abs(after.y - before.y - 15) < 0.01 };
 });
 
+// ── 枠だけの移動は 0.5mm 刻み / 機器を含むときは 5mm 刻み ──
+{
+  const geo = await p.evaluate(() => {
+    const pg = curPage();
+    const z = pg.zones[0];
+    z.x = 100; z.y = 100; delete z.lx; delete z.ly;
+    App.selection.clear(); App.selection.add(z.id);
+    requestRender();
+    const r = Editor.svg.getBoundingClientRect();
+    const v = Editor.view;
+    const toScr = (x, y) => [r.left + v.tx + x * v.s, r.top + v.ty + y * v.s];
+    // 枠の上辺 (機器やコメントに当たらない位置) をつまむ
+    const [sx, sy] = toScr(z.x + z.w - 6, z.y);
+    return { sx, sy, s: v.s, zx: z.x, zy: z.y, devX: pg.devices[0].x, devId: pg.devices[0].id };
+  });
+  // 3.5mm ぶん動かす → 5mm 刻みなら 5mm へ飛ぶ。0.5mm 刻みなら 3.5mm 前後に留まる
+  await p.mouse.move(geo.sx, geo.sy);
+  await p.mouse.down();
+  await p.mouse.move(geo.sx + 3.5 * geo.s, geo.sy + 3.5 * geo.s, { steps: 5 });
+  await p.mouse.up();
+  R.fine = await p.evaluate((g) => {
+    const z = curPage().zones[0];
+    return { dx: +(z.x - g.zx).toFixed(2), dy: +(z.y - g.zy).toFixed(2) };
+  }, geo);
+
+  // つまみ (右下の角) を 3.5mm 引っぱる
+  const geo2 = await p.evaluate(() => {
+    const z = curPage().zones[0];
+    const r = Editor.svg.getBoundingClientRect();
+    const v = Editor.view;
+    return { sx: r.left + v.tx + (z.x + z.w) * v.s, sy: r.top + v.ty + (z.y + z.h) * v.s,
+      s: v.s, w: z.w, h: z.h };
+  });
+  await p.mouse.move(geo2.sx, geo2.sy);
+  await p.mouse.down();
+  await p.mouse.move(geo2.sx + 3.5 * geo2.s, geo2.sy + 3.5 * geo2.s, { steps: 5 });
+  await p.mouse.up();
+  R.fineResize = await p.evaluate((g) => {
+    const z = curPage().zones[0];
+    return { dw: +(z.w - g.w).toFixed(2), dh: +(z.h - g.h).toFixed(2) };
+  }, geo2);
+
+  // 機器も一緒に選ぶと 5mm 刻みに戻る
+  const geo3 = await p.evaluate(() => {
+    const pg = curPage();
+    const z = pg.zones[0], dev = pg.devices[0];
+    App.selection.clear(); App.selection.add(z.id); App.selection.add(dev.id);
+    requestRender();
+    const r = Editor.svg.getBoundingClientRect();
+    const v = Editor.view;
+    return { sx: r.left + v.tx + (z.x + z.w - 6) * v.s, sy: r.top + v.ty + z.y * v.s,
+      s: v.s, zx: z.x, devX: dev.x, devY: dev.y };
+  });
+  await p.mouse.move(geo3.sx, geo3.sy);
+  await p.mouse.down();
+  await p.mouse.move(geo3.sx + 1.5 * geo3.s, geo3.sy + 1.5 * geo3.s, { steps: 5 });
+  await p.mouse.up();
+  R.grid = await p.evaluate((g) => {
+    const pg = curPage();
+    return { zdx: +(pg.zones[0].x - g.zx).toFixed(2), devdx: +(pg.devices[0].x - g.devX).toFixed(2) };
+  }, geo3);
+}
+
 const c = R.copy;
+/** 0.5mm 刻みで動いたか (5mm 格子では作れない値になっているか) */
+const fine = v => typeof v === "number" && Math.abs(v * 2 - Math.round(v * 2)) < 1e-6 &&
+  Math.abs(v - 3.5) <= 0.6 && Math.abs(v % 5) > 1e-6;
 const checks = {
   noPageErrors: errs.length === 0,
   copyZone: c.n === 2 && !c.sameId && c.label === "盤外エリア" && c.size === 5 && c.lx === 8 && c.ly === -4 &&
@@ -133,6 +203,10 @@ const checks = {
   labelDrag: typeof R.drag.lx === "number" && R.drag.lx > 2.5 + 6 && R.drag.ly > -1.8 + 10 && !R.drag.movedZone,
   labelReset: R.reset.back === true,
   labelFollows: R.reset.follows === true,
+  // 画面のピクセル刻みで ±0.5mm 前後ぶれるので、「0.5 の倍数で 5 の倍数でない」で見る
+  fineMove: fine(R.fine.dx) && fine(R.fine.dy),
+  fineResize: fine(R.fineResize.dw) && fine(R.fineResize.dh),
+  gridKept: R.grid.zdx === 0 && R.grid.devdx === 0,
 };
 console.log(JSON.stringify(R, null, 1));
 let fail = 0;

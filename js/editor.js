@@ -920,7 +920,13 @@ function onMouseMove(e) {
     return;
   }
   if (d.type === "move") {
-    const dx = snap(w.x - d.startW.x), dy = snap(w.y - d.startW.y);
+    /* 破線枠だけを動かしているときは 0.5mm 刻み。機器・配線が混ざるときは
+       端子が格子から外れないよう 5mm のまま */
+    const a = d.attach;
+    const zonesOnly = (a.zoneIds || []).length > 0 &&
+      !a.devIds.length && !a.wireIds.length && !(a.textIds || []).length;
+    const st = zonesOnly ? snapZone : snap;
+    const dx = st(w.x - d.startW.x), dy = st(w.y - d.startW.y);
     if (dx === 0 && dy === 0 && !d.moved) return;
     d.moved = true;
     applyMove(d.attach, dx, dy);
@@ -935,9 +941,9 @@ function onMouseMove(e) {
     requestRender();
   }
   if (d.type === "zoneResize") {
-    /* つまんだ縁だけを 5mm 格子で動かす。最小 10×10mm — 裏返さない */
+    /* つまんだ縁だけを 0.5mm 刻みで動かす。最小 10×10mm — 裏返さない */
     const z = d.z, MIN = 10;
-    const gx = snap(w.x), gy = snap(w.y);
+    const gx = snapZone(w.x), gy = snapZone(w.y);
     if (d.hx < 0) { const nx = Math.min(gx, d.x0 + d.w0 - MIN); z.x = nx; z.w = d.x0 + d.w0 - nx; }
     if (d.hx > 0) { z.w = Math.max(MIN, gx - d.x0); }
     if (d.hy < 0) { const ny = Math.min(gy, d.y0 + d.h0 - MIN); z.y = ny; z.h = d.y0 + d.h0 - ny; }

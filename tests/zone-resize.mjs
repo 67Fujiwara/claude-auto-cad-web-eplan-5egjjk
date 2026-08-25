@@ -49,7 +49,7 @@ await p.mouse.move(cx, cy);
 await p.waitForTimeout(80);
 const cursor = await p.evaluate(() => Editor.svg.style.cursor);
 
-// ① 右辺 (160,100) を +23mm → 幅 60 → 83 だが 5mm 格子で 85 or 80
+// ① 右辺 (160,100) を +23mm → 幅 60 → 83 前後 (破線枠は 0.5mm 刻み)
 await dragHandle(160, 100, 183, 100);
 const afterRight = await zone();
 // ② 右下角 (現在の右下) を動かす → 幅と高さが同時に変わる
@@ -72,11 +72,14 @@ const afterUndo = await zone();
 const checks = {
   handlesDrawn: Z.handles === true,
   cursorResize: cursor === "ew-resize",
-  widthOnly: afterRight.w > 60 && afterRight.w % 5 === 0 &&
+  // 幅だけが変わる。刻みは 0.5mm (5mm 格子だと 23mm 引いても 20/25mm に飛ぶ)
+  widthOnly: afterRight.w > 60 && Math.abs(afterRight.w * 2 - Math.round(afterRight.w * 2)) < 1e-6 &&
+    Math.abs(afterRight.w - 83) <= 1 &&
     afterRight.h === 40 && afterRight.x === 100 && afterRight.y === 80,
   corner: afterCorner.w > afterRight.w && afterCorner.h > afterRight.h,
-  topLeft: afterTL.x === c2.x + 10 && afterTL.y === c2.y + 10 &&
-    afterTL.x + afterTL.w === br.x && afterTL.y + afterTL.h === br.y,
+  // 左上を動かすと x/y が動き、右下は固定されたまま (刻みは 0.5mm)
+  topLeft: Math.abs(afterTL.x - (c2.x + 10)) <= 1 && Math.abs(afterTL.y - (c2.y + 10)) <= 1 &&
+    Math.abs(afterTL.x + afterTL.w - br.x) < 1e-6 && Math.abs(afterTL.y + afterTL.h - br.y) < 1e-6,
   minSize: afterMin.w === 10,
   undo: afterUndo.w === 60 && afterUndo.h === 40 && afterUndo.x === 100 && afterUndo.y === 80,
 };

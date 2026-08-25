@@ -1765,6 +1765,11 @@ function pageZones(page) {
    マウスでつまんで動かした結果を覚えておくため。
    labelSize はコメントの文字高 (mm)。プロパティで変えられる。 */
 const ZONE_LABEL_DX = 2.5, ZONE_LABEL_DY = -1.8;
+/* 破線枠は導体の格子 (5mm) に縛らない。電気的なつながりを持たない囲みなので、
+   機器や配線のすき間へぴったり寄せられるよう細かい刻みで動かす。
+   コメントの移動と同じ 0.5mm */
+const ZONE_STEP = 0.5;
+function snapZone(v) { return Math.round(v / ZONE_STEP) * ZONE_STEP; }
 function zoneLabelSize(z) { return z.labelSize > 0 ? z.labelSize : TEXT_H.normal; }
 function zoneLabelPos(z) {
   const f = contentScale();

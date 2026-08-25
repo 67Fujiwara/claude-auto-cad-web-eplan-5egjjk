@@ -624,10 +624,10 @@ UI.showProps = (focusTag = false) => {
       <div class="prop-head"><div class="prop-head-txt"><div class="t1">破線枠</div><div class="t2">盤外エリア / 機器グループの囲み</div></div></div>
       <div class="prop-row"><label>ラベル</label><input id="zLabel" value="${(z.label || "").replace(/"/g, "&quot;")}" placeholder="例: 盤外 / TR1 ターミナルリレー"/></div>
       <div class="prop-grid2">
-        <div class="prop-row"><label>X (mm)</label><input id="zX" class="mono" type="number" step="5" value="${z.x}"/></div>
-        <div class="prop-row"><label>Y (mm)</label><input id="zY" class="mono" type="number" step="5" value="${z.y}"/></div>
-        <div class="prop-row"><label>幅 (mm)</label><input id="zW" class="mono" type="number" step="5" value="${z.w}"/></div>
-        <div class="prop-row"><label>高さ (mm)</label><input id="zH" class="mono" type="number" step="5" value="${z.h}"/></div>
+        <div class="prop-row"><label>X (mm)</label><input id="zX" class="mono" type="number" step="0.5" value="${z.x}"/></div>
+        <div class="prop-row"><label>Y (mm)</label><input id="zY" class="mono" type="number" step="0.5" value="${z.y}"/></div>
+        <div class="prop-row"><label>幅 (mm)</label><input id="zW" class="mono" type="number" step="0.5" value="${z.w}"/></div>
+        <div class="prop-row"><label>高さ (mm)</label><input id="zH" class="mono" type="number" step="0.5" value="${z.h}"/></div>
         <div class="prop-row"><label>コメント高 (mm)</label><input id="zLh" class="mono" type="number" step="0.5" min="2.5" value="${zoneLabelSize(z)}"/></div>
         <div class="prop-row"><label>コメント位置</label>
           <button class="btn-solid" id="zLreset" style="padding:5px 10px;font-size:11.5px">既定に戻す</button></div>
@@ -642,7 +642,8 @@ UI.showProps = (focusTag = false) => {
       commit(); delete z.lx; delete z.ly; UI.refresh(false);
       UI.setMsg("破線枠のコメントの位置を既定 (枠の左上) に戻しました");
     });
-    const num = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : snap(n); };
+    // 破線枠は 0.5mm 刻み (導体の 5mm 格子に縛られない)
+    const num = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : snapZone(n); };
     zbind("#zX", v => z.x = num(v, z.x));
     zbind("#zY", v => z.y = num(v, z.y));
     zbind("#zW", v => z.w = Math.max(20, num(v, z.w)));
