@@ -1747,8 +1747,8 @@ UI.sheetSetup = () => {
         ${SCALES.map(s => opt(s, cur.scale)).join("")}
       </select></div>
       <div class="prop-row"><label>適用範囲</label><select id="tbScope">
-        <option value="page"${page.paper || page.scale || page.orient ? " selected" : ""}>このページのみ (${page.no}. ${escAttr(page.name)})</option>
-        <option value="all"${page.paper || page.scale || page.orient ? "" : " selected"}>全ページ (既定)</option>
+        <option value="page" selected>このページのみ (${page.no}. ${escAttr(page.name)})</option>
+        <option value="all">全ページ</option>
       </select></div>
     </div>
     <div class="prop-note" id="tbInfo"></div>
