@@ -977,6 +977,18 @@ function setSymCat(id, cat) {
   try { localStorage.setItem("electracad.symCats", JSON.stringify(SYM_CAT_OVR)); } catch (e) { }
 }
 
+/* パレットから外した記号 (localStorage)。「データベース」以外の分類の記号は
+   既定で棚に出るので、外したものだけをここに記録する */
+function symHiddenList() {
+  try {
+    const v = JSON.parse(localStorage.getItem("electracad.symHidden") || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+function symSetHidden(list) {
+  try { localStorage.setItem("electracad.symHidden", JSON.stringify(list)); } catch (e) { }
+}
+
 /* 規格ライブラリの記号を編集で上書きしたときの、元 (規格原本) の控え。
    起動のたびにソースから組み直されるので、上書き前にここへ挟んでおけば
    「元に戻す」でいつでも復元できる */

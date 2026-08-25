@@ -359,6 +359,7 @@ UI.openSymbolEditor = (symId = null) => {
   const S = SymEdit;
   S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null; S.moving = null;
   S.msel = { shapes: [], pins: [] }; S.marquee = null; S.frame = null; S.frameDrag = null;
+  S.connMeta = {};       // コネクタグループの設定 (gid → 極数・ピッチ…。「コネクタ編集」で作り直せる)
   S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
@@ -378,9 +379,10 @@ UI.openSymbolEditor = (symId = null) => {
       group: src.group || (SYM_CATS[src.cat] ? SYM_CATS[src.cat].name : "自作"),
       sim: src.sim || "none",
     };
-    S.pins = (src.pins || []).map(p => ({ x: p.x, y: p.y, n: p.n || "" }));
+    S.pins = (src.pins || []).map(p => ({ x: p.x, y: p.y, n: p.n || "", ...(p.grp ? { grp: p.grp } : {}) }));
     S.funcs = Array.isArray(src.funcs) ? deepCopy(src.funcs) : [];
     S.shapes = Array.isArray(src.shapes) ? deepCopy(src.shapes) : [];
+    S.connMeta = src.connMeta ? deepCopy(src.connMeta) : {};
     if (src.lw) S.lw = src.lw;
     if (!S.shapes.length && src.body) {
       // 図形一覧を持たないシンボル (規格ライブラリ・DXF取り込み) は
@@ -415,8 +417,10 @@ UI.openSymbolEditor = (symId = null) => {
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn-solid" id="seDup" style="padding:4px 10px;font-size:11.5px" title="選択した図形・端子を +5mm ずらして複製 (Ctrl+D)">複製</button>
         <button class="btn-solid" id="seRot" style="padding:4px 10px;font-size:11.5px" title="選択を 90° 回転。未選択なら全体を回転 (R)">回転 90°</button>
+        <button class="btn-solid" id="seUngrp" style="padding:4px 10px;font-size:11.5px" title="グループ (コネクタ・挿入シンボル) をほどく。グループが無ければ折れ線を線分に分解">分解</button>
+        <button class="btn-solid" id="seConnEd" style="padding:4px 10px;font-size:11.5px" title="選択したコネクタの極数・信号名などを編集して作り直す">コネクタ編集</button>
       </div>
-      <div class="prop-note" style="margin-top:4px">Ctrl+C コピー / Ctrl+X 切り取り / Ctrl+V 貼り付け / Ctrl+D 複製 / R 回転90°。未選択で回転すると全体が回ります。</div>
+      <div class="prop-note" style="margin-top:4px">Ctrl+C コピー / Ctrl+X 切り取り / Ctrl+V 貼り付け / Ctrl+D 複製 / R 回転90° / Esc 選択ツールへ。未選択で回転すると全体が回ります。コネクタや挿入したシンボルは塊で選ばれます (「分解」でほどく)。</div>
       <div class="prop-sect">線種</div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="solid" checked/><span>実線 (導体・図記号)</span></label></div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="dash"/><span>破線 (機械リンク・囲い)</span></label></div>
@@ -523,7 +527,7 @@ UI.openSymbolEditor = (symId = null) => {
   });
 
   // ── 描画 ──
-  const push = () => { S.undo.push({ shapes: deepCopy(S.shapes), pins: deepCopy(S.pins), funcs: deepCopy(S.funcs) }); if (S.undo.length > 60) S.undo.shift(); };
+  const push = () => { S.undo.push({ shapes: deepCopy(S.shapes), pins: deepCopy(S.pins), funcs: deepCopy(S.funcs), connMeta: deepCopy(S.connMeta) }); if (S.undo.length > 60) S.undo.shift(); };
   /* カーソル (細い十字線 + スナップ枠)。OS のカーソルは隠してあるので、
      スナップ済みの座標 = 実際にクリックが落ちる点をこれで示す。
      mousemove では属性だけ動かす (innerHTML を触ると click が失われる) */
@@ -543,6 +547,29 @@ UI.openSymbolEditor = (symId = null) => {
     S.cursorPos = null;
     const c = S.svg.querySelector("#seCursor");
     if (c) c.style.display = "none";
+  };
+  /** 端子の吸着先: 線の端点/頂点・弧の両端・矩形の角と辺の中点・円/半円の四分点。
+      2.5mm 以内にあればそこへ吸い付く (強制はしない — 離れていれば従来どおり
+      5mm グリッド。線の途中に端子を置く使い方も残す) */
+  const pinAnchor = (px, py) => {
+    let best = null, bd = 2.5;
+    const c = [];
+    S.shapes.forEach(sh => {
+      if (sh.k === "line") sh.pts.forEach(q => c.push(q));
+      else if (sh.k === "arc") {
+        const a0 = sh.a0 * Math.PI / 180, a1 = sh.a1 * Math.PI / 180;
+        c.push([sh.x + sh.r * Math.cos(a0), sh.y + sh.r * Math.sin(a0)],
+               [sh.x + sh.r * Math.cos(a1), sh.y + sh.r * Math.sin(a1)]);
+      } else if (sh.k === "rect") {
+        c.push([sh.x, sh.y], [sh.x + sh.w, sh.y], [sh.x, sh.y + sh.h], [sh.x + sh.w, sh.y + sh.h],
+               [sh.x + sh.w / 2, sh.y], [sh.x + sh.w / 2, sh.y + sh.h],
+               [sh.x, sh.y + sh.h / 2], [sh.x + sh.w, sh.y + sh.h / 2]);
+      } else if (sh.k === "circle" || sh.k === "half") {
+        c.push([sh.x, sh.y - sh.r], [sh.x, sh.y + sh.r], [sh.x - sh.r, sh.y], [sh.x + sh.r, sh.y]);
+      }
+    });
+    c.forEach(q => { const d = Math.hypot(q[0] - px, q[1] - py); if (d < bd) { bd = d; best = q; } });
+    return best && [+best[0].toFixed(2), +best[1].toFixed(2)];
   };
   const draw = () => {
     const g = 1, G = 5;
@@ -700,7 +727,11 @@ UI.openSymbolEditor = (symId = null) => {
   S.svg.addEventListener("mousemove", e => {
     const p = symEditXY(e);
     const g = S.tool === "pin" ? GRID : S.snap;
-    const x = symSnap(p.x, g), y = symSnap(p.y, g);
+    let x = symSnap(p.x, g), y = symSnap(p.y, g);
+    if (S.tool === "pin") {
+      const a = pinAnchor(p.x, p.y);        // 線・図の先端が近ければ吸着 (十字線もそこへ)
+      if (a) { x = a[0]; y = a[1]; }
+    }
     statusEl.textContent = `X: ${x.toFixed(1)}  Y: ${y.toFixed(1)}`;
     moveCursor(x, y);
     if (S.marquee) {
@@ -803,6 +834,15 @@ UI.openSymbolEditor = (symId = null) => {
         S.marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
         return;
       }
+      // グループ (コネクタ・挿入シンボル) は塊で選ぶ (「分解」でほどける)
+      const grp = pi >= 0 ? S.pins[pi].grp : (i >= 0 ? S.shapes[i].grp : null);
+      if (grp && !((pi >= 0 && S.msel.pins.includes(pi)) || (i >= 0 && S.msel.shapes.includes(i)))) {
+        S.msel = {
+          shapes: S.shapes.map((sh, ix) => sh.grp === grp ? ix : -1).filter(ix => ix >= 0),
+          pins: S.pins.map((pn, ix) => pn.grp === grp ? ix : -1).filter(ix => ix >= 0),
+        };
+        S.sel = -1;
+      }
       // まとめ選択の中をつまんだ → 選択したものを全部一緒に動かす
       const inMsel = (pi >= 0 && S.msel.pins.includes(pi)) || (i >= 0 && S.msel.shapes.includes(i));
       if (inMsel) {
@@ -899,15 +939,20 @@ UI.openSymbolEditor = (symId = null) => {
     if (S.draftFromDown) { S.draftFromDown = false; return; }   // 押した時点で1点目を取っている
     const p = symEditXY(e);
     const g = S.tool === "pin" ? GRID : S.snap;
-    const x = symSnap(p.x, g), y = symSnap(p.y, g);
+    let x = symSnap(p.x, g), y = symSnap(p.y, g);
+    if (S.tool === "pin") {
+      const a = pinAnchor(p.x, p.y);        // 線・図の先端が近ければ吸着
+      if (a) { x = a[0]; y = a[1]; }
+    }
     if (S.pendingInsert) {
       // 「シンボルを挿入…」で選んだ記号を、クリックした位置 (5mm グリッド) へ置く
       const ins = S.pendingInsert; S.pendingInsert = null;
       push();
       const bx = symSnap(p.x, GRID), by = symSnap(p.y, GRID);
       const i0 = S.shapes.length, p0 = S.pins.length;
-      ins.shapes.forEach(sh => { const c = deepCopy(sh); moveShape(c, bx, by); S.shapes.push(c); });
-      ins.pins.forEach(pn => S.pins.push({ x: pn.x + bx, y: pn.y + by, n: pn.n }));
+      const gid = uid("g");                 // 挿入したシンボルは塊で選べる (「分解」でほどく)
+      ins.shapes.forEach(sh => { const c = deepCopy(sh); moveShape(c, bx, by); c.grp = gid; S.shapes.push(c); });
+      ins.pins.forEach(pn => S.pins.push({ x: pn.x + bx, y: pn.y + by, n: pn.n, grp: gid }));
       S.msel = { shapes: S.shapes.map((_, i2) => i2).slice(i0), pins: S.pins.map((_, i2) => i2).slice(p0) };
       S.sel = -1;
       const t0 = SYMEDIT_TOOLS.find(x2 => x2[0] === S.tool);
@@ -920,8 +965,18 @@ UI.openSymbolEditor = (symId = null) => {
       // スナップ前の座標で当たり判定する (mousedown のつまみ判定と一致させる)
       const i = hitShape(p.x, p.y);
       const pi = S.pins.findIndex(q => Math.hypot(q.x - p.x, q.y - p.y) < 2);
-      S.sel = pi >= 0 ? -2 - pi : i;
-      clearMsel();  // クリックでの選択は単独に戻す
+      const grp = pi >= 0 ? S.pins[pi].grp : (i >= 0 ? S.shapes[i].grp : null);
+      if (grp) {
+        // グループは塊で選ぶ (mousedown で選んだまとめ選択をクリックで壊さない)
+        S.msel = {
+          shapes: S.shapes.map((sh, ix) => sh.grp === grp ? ix : -1).filter(ix => ix >= 0),
+          pins: S.pins.map((pn, ix) => pn.grp === grp ? ix : -1).filter(ix => ix >= 0),
+        };
+        S.sel = -1;
+      } else {
+        S.sel = pi >= 0 ? -2 - pi : i;
+        clearMsel();  // クリックでの選択は単独に戻す
+      }
       draw(); return;
     }
     if (S.tool === "pin") {
@@ -1008,8 +1063,23 @@ UI.openSymbolEditor = (symId = null) => {
     S.clip.n++;
     const off = 5 * S.clip.n;
     const i0 = S.shapes.length, p0 = S.pins.length;
-    S.clip.shapes.forEach(sh => { const c = deepCopy(sh); moveShape(c, off, off); S.shapes.push(c); });
-    S.clip.pins.forEach(pn => S.pins.push({ x: pn.x + off, y: pn.y + off, n: pn.n }));
+    // グループ id は貼り付けごとに振り直す (写しが元の塊と混ざらないように)。
+    // コネクタの設定も一緒に写す
+    const gmap = new Map();
+    const regrp = (c) => {
+      if (!c.grp) return;
+      if (!gmap.has(c.grp)) {
+        const ng = uid("g");
+        gmap.set(c.grp, ng);
+        if (S.connMeta[c.grp]) {
+          S.connMeta[ng] = deepCopy(S.connMeta[c.grp]);
+          S.connMeta[ng].x0 += off; S.connMeta[ng].y0 += off;
+        }
+      }
+      c.grp = gmap.get(c.grp);
+    };
+    S.clip.shapes.forEach(sh => { const c = deepCopy(sh); moveShape(c, off, off); regrp(c); S.shapes.push(c); });
+    S.clip.pins.forEach(pn => { const c = { x: pn.x + off, y: pn.y + off, n: pn.n, ...(pn.grp ? { grp: pn.grp } : {}) }; regrp(c); S.pins.push(c); });
     S.msel = { shapes: S.shapes.map((_, i) => i).slice(i0), pins: S.pins.map((_, i) => i).slice(p0) };
     S.sel = -1;
     fitCanvas(); draw();
@@ -1082,8 +1152,54 @@ UI.openSymbolEditor = (symId = null) => {
     }
     return false;
   };
+  /** 選択に含まれるグループ id の集合 */
+  const selGids = () => {
+    const { s, p } = selIdx();
+    return new Set([...s.map(i => S.shapes[i] && S.shapes[i].grp), ...p.map(i => S.pins[i] && S.pins[i].grp)].filter(Boolean));
+  };
+  /** グループをほどく。グループが無ければ、選択中の折れ線を線分ごとに分解する
+      (一部の線だけ回転・移動したいときに) */
+  const ungroupSel = () => {
+    const gids = selGids();
+    if (gids.size) {
+      push();
+      S.shapes.forEach(sh => { if (gids.has(sh.grp)) delete sh.grp; });
+      S.pins.forEach(pn => { if (gids.has(pn.grp)) delete pn.grp; });
+      gids.forEach(g => delete S.connMeta[g]);
+      draw();
+      UI.setMsg(`グループを解除しました (${gids.size} 組) — 個々の図形をつまんで動かせます`);
+      return;
+    }
+    const { s } = selIdx();
+    const targets = s.filter(i => S.shapes[i] && S.shapes[i].k === "line" && S.shapes[i].pts.length > 2);
+    if (!targets.length) { UI.setMsg("分解できるもの (グループ / 3点以上の折れ線) がありません"); return; }
+    push();
+    [...targets].sort((a, b) => b - a).forEach(i => {
+      const sh = S.shapes[i];
+      const pts = sh.closed ? [...sh.pts, sh.pts[0]] : sh.pts;
+      const segs = [];
+      for (let j = 0; j < pts.length - 1; j++) {
+        const seg = { k: "line", pts: [deepCopy(pts[j]), deepCopy(pts[j + 1])], style: sh.style || "solid" };
+        if (sh.dash) seg.dash = sh.dash;
+        if (sh.lw) seg.lw = sh.lw;
+        segs.push(seg);
+      }
+      S.shapes.splice(i, 1, ...segs);
+    });
+    S.msel = { shapes: [], pins: [] }; S.sel = -1;
+    draw();
+    UI.setMsg("折れ線を線分に分解しました (1本ずつ選んで回転・移動できます)");
+  };
+  /** 選択したコネクタグループの設定を開いて作り直す */
+  const connEditSel = () => {
+    const editable = [...selGids()].filter(g => S.connMeta[g]);
+    if (editable.length !== 1) { UI.setMsg("編集するコネクタを1つ選択してください (コネクタの図形をクリック)"); return; }
+    openConnDialog(0, 0, editable[0]);
+  };
   body.querySelector("#seDup").addEventListener("click", dupSel);
   body.querySelector("#seRot").addEventListener("click", rotateSel);
+  body.querySelector("#seUngrp").addEventListener("click", ungroupSel);
+  body.querySelector("#seConnEd").addEventListener("click", connEditSel);
 
   /** 既存シンボルを作画へ挿入する (組み合わせて新しいシンボルを作る) */
   const openInsertDialog = () => {
@@ -1126,39 +1242,53 @@ UI.openSymbolEditor = (symId = null) => {
   };
   foot.querySelector("#seIns").addEventListener("click", openInsertDialog);
 
-  /** 多極コネクタ (CN3 など) を1番ピンの位置から生成する */
-  const openConnDialog = (x0, y0) => {
+  /** グループ (gid) の図形・端子をまとめて取り除く (機能の割り当ても詰め直す) */
+  const removeGroup = (gid) => {
+    S.shapes = S.shapes.filter(sh => sh.grp !== gid);
+    const rmP = new Set(S.pins.map((pn, i) => pn.grp === gid ? i : -1).filter(i => i >= 0));
+    if (rmP.size) {
+      const remap = new Map(); let k2 = 0;
+      S.pins.forEach((_, i) => { if (!rmP.has(i)) remap.set(i, k2++); });
+      S.pins = S.pins.filter((_, i) => !rmP.has(i));
+      S.funcs.forEach(f => { f.pins = (f.pins || []).map(v => (remap.has(v) ? remap.get(v) : null)); });
+      S.funcs = S.funcs.filter(f => (f.pins || []).every(v => v != null));
+    }
+    delete S.connMeta[gid];
+  };
+  /** 多極コネクタ (CN3 など) を1番ピンの位置から生成する。
+      editGid を渡すと、そのコネクタの設定を読み込んで作り直す (再編集) */
+  const openConnDialog = (x0, y0, editGid = null) => {
+    const prev = editGid ? S.connMeta[editGid] : null;
+    if (prev) { x0 = prev.x0; y0 = prev.y0; }
     const cb = h(`<div>
       <div class="prop-note" style="margin-top:0">
         クリックした位置が1番ピンです。端子は 5mm ピッチでグリッドに乗り、
-        コネクタの山形と番号も一緒に描かれます。
+        コネクタの山形と番号も一緒に描かれます。配置後は選択して「コネクタ編集」で作り直せます。
       </div>
       <div class="prop-grid2">
-        <div class="prop-row"><label>コネクタ名</label><input id="cnName" value="CN1" placeholder="CN3 / 電源コネクタ"/></div>
-        <div class="prop-row"><label>極数</label><input id="cnN" class="mono" type="number" min="1" max="40" value="8"/></div>
-        <div class="prop-row"><label>ピッチ (mm)</label><input id="cnP" class="mono" type="number" min="5" max="20" step="5" value="5"/></div>
+        <div class="prop-row"><label>コネクタ名</label><input id="cnName" value="${escAttr(prev ? prev.name : "CN1")}" placeholder="CN3 / 電源コネクタ"/></div>
+        <div class="prop-row"><label>極数</label><input id="cnN" class="mono" type="number" min="1" max="40" value="${prev ? prev.n : 8}"/></div>
+        <div class="prop-row"><label>ピッチ (mm)</label><input id="cnP" class="mono" type="number" min="5" max="20" step="5" value="${prev ? prev.pitch : 5}"/></div>
         <div class="prop-row"><label>並び</label><select id="cnDir">
-          <option value="down">下へ (配線は左・機器は右)</option>
-          <option value="down_r">下へ (配線は右・機器は左)</option>
-          <option value="right">右へ (配線は下・機器は上)</option>
+          ${[["down", "下へ (配線は左・機器は右)"], ["down_r", "下へ (配線は右・機器は左)"], ["right", "右へ (配線は下・機器は上)"]]
+            .map(([v, t]) => `<option value="${v}"${prev && prev.dir === v ? " selected" : ""}>${t}</option>`).join("")}
         </select></div>
-        <div class="prop-row"><label>開始番号</label><input id="cnStart" class="mono" value="1"/></div>
+        <div class="prop-row"><label>開始番号</label><input id="cnStart" class="mono" value="${escAttr(prev ? prev.start : "1")}"/></div>
         <div class="prop-row"><label>種類</label><select id="cnKind">
-          <option value="recept">レセプタクル (機器側)</option>
-          <option value="plug">プラグ (ケーブル側)</option>
-          <option value="term">端子台</option>
+          ${[["recept", "レセプタクル (機器側)"], ["plug", "プラグ (ケーブル側)"], ["term", "端子台"]]
+            .map(([v, t]) => `<option value="${v}"${prev && prev.kind === v ? " selected" : ""}>${t}</option>`).join("")}
         </select></div>
       </div>
       <div class="prop-row"><label>信号名 (改行区切り・任意)</label></div>
-      <textarea id="cnSig" rows="5" placeholder="L1&#10;L2&#10;L1C&#10;L2C&#10;NC&#10;PE" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;outline:none"></textarea>
+      <textarea id="cnSig" rows="5" placeholder="L1&#10;L2&#10;L1C&#10;L2C&#10;NC&#10;PE" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;outline:none">${prev ? escXML(prev.sigs || "") : ""}</textarea>
       <div class="prop-note">信号名を入れると端子番号のかわりに使われます (部品表・接続リストに出ます)。</div>
     </div>`);
     const cf = h(`<div style="display:flex;gap:10px;width:100%">
       <span style="flex:1"></span>
       <button class="btn-solid" id="cnCancel">キャンセル</button>
-      <button class="btn-solid primary" id="cnOk">配置</button>
+      <button class="btn-solid primary" id="cnOk">${editGid ? "作り直す" : "配置"}</button>
     </div>`);
-    const cm = UI.openModal({ title: "コネクタの配置", sub: "多極コネクタ・端子台をまとめて作ります", body: cb, foot: cf });
+    const cm = UI.openModal({ title: editGid ? "コネクタの編集" : "コネクタの配置", sub: "多極コネクタ・端子台をまとめて作ります", body: cb, foot: cf });
     cf.querySelector("#cnCancel").addEventListener("click", cm.close);
     cf.querySelector("#cnOk").addEventListener("click", () => {
       const q = sel => cb.querySelector(sel);
@@ -1167,9 +1297,13 @@ UI.openSymbolEditor = (symId = null) => {
       const dir = q("#cnDir").value, kind = q("#cnKind").value;
       const name = q("#cnName").value.trim();
       const startNo = parseInt(q("#cnStart").value, 10);
-      const sigs = q("#cnSig").value.split(/\r?\n/).map(v => v.trim());
+      const sigsRaw = q("#cnSig").value;
+      const sigs = sigsRaw.split(/\r?\n/).map(v => v.trim());
       cm.close();
       push();
+      const gid = editGid || uid("g");
+      if (editGid) removeGroup(editGid);           // 作り直し: 古い部材を取り除く
+      const s0 = S.shapes.length, p0 = S.pins.length;
       const vert = dir !== "right";
       // 機器の中身がある向き (配線と反対側)。ライブラリのコネクタ記号と同じ作法で、
       // 山形と端子番号を外形の内側に描く。
@@ -1204,8 +1338,12 @@ UI.openSymbolEditor = (symId = null) => {
         S.shapes.push({ k: "rect", x: x0 - 4, y: y0 - 14.8, w: len + 8, h: 12.8, style: "solid" });
         if (name) S.shapes.push({ k: "text", x: x0 + len / 2, y: y0 - 16.8, text: name, h: TEXT_H.small, mono: true });
       }
+      // グループ化: まとめて選択・移動でき、「コネクタ編集」で作り直せる
+      S.shapes.slice(s0).forEach(sh => { sh.grp = gid; });
+      S.pins.slice(p0).forEach(pn => { pn.grp = gid; });
+      S.connMeta[gid] = { x0, y0, name, n, pitch, dir, kind, start: q("#cnStart").value.trim(), sigs: sigsRaw };
       draw();
-      UI.setMsg(`コネクタ「${name || ""}」を ${n} 極で配置しました`);
+      UI.setMsg(`コネクタ「${name || ""}」を ${n} 極で${editGid ? "作り直しました" : "配置しました"}`);
     });
   };
 
@@ -1256,6 +1394,14 @@ UI.openSymbolEditor = (symId = null) => {
         UI.setMsg("挿入を中止しました");
       } else if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; S.marquee = null; draw(); UI.setMsg("作画をキャンセルしました"); }
       else if (S.sel !== -1 || S.msel.shapes.length || S.msel.pins.length) { S.sel = -1; clearMsel(); S.moving = null; S.marquee = null; S.frameDrag = null; draw(); }
+      else if (S.tool !== "select") {
+        // 何も作画・選択していない Esc は選択ツールへ戻る
+        S.tool = "select";
+        toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === "select"));
+        const t0 = SYMEDIT_TOOLS.find(x2 => x2[0] === "select");
+        hintEl.textContent = t0 ? t0[2] : "";
+        draw();
+      }
       return;
     }
     if ((e.key === "Delete" || e.key === "Backspace") && deleteSel()) {
@@ -1352,7 +1498,7 @@ UI.openSymbolEditor = (symId = null) => {
   foot.querySelector("#seUndo").addEventListener("click", () => {
     const st = S.undo.pop();
     if (!st) return;
-    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null;
+    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.connMeta = st.connMeta || {}; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null;
     S.msel = { shapes: [], pins: [] }; draw();
   });
   foot.querySelector("#seClear").addEventListener("click", () => {
@@ -1387,10 +1533,16 @@ UI.openSymbolEditor = (symId = null) => {
       name, nameEn: q("#seNameEn").value.trim() || name,
       desc: q("#seDesc").value.trim() || "自作シンボル",
       typ: q("#seTyp").value.trim(),
-      pins: S.pins.map((p, i) => ({ x: p.x, y: p.y, n: p.n || String(i + 1) })),
+      pins: S.pins.map((p, i) => ({ x: p.x, y: p.y, n: p.n || String(i + 1), ...(p.grp ? { grp: p.grp } : {}) })),
       sim: S.funcs.length ? "multi" : sim,
       lw: S.lw,
       funcs: S.funcs.length ? deepCopy(S.funcs) : undefined,
+      connMeta: (() => {   // 使われているグループの設定だけ残す (再編集用)
+        const used = new Set([...S.shapes.map(sh => sh.grp), ...S.pins.map(pn => pn.grp)].filter(Boolean));
+        const m2 = {};
+        used.forEach(g => { if (S.connMeta[g]) m2[g] = deepCopy(S.connMeta[g]); });
+        return Object.keys(m2).length ? m2 : undefined;
+      })(),
       bounds: S.frame ? [...S.frame] : symShapesBounds(S.shapes, S.pins),
       body: bodySVG,
       shapes: deepCopy(S.shapes),      // 再編集できるように図形一覧も保存する

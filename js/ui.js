@@ -36,12 +36,14 @@ UI.buildPalette = (filter = "") => {
   tree.innerHTML = "";
   const f = filter.trim().toLowerCase();
   const pinned = new Set(dbPinnedList());
+  const hidden = new Set(symHiddenList());
   const all = allSymbols();
   Object.entries(SYM_CATS).forEach(([catId, cat]) => {
     // 分類はデータベースで記号ごとに入れ替えられる (symCatOf)。
-    // "データベース" 分類はパレットに追加 (ピン) されたものだけを出す
+    // "データベース" 分類はパレットに追加 (ピン) されたものだけを、
+    // それ以外の棚は「外す」で隠したものを除いて出す
     const source = catId === "db" ? all.filter(s => symCatOf(s) === "db" && pinned.has(s.id))
-      : all.filter(s => symCatOf(s) === catId);
+      : all.filter(s => symCatOf(s) === catId && !hidden.has(s.id));
     const syms = source.filter(s =>
       (!f || s.name.toLowerCase().includes(f) || s.nameEn.toLowerCase().includes(f) || (s.desc || "").toLowerCase().includes(f) || (s.jis || "").includes(f)));
     if (!syms.length) return;
@@ -1585,6 +1587,7 @@ UI.insertZone = () => {
 /* ══════════════ シンボルデータベース ══════════════ */
 UI.openSymDB = () => {
   let pinned = new Set(dbPinnedList());
+  let hidden = new Set(symHiddenList());
   let query = "", group = "";
   // ライブラリの全記号を載せる。分類 (パレットの棚) は記号ごとに入れ替えられる
   const all = allSymbols();
@@ -1615,13 +1618,13 @@ UI.openSymDB = () => {
       (!q || s.name.toLowerCase().includes(q) || (s.jis || "").includes(q) || s.nameEn.toLowerCase().includes(q)));
     grid.innerHTML = list.map(s => {
       const cat = symCatOf(s);
-      // 分類が「データベース」の記号だけピン (パレットへの引き出し) が要る。
-      // それ以外の分類はその棚に常時出る
-      const pinBtn = cat === "db"
-        ? `<button class="btn-solid ${pinned.has(s.id) ? "" : "primary"}" data-pin="${s.id}"
-            style="flex:0 0 auto;padding:4px 8px;font-size:11px">${pinned.has(s.id) ? "✓ 外す" : "追加"}</button>` : "";
+      // どの記号もパレットへの追加 / 外すができる。「データベース」分類は
+      // ピン (追加したものだけ出す)、それ以外の棚は外したものを隠す
+      const onPal = cat === "db" ? pinned.has(s.id) : !hidden.has(s.id);
+      const pinBtn = `<button class="btn-solid ${onPal ? "" : "primary"}" data-pal="${s.id}"
+            style="flex:0 0 auto;padding:4px 8px;font-size:11px">${onPal ? "✓ 外す" : "追加"}</button>`;
       return `
-      <div class="wiz-card ${pinned.has(s.id) && cat === "db" ? "sel" : ""}" data-id="${s.id}" style="cursor:default">
+      <div class="wiz-card ${onPal ? "sel" : ""}" data-id="${s.id}" style="cursor:default">
         <div class="wc-thumb">${symThumbSVG(s, 46)}</div>
         <div class="wc-name">${s.name}${s.edited ? ' <span style="color:var(--warn);font-size:10px">(編集済)</span>' : ""}</div>
         <div class="wc-desc">${[s.jis ? `JIS C 0617 ${s.jis}` : "", s.stdNote || "",
@@ -1635,10 +1638,15 @@ UI.openSymDB = () => {
         </div>
       </div>`;
     }).join("");
-    grid.querySelectorAll("[data-pin]").forEach(b => b.addEventListener("click", () => {
-      const id = b.dataset.pin;
-      if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
-      dbSetPinned([...pinned]);
+    grid.querySelectorAll("[data-pal]").forEach(b => b.addEventListener("click", () => {
+      const id = b.dataset.pal;
+      if (symCatOf(SYMBOLS_BY_ID[id]) === "db") {
+        if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
+        dbSetPinned([...pinned]);
+      } else {
+        if (hidden.has(id)) hidden.delete(id); else hidden.add(id);
+        symSetHidden([...hidden]);
+      }
       UI.buildPalette(document.getElementById("symSearch").value);
       renderGrid();
     }));
