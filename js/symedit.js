@@ -165,7 +165,8 @@ function dxfEntsToShapes(ents, opt = {}) {
       // 文字高さは DXF の値に尺度をかけたまま使う。下限で持ち上げると
       // 縮尺取り込みで図形だけ縮んで文字が相対的に巨大化する
       out.push({ k: "text", x: X(e.x1), y: Y(e.y1), text: e.text || "",
-        h: Math.max(0.3, +((e.size || 3.5) * k).toFixed(2)), mono: true });
+        h: Math.max(0.3, +((e.size || 3.5) * k).toFixed(2)), mono: true,
+        anchor: e.anchor || "start" });          // 寄せは DXF の指定どおり (ずれ防止)
     }
   });
   // センタリングをやり直す: dxfEntsBounds の文字幅は見積もりなので、

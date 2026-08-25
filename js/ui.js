@@ -628,11 +628,20 @@ UI.showProps = (focusTag = false) => {
         <div class="prop-row"><label>Y (mm)</label><input id="zY" class="mono" type="number" step="5" value="${z.y}"/></div>
         <div class="prop-row"><label>幅 (mm)</label><input id="zW" class="mono" type="number" step="5" value="${z.w}"/></div>
         <div class="prop-row"><label>高さ (mm)</label><input id="zH" class="mono" type="number" step="5" value="${z.h}"/></div>
-      </div>`;
+        <div class="prop-row"><label>コメント高 (mm)</label><input id="zLh" class="mono" type="number" step="0.5" min="2.5" value="${zoneLabelSize(z)}"/></div>
+        <div class="prop-row"><label>コメント位置</label>
+          <button class="btn-solid" id="zLreset" style="padding:5px 10px;font-size:11.5px">既定に戻す</button></div>
+      </div>
+      <div class="prop-note">コメントは選択してからマウスでつまんで動かせます。機器のタグ・機能テキストはコメントを避けて置かれます。</div>`;
     const zbind = (id, fn) => pane.querySelector(id).addEventListener("change", e => {
       commit(); fn(e.target.value); UI.refresh(false);
     });
     zbind("#zLabel", v => z.label = v.trim());
+    zbind("#zLh", v => { const n = parseFloat(v); if (!isNaN(n)) z.labelSize = Math.max(2.5, n); });
+    pane.querySelector("#zLreset").addEventListener("click", () => {
+      commit(); delete z.lx; delete z.ly; UI.refresh(false);
+      UI.setMsg("破線枠のコメントの位置を既定 (枠の左上) に戻しました");
+    });
     const num = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : snap(n); };
     zbind("#zX", v => z.x = num(v, z.x));
     zbind("#zY", v => z.y = num(v, z.y));
@@ -1418,7 +1427,8 @@ UI.dxfImportDialog = (ents, fileName) => {
         /* 文字高さは DXF のまま (下限で持ち上げない — 図形だけ縮んで文字が
            巨大化する)。noMin で和文の最小呼びへの引き上げも避ける */
         page.texts.push({ id: uid("t"), x: X(e.x1), y: Y(e.y1), text: e.text || "",
-          size: Math.max(0.3, +((e.size || 3.5) * k).toFixed(2)), noMin: true, anchor: "start" });
+          size: Math.max(0.3, +((e.size || 3.5) * k).toFixed(2)), noMin: true,
+          anchor: e.anchor || "start" });        // 寄せは DXF の指定どおり (ずれ防止)
         nText++;
       }
     });

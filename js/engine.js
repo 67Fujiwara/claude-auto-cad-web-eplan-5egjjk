@@ -1186,6 +1186,12 @@ function labelObstacles(page) {
     const h = (t.size || TEXT_H.normal) * f;
     out.push({ owner: null, x: t.x, y: t.y - h, w: textWidthMM(t.text || "", h), h });
   });
+  /* 破線枠のコメントは動かさない (枠の名前は枠に付いていないと意味が変わる) ので、
+     機器のタグ・機能テキスト側が避ける障害物として置く */
+  pageZones(page).forEach(z => {
+    const b = zoneLabelBox(z);
+    if (b) out.push({ owner: null, ...b });
+  });
   return out;
 }
 
@@ -1753,6 +1759,26 @@ function syncProjectSymbols() {
 function pageZones(page) {
   if (!page.zones) page.zones = [];
   return page.zones;
+}
+/* 破線枠のコメント (ラベル)。既定は枠の左上のすぐ外側。
+   lx/ly を持つ枠は、その位置 (枠の左上からの相対 mm) へ動かしてある —
+   マウスでつまんで動かした結果を覚えておくため。
+   labelSize はコメントの文字高 (mm)。プロパティで変えられる。 */
+const ZONE_LABEL_DX = 2.5, ZONE_LABEL_DY = -1.8;
+function zoneLabelSize(z) { return z.labelSize > 0 ? z.labelSize : TEXT_H.normal; }
+function zoneLabelPos(z) {
+  const f = contentScale();
+  return {
+    x: z.x + (z.lx !== undefined ? z.lx : ZONE_LABEL_DX * f),
+    y: z.y + (z.ly !== undefined ? z.ly : ZONE_LABEL_DY * f),
+    size: zoneLabelSize(z) * f,
+  };
+}
+/** 破線枠のコメントの外接箱 (ベースライン基準・左寄せ) */
+function zoneLabelBox(z) {
+  if (!z.label) return null;
+  const p = zoneLabelPos(z);
+  return { x: p.x, y: p.y - p.size, w: textWidthMM(z.label, p.size), h: p.size };
 }
 function curPage() { return App.project.pages[App.pageIdx]; }
 

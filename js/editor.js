@@ -251,13 +251,20 @@ function zonesSVG(page, opts = {}) {
     out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr}" fill="none"
       stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr}" stroke-dasharray="${dash}"/>`;
     if (z.label) {
-      out += `<text x="${z.x + 2.5 * fr}" y="${z.y - 1.8 * fr}" font-size="${svgFontSizeFor(z.label, TEXT_H.normal * fr)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
+      const lp = zoneLabelPos(z);
+      out += `<text x="${lp.x}" y="${lp.y}" font-size="${svgFontSizeFor(z.label, lp.size)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
     }
     // 選択中はつまみ (角 4 + 辺の中央 4)。マウスでつまんで幅と高さを変えられる
     if (selected) {
       zoneHandles(z).forEach(h => {
         out += `<rect x="${h.x - 1.4}" y="${h.y - 1.4}" width="2.8" height="2.8" fill="#fff" stroke="${SEL}" stroke-width="0.35"/>`;
       });
+      // コメントは枠と別につまんで動かせる (点線で囲って掴めることを示す)
+      const lb = zoneLabelBox(z);
+      if (lb) {
+        out += `<rect x="${lb.x - 0.6}" y="${lb.y - 0.6}" width="${lb.w + 1.2}" height="${lb.h + 1.2}" fill="none"
+          stroke="${SEL}" stroke-width="0.25" stroke-dasharray="1 0.8"/>`;
+      }
     }
   });
   return out;
@@ -271,6 +278,16 @@ function zoneHandles(z) {
     out.push({ hx, hy, x: z.x + (hx + 1) / 2 * z.w, y: z.y + (hy + 1) / 2 * z.h });
   }));
   return out;
+}
+/** 選択中の破線枠の「コメント」を掴んだか (枠のつまみより先に見る) */
+function zoneLabelAt(page, wx, wy) {
+  for (const z of pageZones(page)) {
+    if (!App.selection.has(z.id)) continue;
+    const b = zoneLabelBox(z);
+    if (!b) continue;
+    if (wx > b.x - 1 && wx < b.x + b.w + 1 && wy > b.y - 1 && wy < b.y + b.h + 1) return z;
+  }
+  return null;
 }
 /** 選択中の破線枠のつまみが (wx,wy) の近くにあれば返す */
 function zoneHandleAt(page, wx, wy) {
@@ -772,6 +789,17 @@ function onMouseDown(e) {
   // 選択ツール
   /* 選択中の破線枠のつまみが最優先 (枠線や中の機器より先に拾う)。
      つまんだ縁だけを動かして幅・高さを変える */
+  const zl = zoneLabelAt(curPage(), w.x, w.y);
+  if (zl) {
+    // 破線枠のコメントだけを動かす (枠そのものは動かさない)
+    const f0 = contentScale();
+    Editor.drag = { type: "zoneLabel", z: zl,
+      lx0: zl.lx !== undefined ? zl.lx : ZONE_LABEL_DX * f0,
+      ly0: zl.ly !== undefined ? zl.ly : ZONE_LABEL_DY * f0,
+      wx0: w.x, wy0: w.y, moved: false, snapshot: JSON.stringify(App.project) };
+    requestRender();
+    return;
+  }
   const zh = zoneHandleAt(curPage(), w.x, w.y);
   if (zh) {
     Editor.drag = { type: "zoneResize", z: zh.z, hx: zh.h.hx, hy: zh.h.hy,
@@ -898,6 +926,14 @@ function onMouseMove(e) {
     applyMove(d.attach, dx, dy);
     requestRender();
   }
+  if (d.type === "zoneLabel") {
+    // コメントは 0.5mm 刻みで動かす (文字なので 5mm 格子だと粗すぎる)
+    const q = v => Math.round(v * 2) / 2;
+    const nx = q(d.lx0 + (w.x - d.wx0)), ny = q(d.ly0 + (w.y - d.wy0));
+    if (nx !== d.z.lx || ny !== d.z.ly) d.moved = true;
+    d.z.lx = nx; d.z.ly = ny;
+    requestRender();
+  }
   if (d.type === "zoneResize") {
     /* つまんだ縁だけを 5mm 格子で動かす。最小 10×10mm — 裏返さない */
     const z = d.z, MIN = 10;
@@ -1001,6 +1037,19 @@ function onMouseUp(e) {
       });
       UI.showProps();
     }
+    requestRender();
+    return;
+  }
+  if (d.type === "zoneLabel") {
+    if (d.moved) {
+      App.labelRev++;
+      App.undoStack.push(d.snapshot);
+      if (App.undoStack.length > 100) App.undoStack.shift();
+      App.redoStack.length = 0;
+      saveLocal();
+      UI.setMsg("破線枠のコメントを動かしました (プロパティの「位置を戻す」で既定へ)");
+    }
+    Editor.drag = null;
     requestRender();
     return;
   }
@@ -1263,9 +1312,10 @@ function copySelection() {
   const devs = page.devices.filter(d => App.selection.has(d.id));
   const wires = page.wires.filter(w => App.selection.has(w.id));
   const texts = page.texts.filter(t => App.selection.has(t.id));
-  if (!devs.length && !wires.length && !texts.length) return;
-  App.clipboard = deepCopy({ devs, wires, texts });
-  UI.setMsg(`${devs.length + wires.length + texts.length} 個をコピーしました`);
+  const zones = pageZones(page).filter(z => App.selection.has(z.id));
+  if (!devs.length && !wires.length && !texts.length && !zones.length) return;
+  App.clipboard = deepCopy({ devs, wires, texts, zones });
+  UI.setMsg(`${devs.length + wires.length + texts.length + zones.length} 個をコピーしました`);
 }
 
 function pasteClipboard() {
@@ -1281,6 +1331,7 @@ function pasteClipboard() {
   cb.devs.forEach(d => { minX = Math.min(minX, d.x); minY = Math.min(minY, d.y); });
   cb.wires.forEach(w => w.pts.forEach(p => { minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]); }));
   cb.texts.forEach(t => { minX = Math.min(minX, t.x); minY = Math.min(minY, t.y); });
+  (cb.zones || []).forEach(z => { minX = Math.min(minX, z.x); minY = Math.min(minY, z.y); });
   if (!isFinite(minX)) { minX = 0; minY = 0; }
   let dx, dy;
   const lw = Editor.lastWorld;
@@ -1336,6 +1387,14 @@ function pasteClipboard() {
     t.x += dx; t.y += dy;
     page.texts.push(t);
     App.selection.add(t.id);
+  });
+  // 破線枠 (コメントの位置・文字高もそのまま写す)
+  (cb.zones || []).forEach(z0 => {
+    const z = deepCopy(z0);
+    z.id = uid("z");
+    z.x += dx; z.y += dy;
+    pageZones(page).push(z);
+    App.selection.add(z.id);
   });
   UI.setMsg("カーソル位置に貼り付けました");
   // 黙って行き先を消すと気づけないので知らせる

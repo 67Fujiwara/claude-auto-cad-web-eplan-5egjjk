@@ -650,8 +650,16 @@ function parseDXF(text) {
     pairs.push([code, src[i + 1]]);
     i++;
   }
-  const unesc = t => String(t).replace(/\\U\+([0-9A-Fa-f]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/\\[A-Za-z][^;]*;/g, "").replace(/[{}]/g, "");
+  /* MTEXT の制御コードを外す。\P (改行) は改行文字にして残す —
+     以前は「\ + 英字 + ; まで」で一括除去していたので、; を持たない \P が
+     消えずに文字列へ出たり、次の ; までの本文を巻き込んで消したりしていた */
+  const unesc = t => String(t)
+    .replace(/\\U\+([0-9A-Fa-f]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\P/g, "\n")                            // 段落 (改行)
+    .replace(/\\S([^;]*);/g, (m, g) => g.replace(/[\^#]/g, "/"))   // 分数・上下付き
+    .replace(/\\[FfHhCcWwAaTtQqLlOoKkXpNn][^;\\]*;?/g, "")        // 書体・高さ・色などの指定
+    .replace(/\\([{}\\])/g, "$1")                     // \{ \} \\ はその文字
+    .replace(/[{}]/g, "");
 
   /* 1) BLOCKS を集める */
   const blocks = {};
@@ -660,10 +668,34 @@ function parseDXF(text) {
   pairs.forEach(([c, v], k) => { if (c === 0 && v.trim() === "SECTION") sections.push(k); });
   const readEnts = (from, to, sink) => {
     let cur = null, curType = null, verts = null, inVertex = false, mtext = "";
+    let mlLine = false;                 // 多重引出線の LEADER_LINE{ } の中か
+    const isML = () => curType === "MULTILEADER" || curType === "MLEADER";
     const push = () => {
       if (!cur || !curType) return;
       if (curType === "POLYLINE") cur.pts = verts || [];
       if (curType === "MTEXT" && mtext) cur.text = unesc(mtext);
+      // 属性文字は TEXT と同じ内容なので TEXT として扱う
+      if (curType === "ATTRIB") curType = "TEXT";
+      // 引出線は折れ線として扱う (矢は描かない — 図の意味は線と文字にある)
+      if (curType === "LEADER") {
+        const pts = (cur.pts || []).filter(q => isFinite(q[0]) && isFinite(q[1]));
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0 });
+        cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false; return;
+      }
+      if (curType === "MULTILEADER" || curType === "MLEADER") {
+        const pts = (cur.pts || []).filter(q => isFinite(q[0]) && isFinite(q[1]));
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0 });
+        if (cur.mlText && isFinite(cur.mlx)) {
+          sink.push({ type: "MTEXT", layer: cur.layer, x1: cur.mlx, y1: cur.mly,
+            text: cur.mlText, size: cur.size || 3.5, attach: cur.attach || 1 });
+        }
+        cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false; return;
+      }
+      // 寸法は無名ブロックの差し込みとして描く (ブロックの図形は図面座標のまま)
+      if (curType === "DIMENSION") {
+        if (cur.blockName) sink.push({ type: "INSERT", layer: cur.layer, blockName: cur.blockName, x1: 0, y1: 0, sx: 1, sy: 1, rot: 0 });
+        cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false; return;
+      }
       if (curType === "SPLINE") {
         // NURBS は折れ線へ展開し、以後は LWPOLYLINE として扱う (作図・シンボル化・寸法計算を共通化)
         const pts = dxfSplineToPolyline(cur);
@@ -671,7 +703,7 @@ function parseDXF(text) {
       } else {
         sink.push({ type: curType, ...cur });
       }
-      cur = null; curType = null; verts = null; inVertex = false; mtext = "";
+      cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false;
     };
     for (let i = from; i < to; i++) {
       const [c, raw] = pairs[i];
@@ -680,7 +712,8 @@ function parseDXF(text) {
         if (v === "VERTEX" && curType === "POLYLINE") { inVertex = true; cur.__vx = null; cur.__vy = null; continue; }
         if (v === "SEQEND") { inVertex = false; continue; }
         push();
-        curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID", "INSERT", "SPLINE"].includes(v) ? v : null;
+        curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID", "INSERT", "SPLINE",
+          "LEADER", "MULTILEADER", "MLEADER", "ATTRIB", "DIMENSION"].includes(v) ? v : null;
         cur = curType ? { layer: "0", pts: [] } : null;
         if (curType === "SPLINE") { cur.cps = []; cur.knots = []; cur.wts = []; cur.fit = []; }
         if (curType === "POLYLINE") verts = [];
@@ -690,20 +723,33 @@ function parseDXF(text) {
       const num = parseFloat(v);
       switch (c) {
         case 8: cur.layer = v; break;
-        case 2: if (curType === "INSERT") cur.blockName = v; break;
+        // 寸法は図形一式が無名ブロック (*D..) に入っている。そのブロックを差し込んで描く
+        case 2: if (curType === "INSERT" || curType === "DIMENSION") cur.blockName = v; break;
         case 1: if (curType === "MTEXT") mtext += raw; else cur.text = unesc(raw); break;
         case 3: if (curType === "MTEXT") mtext += raw; break;
         case 10:
           if (curType === "POLYLINE" && inVertex) { cur.__vx = num; }
           else if (curType === "LWPOLYLINE") cur.pts.push([num, null]);
           else if (curType === "SPLINE") cur.cps.push([num, null]);
+          // 引出線は 10/20 が頂点の並び。多重引出線は LEADER_LINE{ } の中だけ拾う
+          else if (curType === "LEADER") cur.pts.push([num, null]);
+          else if (mlLine) cur.pts.push([num, null]);
           else cur.x1 = num;                      // POLYLINE ヘッダの 10/20 は常に 0 なので使わない
           break;
         case 20:
           if (curType === "POLYLINE" && inVertex) { cur.__vy = num; if (cur.__vx !== null) verts.push([cur.__vx, num]); }
           else if (curType === "LWPOLYLINE" && cur.pts.length) cur.pts[cur.pts.length - 1][1] = num;
           else if (curType === "SPLINE" && cur.cps.length) cur.cps[cur.cps.length - 1][1] = num;
+          else if ((curType === "LEADER" || mlLine) && cur.pts.length) cur.pts[cur.pts.length - 1][1] = num;
           else cur.y1 = num;
+          break;
+        // 多重引出線の文字は 304 (本文)・12/22 (位置)・41 (文字高)・171 (寄せ)
+        case 12: if (isML()) cur.mlx = num; break;
+        case 22: if (isML()) cur.mly = num; break;
+        case 304: if (isML()) cur.mlText = unesc(raw); break;
+        case 171: if (isML()) cur.attach = num; break;
+        case 303:
+          if (isML()) { if (/LEADER_LINE\s*\{/.test(v)) { mlLine = true; cur.pts = []; } else if (v.indexOf("}") >= 0) mlLine = false; }
           break;
         case 11: if (curType === "SPLINE") cur.fit.push([num, null]); else cur.x2 = num; break;
         case 21:
@@ -711,12 +757,22 @@ function parseDXF(text) {
           else cur.y2 = num;
           break;
         case 40: if (curType === "SPLINE") cur.knots.push(num); else { cur.r = num; cur.size = num; } break;
-        case 41: if (curType === "INSERT") cur.sx = num; else if (curType === "SPLINE") cur.wts.push(num); break;
+        // 41 は INSERT の倍率・スプラインの重み・多重引出線の文字高
+        case 41:
+          if (curType === "INSERT") cur.sx = num;
+          else if (curType === "SPLINE") cur.wts.push(num);
+          else if (isML()) cur.size = num;
+          break;
         case 42: if (curType === "INSERT") cur.sy = num; break;
-        case 50: if (curType === "INSERT") cur.rot = num; else cur.a1 = num; break;
+        // 50 は INSERT の回転・円弧の開始角・文字の傾き。混ざらないように分ける
+        case 50:
+          if (curType === "INSERT") cur.rot = num;
+          else if (curType === "TEXT" || curType === "ATTRIB") cur.angle = num;
+          else cur.a1 = num;
+          break;
         case 51: cur.a2 = num; break;
         case 70: cur.flags = num; break;
-        case 71: if (curType === "SPLINE") cur.degree = num; break;
+        case 71: if (curType === "SPLINE") cur.degree = num; else if (curType === "MTEXT") cur.attach = num; break;
         case 72: cur.hAlign = num; break;
         case 73: cur.vAlign = num; break;
         default: break;
@@ -783,10 +839,41 @@ function parseDXF(text) {
     });
   };
   place(raw, 0, 0, 1, 1, 0, 0);
-  // 揃え指定つき TEXT は 11/21 (揃え点) が実位置
-  out.forEach(e => {
-    if ((e.type === "TEXT") && (e.hAlign || e.vAlign) && e.x2 !== undefined) { e.x1 = e.x2; e.y1 = e.y2; }
-  });
+  /* 4) 文字の位置を正規化する。
+     DXF は「どこに」と「どう寄せるか」を分けて持つので、そのまま左下から
+     書くと寄せの指定ぶんだけずれる (元図と別の場所に文字が出る)。
+     ここで (x1, y1) を必ず「ベースラインの基準点」に、anchor を寄せに直し、
+     複数行は行ごとの文字に割ってしまう。以後の取り込み経路 (作図・シンボル
+     登録・シンボル編集) はどれも x1/y1/anchor をそのまま使えばよい。 */
+  {
+    const norm = [];
+    out.forEach(e => {
+      if (e.type !== "TEXT" && e.type !== "MTEXT") { norm.push(e); return; }
+      const size = e.size || 3.5;
+      let anchor = "start", shift = 0;      // shift: DXF の Y (上が +) 方向へのベースライン移動
+      if (e.type === "MTEXT") {
+        // 71 = 基準点の位置 (1..3 上段 / 4..6 中段 / 7..9 下段、左・中央・右)
+        const at = e.attach || 1;
+        anchor = at % 3 === 2 ? "middle" : at % 3 === 0 ? "end" : "start";
+        shift = at <= 3 ? -size : at <= 6 ? -size / 2 : 0;
+      } else {
+        // 72/73 が 0 以外なら 11/21 (揃え点) が実位置
+        if ((e.hAlign || e.vAlign) && e.x2 !== undefined) { e.x1 = e.x2; e.y1 = e.y2; }
+        const h = e.hAlign || 0, v = e.vAlign || 0;
+        anchor = (h === 1 || h === 4) ? "middle" : h === 2 ? "end" : "start";
+        shift = h === 4 ? -size / 2                      // 4 = 上下左右とも中央
+          : v === 3 ? -size : v === 2 ? -size / 2 : v === 1 ? 0.2 * size : 0;
+      }
+      const lines = String(e.text || "").split(/\r?\n/);
+      const lead = size * 1.667;                        // DXF の既定行送り
+      lines.forEach((ln, i) => {
+        if (!ln.trim() && lines.length > 1) return;     // 空行は場所だけ取って描かない
+        norm.push({ ...e, type: e.type, text: ln, anchor,
+          x1: e.x1, y1: e.y1 + shift - i * lead, size });
+      });
+    });
+    out.length = 0; out.push(...norm);
+  }
   const ents = out.filter(e => e.type !== "INSERT" || e.unresolved);
   // スプライン片は輪郭が多数の短い曲線に分かれていることが多い。
   // 前の終点と次の始点がつながっているものは1本の折れ線へまとめ、図形数を減らす
@@ -810,7 +897,13 @@ function dxfEntsBounds(ents) {
     if (e.type === "INSERT") return;                    // 定義が無いブロックは寸法に含めない
     if (e.type === "LINE") { add(e.x1, e.y1); add(e.x2, e.y2); }
     else if (e.type === "CIRCLE" || e.type === "ARC") { add(e.x1 - e.r, e.y1 - e.r); add(e.x1 + e.r, e.y1 + e.r); }
-    else if (e.type === "TEXT" || e.type === "MTEXT") { add(e.x1, e.y1); add(e.x1 + textWidthMM(e.text || "", e.size || 3.5), e.y1 + (e.size || 3.5)); }
+    else if (e.type === "TEXT" || e.type === "MTEXT") {
+      // 寄せによって文字が伸びる向きが変わる (中央寄せなら左右へ半分ずつ)
+      const w0 = textWidthMM(e.text || "", e.size || 3.5);
+      const a = e.anchor || "start";
+      const x0 = a === "middle" ? e.x1 - w0 / 2 : a === "end" ? e.x1 - w0 : e.x1;
+      add(x0, e.y1); add(x0 + w0, e.y1 + (e.size || 3.5));
+    }
     else if (e.type === "SOLID") { [[e.x1, e.y1], [e.x2, e.y2]].forEach(([x, y]) => add(x, y)); }
     else (e.pts || []).forEach(p => add(p[0], p[1]));
   });
@@ -854,7 +947,10 @@ function dxfEntsToSVG(ents, opt = {}) {
          元の寸法に忠実であるべき取り込み文字は JIS の最小呼びの対象外
          (読めるかどうかは検図の「尺度と用紙上の寸法」が知らせる) */
       const sz = Math.max(0.3, (e.size || 3.5) * k);
-      out += `<text x="${X(e.x1)}" y="${Y(e.y1)}" font-size="${svgFontSize(sz)}" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;
+      // 寄せ (anchor) と傾き (DXF は反時計回り・画面は Y が下向きなので符号を反転)
+      const tx = X(e.x1), ty = Y(e.y1);
+      const rotAttr = e.angle ? ` transform="rotate(${(-e.angle).toFixed(3)} ${tx} ${ty})"` : "";
+      out += `<text x="${tx}" y="${ty}" font-size="${svgFontSize(sz)}" text-anchor="${e.anchor || "start"}"${rotAttr} fill="currentColor" stroke="none" font-family="sans-serif">${escXML(e.text || "")}</text>`;
     }
   });
   return { body: out, w: b.w * k, h: b.h * k, bounds: b };
