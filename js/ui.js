@@ -366,9 +366,14 @@ UI.showProps = (focusTag = false) => {
            そのまま残るので、結線図を描き直さずに機種だけ変えられる */
         const kin = Object.values(SYMBOLS_BY_ID).filter(s2 => s2.swapGroup === sym.swapGroup && !s2.stretchOf && !s2.altOf)
           .sort((a2, b2) => String(a2.typ || a2.id).localeCompare(String(b2.typ || b2.id)));
+        /* 選択中の表示は、行ピッチの寸法違い (@span)・拡張の台数違い (_c7 など) を
+           ほどいた親の id で決める。そうしないと 2台目に設定した記号で開いたとき
+           一覧に一致が無く、先頭の別機種が選ばれて見える */
+        const cur0 = symStretchBase(sym) || sym;
+        const curId = cur0.altOf || cur0.id;
         return `<div class="prop-row"><label>機種 <span class="rp-dim">(差し替えると端子構成ごと入れ替わります)</span></label>
           <select id="pSwap">${kin.map(s2 =>
-            `<option value="${s2.id}"${s2.id === sym.id ? " selected" : ""}>${escAttr(s2.name || s2.typ)}</option>`).join("")}</select></div>`;
+            `<option value="${s2.id}"${s2.id === curId ? " selected" : ""}>${escAttr(s2.name || s2.typ)}</option>`).join("")}</select></div>`;
       })() : ""}
       ${(() => {
         /* 拡張ユニットの台数 (先頭チャネル)。リレー番号は接続順で決まるので、
@@ -450,10 +455,17 @@ UI.showProps = (focusTag = false) => {
       UI.toast(`拡張${chs.indexOf(+v) + 1}台目 (R${v}00〜) の割付にしました — 端子名と図中の注記が変わります`, 3600);
     });
     bind("#pSwap", v => {
-      if (!v || v === dev.sym) return;
+      if (!v) return;
       const before = symOf(dev.sym), n0 = devPins(dev).length;
-      dev.sym = v;
-      const after = symOf(v);
+      const curB = symStretchBase(before) || before;
+      /* 拡張ユニットの台数 (何台目 = 先頭チャネル) は機種を差し替えても保つ —
+         2台目の N16ET を N8ET にしたら 2台目 (R700〜) の N8ET に着地する。
+         黙って1台目へ戻すと、紙の注記だけが頼りの静かな誤りになる */
+      const tgt = SYMBOLS_BY_ID[v];
+      const want = (curB.expCh && tgt && tgt.expAlts && tgt.expAlts[curB.expCh]) ? tgt.expAlts[curB.expCh] : v;
+      if (want === curB.id) return;      // 同一機種・同一台数の再選択 (寸法違いでも) は何もしない
+      dev.sym = want;
+      const after = symOf(want);
       // 型式は差し替えに追従させる (図と部品表が食い違わないように)。
       // 使う人が手で入れた型式は尊重する
       if (!dev.typeRef || dev.typeRef === (before.typ || "")) dev.typeRef = after.typ || "";

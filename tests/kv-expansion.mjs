@@ -17,6 +17,10 @@
    ・chProp     : プロパティ「拡張ユニットの台数」で 2台目へ差し替えると
                   端子名が 700〜 になり、配線・位置はそのまま
    ・swapClean  : 機種入替のリストに台数違い (_c7/_c8) は混ざらない
+   ・swapShow   : 2台目に設定した記号でプロパティを開いても、機種欄は親機種が選択表示される
+   ・swapKeepCh : 2台目のまま機種を N8ET へ差し替えると 2台目の N8ET (700〜) に着地する
+   ・boundsNote : 図中注記のぶん外接矩形が下へ伸びる (注記 7mm は用紙判定にも入る)
+   ・legend     : 規格外図記号の凡例 (stdNote) を pasteStdNote で図面に貼れる
    ・baseKept   : 既存の基本ユニット (kv_n40at_out など) は変わらない */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
@@ -105,6 +109,25 @@ const R = await p.evaluate(async () => {
   out.swapClean = { shown: !!swapSel,
     noAlt: swapSel && ![...swapSel.options].some(o2 => /_c[78]/.test(o2.value)),
     hasBase: swapSel && [...swapSel.options].some(o2 => o2.value === "kv_n14at_out") };
+  // 2台目のままプロパティを開く → 機種欄は親機種が選択表示される
+  out.swapShow = swapSel && swapSel.value === "kv_n16et_out";
+  // 2台目のまま機種を N8ET へ → 2台目の N8ET に着地 (台数を保つ)
+  swapSel.value = "kv_n8et_out";
+  swapSel.dispatchEvent(new Event("change", { bubbles: true }));
+  await new Promise(r => setTimeout(r, 100));
+  out.swapKeepCh = { sym: d.sym, pin0: devPins(d)[0] && devPins(d)[0].name, posKept: d.x === 200 };
+  // 外接矩形と用紙判定に図中注記のぶんが入る
+  const lastPinY = sym2 => Math.max(...sym2.pins.map(pn => pn.y));
+  out.boundsNote = {
+    s8: s8.bounds[1] + s8.bounds[3] - lastPinY(s8),
+    base: (() => { const b0 = SYMBOLS_BY_ID["kv_n14at_out"]; return b0.bounds[1] + b0.bounds[3] - lastPinY(b0); })(),
+  };
+  // 凡例 (stdNote) を注記として貼れる
+  const nLeg = pasteStdNote(pg, SYMBOLS_BY_ID[d.sym]);
+  out.legend = {
+    rows: nLeg,
+    onPage: pg.texts.some(t2 => /デバイス番号/.test(t2.text)) && pg.texts.some(t2 => /規格原本との照合/.test(t2.text)),
+  };
   return out;
 });
 
@@ -128,6 +151,10 @@ const checks = {
   chProp: R.chProp.shown && R.chProp.opts === 3 && R.chProp.sym === "kv_n16et_out_c7"
     && R.chProp.pins === "700,701…COM" && R.chProp.posKept && R.chProp.wiresKept,
   swapClean: R.swapClean.shown && R.swapClean.noAlt && R.swapClean.hasBase,
+  swapShow: R.swapShow === true,
+  swapKeepCh: R.swapKeepCh.sym === "kv_n8et_out_c7" && R.swapKeepCh.pin0 === "700" && R.swapKeepCh.posKept,
+  boundsNote: R.boundsNote.s8 === 13 && R.boundsNote.base === 6,   // (4+7+2) / (4+2)
+  legend: R.legend.rows >= 1 && R.legend.onPage,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

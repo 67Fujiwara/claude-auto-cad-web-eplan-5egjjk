@@ -236,7 +236,10 @@ function kvBuild(o, pitch) {
   /* 用紙は高さで決まる (幅が決め手になることはない)。先に決めて、
      出力の縦置きでは現場側 (レールまでの距離) を広げ、図枠の横幅を
      ぎりぎりまで使う — コメント欄 (50mm) は右端に寄る */
-  const sheetH = r1(Math.max(...(o.allSeqs || [o.seq]).map(q => kvSeqH(q, pitch))));
+  /* 拡張の図中注記 (※拡張◯台目…) は箱の下 7mm に出る。用紙判定へ入れないと
+     「判定は入るが注記が表題欄帯に掛かる」機種がいずれ出る (bounds と申告の一致) */
+  const noteH = o.expNote ? 7 : 0;
+  const sheetH = r1(Math.max(...(o.allSeqs || [o.seq]).map(q => kvSeqH(q, pitch))) + noteH);
   /* 幅は「本物の最小幅」を渡す。1 などの仮値だと「表題欄の左に収まる細い記号」
      と誤判定され、右下の帯 (表題欄 + 改訂履歴欄) を確保しない高さで
      用紙が選ばれてしまう。この記号は最小でも 170mm ある */
@@ -461,7 +464,8 @@ function mkKvUnit(model, cfg) {
           at += take;
         }
         const fits = trial.every((gs, k) =>
-          kvSeqH(mkSeq(gs, kind === "出力" && !cfg.exp && sheets.length === 0 && k === 0), KV_PITCH_DEF) <= KV_FIT_H);
+          kvSeqH(mkSeq(gs, kind === "出力" && !cfg.exp && sheets.length === 0 && k === 0), KV_PITCH_DEF)
+            + (cfg.exp ? 7 : 0) <= KV_FIT_H);   // 拡張は図中注記のぶんも枚割りに入れる
         if (fits) { trial.forEach(gs => sheets.push(gs)); break; }
       }
     }
@@ -495,7 +499,7 @@ function mkKvUnit(model, cfg) {
           expNote: `※拡張${n}台目の割付 (R${ch}00〜)`,
           name: `${model} 出力結線図${ch === cfg.ch0 ? "" : ` (拡張${n}台目 R${ch}00〜)`}`,
           nameEn: `${model} output wiring${ch === cfg.ch0 ? "" : ` (unit ${n})`}`,
-          stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示)。" +
+          stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示。端子の図記号番号は規格原本との照合が必要)。" +
             `ただし端子位置の表示は KV のデバイス番号 (R を除いた数字) — 実機の端子台の刻印ではない (${model} の刻印は未確認)。` +
             "リレー番号は接続順で決まるため、図中の『※拡張◯台目の割付』注記とプロパティ「拡張ユニットの台数」を実機の接続順に合わせること。" +
             "コモンの刻印 COM は N14AR からの類推 (実機未確認)。ユニットの電源と接地は別紙の電源回路図に描きます",
