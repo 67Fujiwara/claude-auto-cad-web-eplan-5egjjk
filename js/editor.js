@@ -282,6 +282,28 @@ function zoneHandles(z) {
   return out;
 }
 /** 選択中の破線枠の「コメント」を掴んだか (枠のつまみより先に見る) */
+/** 図面座標 → 機器ローカル座標 (回転・倍率の逆変換) */
+function devLocalXY(dev, wx, wy) {
+  const r = (dev.rot || 0) * Math.PI / 180, k = devScale(dev);
+  const c = Math.cos(r), sn = Math.sin(r);
+  const px = wx - dev.x, py = wy - dev.y;
+  return { x: (px * c + py * sn) / k, y: (-px * sn + py * c) / k };
+}
+/** PLC 入出力結線図の機能欄 (コメント欄) の下線をつまんだか。
+    行の下線 ±2.2mm の帯だけ拾う — 行間の空白は従来どおり機器の移動に使える */
+function fnColAt(page, wx, wy) {
+  for (let i = page.devices.length - 1; i >= 0; i--) {
+    const dev = page.devices[i];
+    const sp = symOf(dev.sym).ioSheet;
+    if (!sp || !sp.rows || !sp.fnW) continue;
+    const l = devLocalXY(dev, wx, wy);
+    const fx = (sp.fnX !== undefined ? sp.fnX : (sp.fnTextX || 0) - 1) + devFnDx(dev);
+    if (l.x < fx - 1 || l.x > fx + sp.fnW + 1) continue;
+    if (sp.rows.some(rr => Math.abs(l.y - (rr.y + 1.5)) < 2.2)) return { dev };
+  }
+  return null;
+}
+
 function zoneLabelAt(page, wx, wy) {
   for (const z of pageZones(page)) {
     if (!App.selection.has(z.id)) continue;
@@ -375,6 +397,13 @@ function devicesSVG(page, opts = {}) {
     out += extra;
     // シンボルの線は太線 0.5mm (グループの scale で用紙上一定になる)
     out += symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1, rot: dev.rot || 0 });
+    // 機能欄 (コメント欄) の下線 — body でなくここで引く。ドラッグ位置 (fnDx) に追従
+    if (sym.ioSheet && sym.ioSheet.rows && sym.ioSheet.fnW) {
+      const fx = (sym.ioSheet.fnX !== undefined ? sym.ioSheet.fnX : (sym.ioSheet.fnTextX || 0) - 1) + devFnDx(dev);
+      let dfn = "";
+      sym.ioSheet.rows.forEach(rr => { dfn += `M${fx},${rr.y + 1.5} H${fx + sym.ioSheet.fnW} `; });
+      out += `<path d="${dfn}" stroke="currentColor" stroke-width="0.25" fill="none"/>`;
+    }
     out += `</g>`;
     // 端子番号 (13/14, A1/A2, X1/X2 …) — EPLAN同様ピン脇に表示。
     // 連動接点は同一コイル内の順位で 13/14 → 23/24 と自動採番。
@@ -812,6 +841,14 @@ function onMouseDown(e) {
     requestRender();
     return;
   }
+  // PLC 結線図のコメント欄 (機能欄の下線) をつまんだ → 欄だけ横に動かす
+  const fc = fnColAt(curPage(), w.x, w.y);
+  if (fc) {
+    Editor.drag = { type: "fnCol", dev: fc.dev, dx0: devFnDx(fc.dev),
+      wx0: w.x, wy0: w.y, moved: false, snapshot: JSON.stringify(App.project) };
+    requestRender();
+    return;
+  }
   const hit = hitTest(w.x, w.y);
   if (hit) {
     const id = hit.obj.id;
@@ -944,6 +981,18 @@ function onMouseMove(e) {
     d.z.lx = nx; d.z.ly = ny;
     requestRender();
   }
+  if (d.type === "fnCol") {
+    // コメント欄は記号ローカルの横方向だけ 0.5mm 刻みで動かす (行は端子に固定)
+    const l1 = devLocalXY(d.dev, w.x, w.y), l0 = devLocalXY(d.dev, d.wx0, d.wy0);
+    const nd = Math.round((d.dx0 + (l1.x - l0.x)) * 2) / 2;
+    if (nd !== devFnDx(d.dev)) {
+      d.moved = true;
+      d.dev.props = d.dev.props || {};
+      if (nd) d.dev.props.fnDx = nd; else delete d.dev.props.fnDx;
+      App.labelRev++;
+      requestRender();
+    }
+  }
   if (d.type === "zoneResize") {
     /* つまんだ縁だけを 0.5mm 刻みで動かす。最小 10×10mm — 裏返さない */
     const z = d.z, MIN = 10;
@@ -1058,6 +1107,20 @@ function onMouseUp(e) {
       App.redoStack.length = 0;
       saveLocal();
       UI.setMsg("破線枠のコメントを動かしました (プロパティの「位置を戻す」で既定へ)");
+    }
+    Editor.drag = null;
+    requestRender();
+    return;
+  }
+  if (d.type === "fnCol") {
+    if (d.moved) {
+      App.labelRev++;
+      App.undoStack.push(d.snapshot);
+      if (App.undoStack.length > 100) App.undoStack.shift();
+      App.redoStack.length = 0;
+      saveLocal();
+      UI.setMsg(`コメント欄を動かしました (${devFnDx(d.dev) >= 0 ? "+" : ""}${devFnDx(d.dev)}mm — プロパティの「既定に戻す」で元へ)`);
+      UI.showProps();
     }
     Editor.drag = null;
     requestRender();

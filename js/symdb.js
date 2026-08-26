@@ -279,7 +279,9 @@ function kvBuild(o, pitch) {
        文字が並び、機器のピン番号・線番と同じ帯で読み合わせることになる */
     if (flip) parts.push(kvText(-(TR * 2 + KV_TERM_X), r1(r.y + 1.25), 2.5, r.n, "end"));
     else parts.push(kvText(TR * 2 + KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "start"));
-    parts.push(`<path d="M${r1(FX)},${r1(r.y + 1.5)} H${r1(FX + KV_FN_W)}" stroke-width="0.25"/>`);
+    /* 機能欄 (コメント欄) の下線は body に焼き込まない — 機器ごとに
+       ドラッグで位置を変えられるように、描画側 (画面・DXF) が
+       ioSheet.fnX/fnW + 機器の fnDx から毎回引く */
   });
   /* 保護接地の図記号は焼き込まない。焼き込むと「紙の上は接地済み・モデルは
      未接続」という食い違いが起き、利用者が指示どおり結線すると導体が接地記号を
@@ -299,9 +301,13 @@ function kvBuild(o, pitch) {
      実インク (getBBox + 半幅) より 0.25mm 過小になる */
   const HW = 0.25;
   const inkBoxes = (flip
-    ? [[BX, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]]
-    : [[0, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]])
-    .map(([x, y, w2, h2]) => [r1(x - HW), r1(y - HW), r1(w2 + HW * 2), r1(h2 + HW * 2)]);
+    ? [[BX, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0, "fn"]]
+    : [[0, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0, "fn"]])
+    .map(([x, y, w2, h2, tag]) => {
+      const r = [r1(x - HW), r1(y - HW), r1(w2 + HW * 2), r1(h2 + HW * 2)];
+      if (tag) r.push(tag);              // "fn" = 機能欄の帯 (機器の fnDx に追従する)
+      return r;
+    });
   // 注記の帯もインクとして申告 (ラベルの自動配置が上に乗らないように)
   if (o.expNote) inkBoxes.push([r1(BX), r1(bh + 3), 48, 5.5]);
   // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
@@ -319,6 +325,7 @@ function kvBuild(o, pitch) {
       rail: RAIL, gap: KV_GAP, pitch, railTags: o.railTags,
       sep: KV_RAIL_SEP, lead: KV_RAIL_LEAD,
       fnTextX: FX + 1, fnRoom: KV_FN_W - 1,   // 機能欄の文字の左端 / 下線の長さ
+      fnX: FX, fnW: KV_FN_W,                  // 下線そのもの (画面・DXF が機器ごとに引く)
       gapX0, gapX1,
       // 後方互換 (公開していた旧フィールド。dev.x - gapFrom = 隙間の左端)
       gapFrom: -gapX0, gapTo: -gapX1,

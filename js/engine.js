@@ -860,6 +860,12 @@ function symTextK(sym) { return (sym && sym.textK) || 1; }
    端子位置・外接矩形・ラベルの文字高はすべてこの倍率に追従する */
 function objScale(o) { return o && o.scale > 0 ? o.scale : 1; }
 function devScale(dev) { return objScale(dev); }
+/* PLC 入出力結線図の機能欄 (コメント欄) の横位置オフセット (mm・記号ローカル)。
+   コメント欄をドラッグすると付く。0 なら記号の既定位置 (ioSheet.fnX) */
+function devFnDx(dev) {
+  const v = dev && dev.props && dev.props.fnDx;
+  return Number.isFinite(v) ? v : 0;
+}
 
 /* 用紙に合わせて作った記号 (PLC の入出力結線図など) が持つ「想定する用紙」。
    記号が {paper, orient, scale} をそのまま持つ (表示用の文字列を読み戻さない) */
@@ -920,6 +926,7 @@ function pageDrawnMinima(page) {
     w = Math.min(w, m.w * f * devScale(dev));
     // アプリが描くラベル (端子番号・タグ) も記号の倍率で描かれる
     if ((sym.pins || []).some((p, i) => pinLabelVisible(page, dev, i))) h = Math.min(h, TEXT_H.small * f * k);
+    if (sym.ioSheet) w = Math.min(w, LINE_W.thin * f * devScale(dev));   // 機能欄の下線 (動的に描く)
     if (displayTag(dev) || dev.desc) h = Math.min(h, TEXT_H.normal * f * k);
   });
   condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f * objScale(wr)); });
@@ -1130,7 +1137,7 @@ function symInkBox(sym) {
 /** 記号が線を引いている範囲を、帯ごとに (inkBoxes があればそのぶんだけ) */
 function symInkBoxes(sym) {
   if (sym && sym.inkBoxes && sym.inkBoxes.length) {
-    return sym.inkBoxes.map(([x, y, w, h]) => ({ x, y, w, h }));
+    return sym.inkBoxes.map(([x, y, w, h, tag]) => (tag === "fn" ? { x, y, w, h, fn: 1 } : { x, y, w, h }));
   }
   const b = symInkBox(sym);
   return b ? [b] : [];
@@ -1144,7 +1151,9 @@ const _boxAbs = (dev, r) => {
 /** 機器が実際に線を引いている範囲 (図面座標・帯ごと)。回転・位置を反映する */
 function devInkBoxes(dev) {
   const bs = symInkBoxes(symOf(dev.sym));
-  return bs.length ? bs.map(r => _boxAbs(dev, r)) : [devBounds(dev)];
+  const fdx = devFnDx(dev);
+  // 機能欄の帯はドラッグした位置に追従させる (ラベル・線番の自動配置が避ける)
+  return bs.length ? bs.map(r => _boxAbs(dev, r.fn && fdx ? { ...r, x: r.x + fdx } : r)) : [devBounds(dev)];
 }
 /** 同じものを 1 つの外接矩形で */
 function devInkBox(dev) {
@@ -1443,7 +1452,7 @@ function deviceRowTexts(page, dev) {
     const t = Array.isArray(fn) ? fn[i] : fn[p.n];
     if (!t) return;
     const sp = sym.ioSheet || {};
-    const a = pinAbs(dev, { x: sp.fnTextX === undefined ? KV_FN_TEXT_X : sp.fnTextX, y: p.y });
+    const a = pinAbs(dev, { x: (sp.fnTextX === undefined ? KV_FN_TEXT_X : sp.fnTextX) + devFnDx(dev), y: p.y });
     const hh = textHeightMM(String(t), h);
     const w = textWidthMM(String(t), hh, false, false);
     out.push({ text: String(t), x: a.x, y: a.y, size: hh, anchor: "start", row: p.row === undefined ? i : p.row,

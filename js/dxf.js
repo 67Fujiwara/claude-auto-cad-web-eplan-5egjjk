@@ -542,6 +542,13 @@ function pageToDXF(page) {
     const xr = deviceXrefBox(page, dev);      // 位置は画面と同じ探索結果を使う
     // 入出力結線図の機能欄 (行ごとの文言)
     deviceRowTexts(page, dev).forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", "start", 0, { mono: false }); });
+    // 機能欄 (コメント欄) の下線。body から外したので機器ごとに引く (fnDx に追従)
+    if (sym.ioSheet && sym.ioSheet.rows && sym.ioSheet.fnW) {
+      const fx0 = (sym.ioSheet.fnX !== undefined ? sym.ioSheet.fnX : (sym.ioSheet.fnTextX || 0) - 1) + devFnDx(dev);
+      sym.ioSheet.rows.forEach(rr => {
+        ents += dxfPoly([xf(fx0, rr.y + 1.5), xf(fx0 + sym.ioSheet.fnW, rr.y + 1.5)], "SYMBOL_THIN");
+      });
+    }
     // 相互参照は線番ではないので専用レイヤへ (受領側で線番だけを操作しても巻き込まれない)
     if (xr) ents += dxfText(xr.x, xr.y, xr.size, xr.text, "XREF", xr.anchor || "start", xr.angle || 0);
     // コイル下の接点ミラー (画面と同じ内容・同じ寸法)

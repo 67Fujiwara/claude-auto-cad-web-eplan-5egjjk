@@ -90,8 +90,11 @@ const R = await p.evaluate(() => {
         aux.every(x => /^(COM|C\d+)$/.test(x.n) ? !x.noDrc : x.noDrc === true),
       /* 接地の図記号を焼き込まないこと。端子の小円 (行数ぶん) 以外の円が無い */
       peEarth: (sym.body.match(/<circle /g) || []).length === sym.pins.length && !/r="6"/.test(sym.body),
-      // 機能欄の下線が行数ぶんある
-      fnLines: (sym.body.match(/stroke-width="0\.25"/g) || []).length,
+      /* 機能欄の下線が行数ぶんある。下線は body でなく描画側が
+         ioSheet.fnX/fnW から機器ごとに引く (コメント欄のドラッグ移動に追従) —
+         実際に描かれる本数は kv-fncol.mjs の drawn が数える */
+      fnLines: (sym.ioSheet && sym.ioSheet.fnX !== undefined && sym.ioSheet.fnW > 0
+        && Array.isArray(sym.ioSheet.rows)) ? sym.ioSheet.rows.length : 0,
       /* 端子名は外郭の内側に描いてあること (自動ラベルは出さない)。
          外に出すと現場側の配線区画に文字が並び、端子の丸ともあきが取れない */
       termInBody: sym.pins.every(q => q.inBody === true) &&

@@ -386,6 +386,8 @@ UI.showProps = (focusTag = false) => {
           <select id="pKvCh">${chs.map((c2, i2) =>
             `<option value="${c2}"${c2 === base.expCh ? " selected" : ""}>拡張${i2 + 1}台目 (R${c2}00〜)</option>`).join("")}</select></div>`;
       })()}
+      ${sym.ioSheet && devFnDx(dev) ? `<div class="prop-row"><label>コメント欄の位置 <span class="rp-dim">(下線をドラッグで移動できます。現在 ${devFnDx(dev) >= 0 ? "+" : ""}${devFnDx(dev)}mm)</span></label>
+        <button class="btn-solid" id="pFnPos" style="padding:3px 10px;font-size:11px">既定に戻す</button></div>` : ""}
       ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
         <button class="btn-solid primary" id="pScaffold" style="padding:3px 10px;font-size:11px">結線図の下地を作る</button></div>` : ""}
       ${(sym.nonstd && sym.stdNote) ? `<div class="prop-row"><label>規格外図記号の凡例 <span class="rp-dim">(JIS C 0617-1: 規格にない図記号は図面上で説明する)</span></label>
@@ -504,6 +506,14 @@ UI.showProps = (focusTag = false) => {
     /* 規格外の図記号は、その図面 (または添付文書) 上で説明するのが
        JIS C 0617-1 / IEC 60617-1 の決まり。プロパティの説明文だけでは
        出図した紙にも DXF にも出ないので、注記として貼れるようにする */
+    const fp = pane.querySelector("#pFnPos");
+    if (fp) fp.addEventListener("click", () => {
+      commit();
+      delete dev.props.fnDx;
+      App.labelRev++;
+      UI.refresh(); UI.showProps();
+      UI.toast("コメント欄を既定の位置に戻しました", 2600);
+    });
     const sn = pane.querySelector("#pStdNote");
     if (sn) sn.addEventListener("click", () => {
       commit();
