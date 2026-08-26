@@ -248,8 +248,10 @@ function zonesSVG(page, opts = {}) {
   const dash = WIRE_STYLES.dash.dash.split(" ").map(v => v * fr).join(" ");
   pageZones(page).forEach(z => {
     const selected = !print && App.selection.has(z.id);
-    out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr}" fill="none"
-      stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr}" stroke-dasharray="${dash}"/>`;
+    const zk = objScale(z);            // 尺度の違うページから貼った枠の倍率
+    const zdash = zk !== 1 ? WIRE_STYLES.dash.dash.split(" ").map(v => v * fr * zk).join(" ") : dash;
+    out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr * zk}" fill="none"
+      stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr * zk}" stroke-dasharray="${zdash}"/>`;
     if (z.label) {
       const lp = zoneLabelPos(z);
       out += `<text x="${lp.x}" y="${lp.y}" font-size="${svgFontSizeFor(z.label, lp.size)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
@@ -310,14 +312,15 @@ function wiresSVG(page, opts = {}) {
     const d = "M" + w.pts.map(p => p[0] + "," + p[1]).join(" L");
     const cond = isWireConductive(w);
     // 線の太さは JIS Z 8312 の系列 (配線=太線 0.5 / 作図線=細線 0.25、比 2:1)
-    let color = INK, sw = (cond ? LINE_W.thick : LINE_W.thin) * fr;
+    const wk = objScale(w);            // 尺度の違うページから貼った配線の倍率
+    let color = INK, sw = (cond ? LINE_W.thick : LINE_W.thin) * fr * wk;
     if (cond && sim && sim.wireNet) {
       const net = sim.wireNet.get(w.id);
-      if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = LINE_W.extra * fr; }
-      else if (sim.nNets.has(net)) { color = SIM_N; sw = LINE_W.extra * fr; }
+      if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = LINE_W.extra * fr * wk; }
+      else if (sim.nNets.has(net)) { color = SIM_N; sw = LINE_W.extra * fr * wk; }
     }
     const st = WIRE_STYLES[w.style] || WIRE_STYLES.solid;
-    const da = wireDashArray(w, fr);
+    const da = wireDashArray(w, fr * wk);
     const dash = da ? ` stroke-dasharray="${da}" stroke-linecap="${st.round ? "round" : "butt"}"` : "";
     const selected = !print && App.selection.has(w.id);
     if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="${2.2 * fr}" fill="none" opacity="0.28" stroke-linecap="round"/>`;
@@ -329,13 +332,13 @@ function wiresSVG(page, opts = {}) {
       const [mx, my, horiz] = wireLabelPos(w, page);
       // 位置は wireLabelPos が確定済み (当たり判定矩形と完全に一致させる)
       const lx = mx, ly = my;
-      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, TEXT_H.small * fr * wk, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec && w.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz, gap, side] = wireLabelPos(w, page);
       const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
-      out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+      out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr * wk, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
   });
   // ジャンクションドット (直径は線幅の約3倍)
@@ -363,10 +366,11 @@ function devicesSVG(page, opts = {}) {
       if (st.color) color = st.color;
       extra = st.extra || "";
     }
-    out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})" data-id="${dev.id}" class="device" style="color:${color}">`;
+    const dk = devScale(dev);          // 貼り付け先の尺度に合わせた機器ごとの倍率
+    out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})${dk !== 1 ? ` scale(${dk})` : ""}" data-id="${dev.id}" class="device" style="color:${color}">`;
     if (selected || hovered) {
       const [bx, by, bw, bh] = sym.bounds;
-      out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${selected ? 0.5 : 0.3}" stroke-dasharray="${selected ? "none" : "1.5 1.2"}" rx="1"/>`;
+      out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${(selected ? 0.5 : 0.3) / dk}" stroke-dasharray="${selected ? "none" : "1.5 1.2"}" rx="1"/>`;
     }
     out += extra;
     // シンボルの線は太線 0.5mm (グループの scale で用紙上一定になる)
@@ -1378,6 +1382,10 @@ function pasteClipboard() {
     const d = deepCopy(d0);
     idMap[d0.id] = d.id = uid("d");
     d.x = rs(d.x) + dx; d.y = rs(d.y) + dy;
+    if (kf !== 1) {                    // 図記号ごと伸縮して印刷上の大きさを保つ
+      const ns = Math.round(devScale(d) * kf * 10000) / 10000;
+      if (ns !== 1) d.scale = ns; else delete d.scale;
+    }
     page.devices.push(d);
     App.selection.add(d.id);
   });
@@ -1401,6 +1409,10 @@ function pasteClipboard() {
     const w = deepCopy(w0);
     w.id = uid("w");
     w.pts = w.pts.map(p => [rs(p[0]) + dx, rs(p[1]) + dy]);
+    if (kf !== 1) {                    // 線の太さ・線番の文字高も印刷実寸を保つ
+      const ns = Math.round(objScale(w) * kf * 10000) / 10000;
+      if (ns !== 1) w.scale = ns; else delete w.scale;
+    }
     w.num = null;
     page.wires.push(w);
     App.selection.add(w.id);
@@ -1409,6 +1421,7 @@ function pasteClipboard() {
     const t = deepCopy(t0);
     t.id = uid("t");
     t.x = rs(t.x) + dx; t.y = rs(t.y) + dy;
+    if (kf !== 1) t.size = Math.round((t.size || TEXT_H.normal) * kf * 100) / 100;
     page.texts.push(t);
     App.selection.add(t.id);
   });
@@ -1421,6 +1434,9 @@ function pasteClipboard() {
       z.w = rs(z.w); z.h = rs(z.h);          // 枠の大きさも図枠に対する割合を保つ
       if (z.lx !== undefined) z.lx = rs(z.lx);
       if (z.ly !== undefined) z.ly = rs(z.ly);
+      if (z.label) z.labelSize = Math.round(zoneLabelSize(z0) * kf * 100) / 100;
+      const ns = Math.round(objScale(z) * kf * 10000) / 10000;
+      if (ns !== 1) z.scale = ns; else delete z.scale;
     }
     pageZones(page).push(z);
     App.selection.add(z.id);
@@ -1436,7 +1452,7 @@ function pasteClipboard() {
     });
   }
   UI.setMsg("カーソル位置に貼り付けました");
-  if (kf !== 1) UI.toast(`尺度 ${cb.scale} → ${pageSheetMeta(page).scale}: 配置を ${Math.round(kf * 100) / 100} 倍にして図枠に合わせました (図記号・文字の大きさは常に 1:1)`, 5200);
+  if (kf !== 1) UI.toast(`尺度 ${cb.scale} → ${pageSheetMeta(page).scale}: 図記号・文字も含めて ${Math.round(kf * 100) / 100} 倍にし、印刷上の大きさを保ちました`, 5200);
   // 黙って行き先を消すと気づけないので知らせる
   if (droppedGoto) UI.toast(`⚠ 行き先 ${droppedGoto} 個は自分のページを指すことになるため未設定にしました`, 4200);
   requestRender();

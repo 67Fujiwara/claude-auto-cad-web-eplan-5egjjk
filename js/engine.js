@@ -855,6 +855,11 @@ function symBodyRects(sym) {
    結線図など) は、端子番号やタグも一緒に大きくしないと紙の上で 1.25mm になる。
    記号が textK を持つときだけ効く (既定は 1 倍) */
 function symTextK(sym) { return (sym && sym.textK) || 1; }
+/* 機器ごとの描画倍率。尺度の異なるページへ貼り付けたとき、図記号・文字も
+   含めて印刷上の大きさを保つために使う (AutoCAD のブロック挿入倍率と同じ)。
+   端子位置・外接矩形・ラベルの文字高はすべてこの倍率に追従する */
+function objScale(o) { return o && o.scale > 0 ? o.scale : 1; }
+function devScale(dev) { return objScale(dev); }
 
 /* 用紙に合わせて作った記号 (PLC の入出力結線図など) が持つ「想定する用紙」。
    記号が {paper, orient, scale} をそのまま持つ (表示用の文字列を読み戻さない) */
@@ -903,35 +908,40 @@ function symDrawnMinima(sym) {
 }
 /** そのページに実際に描かれる文字高さ・線の太さの最小値 (作図領域の mm) */
 function pageDrawnMinima(page) {
-  let h = Infinity, w = LINE_W.thick;
+  // w も実際に描かれる線から測る。決め打ちで LINE_W.thick から始めると、
+  // 倍率つきで貼った内容だけのページ (すべて太く描かれている) を誤判定する
+  let h = Infinity, w = Infinity;
   const f = contentScale();
   page.devices.forEach(dev => {
     const sym = symOf(dev.sym);
-    const k = symTextK(sym);
+    const k = symTextK(sym) * devScale(dev);
     const m = symDrawnMinima(sym);
-    if (isFinite(m.h)) h = Math.min(h, m.h * f);
-    w = Math.min(w, m.w * f);
+    if (isFinite(m.h)) h = Math.min(h, m.h * f * devScale(dev));
+    w = Math.min(w, m.w * f * devScale(dev));
     // アプリが描くラベル (端子番号・タグ) も記号の倍率で描かれる
     if ((sym.pins || []).some((p, i) => pinLabelVisible(page, dev, i))) h = Math.min(h, TEXT_H.small * f * k);
     if (displayTag(dev) || dev.desc) h = Math.min(h, TEXT_H.normal * f * k);
   });
-  condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f); });
+  condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f * objScale(wr)); });
   (page.texts || []).forEach(t => { h = Math.min(h, (t.size || TEXT_H.normal) * f); });
-  // アプリが描く線 — 導体は太線、作図線 (破線・一点鎖線) と破線枠は細線
-  if (page.wires && page.wires.length) w = Math.min(w, LINE_W.thick * f);
-  if ((page.wires || []).some(wr => wr.style && wr.style !== "solid")) w = Math.min(w, LINE_W.thin * f);
-  if (pageZones(page).length) {
-    w = Math.min(w, LINE_W.thin * f);
-    pageZones(page).forEach(z => { if (z.label) h = Math.min(h, TEXT_H.normal * f); });
-  }
+  // アプリが描く線 — 導体は太線、作図線 (破線・一点鎖線) と破線枠は細線。
+  // 尺度の違うページから貼った線・枠は倍率つきで描かれるので、その分を掛けて測る
+  (page.wires || []).forEach(wr => {
+    w = Math.min(w, (wr.style && wr.style !== "solid" ? LINE_W.thin : LINE_W.thick) * f * objScale(wr));
+  });
+  pageZones(page).forEach(z => {
+    w = Math.min(w, LINE_W.thin * f * objScale(z));
+    if (z.label) h = Math.min(h, zoneLabelSize(z) * f);
+  });
   // 接点ミラー表・相互参照の文字
   page.devices.forEach(dev => {
     const sym = symOf(dev.sym);
     if (sym.mirror && linkedContacts(dev).length) h = Math.min(h, TEXT_H.small * f);
-    if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym));
-    if (deviceRowTexts(page, dev).length) h = Math.min(h, TEXT_H.small * f * symTextK(sym));
+    if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
+    if (deviceRowTexts(page, dev).length) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
   });
   if (!isFinite(h)) h = TEXT_H.small * f;
+  if (!isFinite(w)) w = LINE_W.thick * f;
   return { h, w };
 }
 
@@ -944,8 +954,9 @@ function pinLabelBoxes(page) {
   const bodyRects = [];
   page.devices.forEach(d => {
     if ((d.rot || 0) % 360 !== 0) return;
+    const kd = f * devScale(d);
     symBodyRects(symOf(d.sym)).forEach(([rx, ry, rw, rh]) => {
-      bodyRects.push({ x: d.x + rx * f, y: d.y + ry * f, w: rw * f, h: rh * f });
+      bodyRects.push({ x: d.x + rx * kd, y: d.y + ry * kd, w: rw * kd, h: rh * kd });
     });
   });
   /* 導体も障害物にする。端子番号が配線の上に乗ると読めないので、
@@ -964,7 +975,7 @@ function pinLabelBoxes(page) {
     (s2.pins || []).forEach((p, pi) => {
       const vis = pinLabelVisible(page, d2, pi);
       if (!vis) return;
-      const h = TEXT_H.small * f * symTextK(s2), w2 = textWidthMM(vis.name, h, false, true);
+      const h = TEXT_H.small * f * symTextK(s2) * devScale(d2), w2 = textWidthMM(vis.name, h, false, true);
       const rotated = (d2.rot || 0) % 360 !== 0;
       const isTop = !rotated && (p.y <= 0 || (s2.horizontalPins && p.y <= s2.bounds[1] + 2));
       // 端子番号もピンの左右・上下を試して、他の端子番号や図記号を避ける
@@ -1219,7 +1230,7 @@ function placeDeviceLabels(page, dev, obstacles) {
   const b = devBounds(dev);
   const tag = displayTag(dev), desc = dev.desc;
   const horizontal = (dev.rot || 0) % 180 !== 0;
-  const H = TEXT_H.normal * f * symTextK(sym);
+  const H = TEXT_H.normal * f * symTextK(sym) * devScale(dev);
   const mk = (text, x, y, anchor, isTag) => {
     const hh = textHeightMM(text, H);
     const o = { text, x, y, w: textWidthMM(text, hh, !!isTag, !!isTag), h: hh, anchor, size: H, isTag: !!isTag };
@@ -1424,7 +1435,7 @@ function deviceRowTexts(page, dev) {
   const sym = symOf(dev.sym);
   if (!sym || !sym.fnRows) return [];
   const fn = (dev.props && dev.props.fn) || {};
-  const s = contentScale(), h = TEXT_H.small * s * symTextK(sym);
+  const s = contentScale(), h = TEXT_H.small * s * symTextK(sym) * devScale(dev);
   const out = [];
   sym.pins.forEach((p, i) => {
     /* 文言は端子名で持つ。行番号で持つと、機種を差し替えたとき端子の並びが
@@ -1457,7 +1468,7 @@ function deviceXrefBox(page, dev) {
        図枠はみ出し・文字の重なりの検図が誤判定する */
     const s0 = contentScale();
     const text0 = gotoRefText(dev);
-    const h0 = textHeightMM(text0, TEXT_H.small * s0);
+    const h0 = textHeightMM(text0, TEXT_H.small * s0 * devScale(dev));
     const w0 = textWidthMM(text0, h0, false, true);
     /* 上下の中心合わせは実インクで測る。呼び h は基準の字 (H) の高さなので、
        "/" や和文のように基線の下へ出る字は h だけでは測れず、中心から下へ
@@ -1483,7 +1494,7 @@ function deviceXrefBox(page, dev) {
   const s = contentScale();
   const b = devBounds(dev);
   const text = "/" + devLocation(f.dev);
-  const h = TEXT_H.small * s, w = textWidthMM(text, h, false, true);
+  const h = TEXT_H.small * s * devScale(dev), w = textWidthMM(text, h, false, true);
   const obst = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
     deviceObstacleBoxes(d2, OBST_INSET.label * s).forEach(b => obst.push(b));
@@ -1850,8 +1861,8 @@ function symOf(symId) {
    回路が増える。 */
 function pinAbs(dev, pin) {
   const r = (dev.rot || 0) * Math.PI / 180;
-  const c = Math.cos(r), s = Math.sin(r);
-  return { x: dev.x + pin.x * c - pin.y * s, y: dev.y + pin.x * s + pin.y * c };
+  const c = Math.cos(r), s = Math.sin(r), k = devScale(dev);
+  return { x: dev.x + (pin.x * c - pin.y * s) * k, y: dev.y + (pin.x * s + pin.y * c) * k };
 }
 function devPins(dev) {
   const sym = symOf(dev.sym);

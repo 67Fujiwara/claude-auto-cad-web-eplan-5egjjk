@@ -307,7 +307,8 @@ function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}
 /** デバイス座標変換 (回転 + 平行移動) */
 function dxfDevXform(dev) {
   const r = (dev.rot || 0) * Math.PI / 180;
-  const c = Math.cos(r), s = Math.sin(r), k = contentScale();   // 図記号は常に 1:1
+  // 図記号は常に 1:1。ただし尺度の異なるページから貼った機器は倍率が付く
+  const c = Math.cos(r), s = Math.sin(r), k = contentScale() * devScale(dev);
   return (x, y) => [dev.x + (x * k) * c - (y * k) * s, dev.y + (x * k) * s + (y * k) * c];
 }
 
@@ -492,7 +493,7 @@ function pageToDXF(page) {
     const symLyr = symStrokeWidth(sym) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
     // 要素ごとに線幅が指定されていれば、そちらでレイヤを決める
     const lyrOf = (pr) => (pr.sw != null ? pr.sw : symStrokeWidth(sym)) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
-    const kk = contentScale();
+    const kk = contentScale() * devScale(dev);
     /* 正立グループ (受け口の識別図) は、原点だけ機器と一緒に回して中身は回さない。
        画面と同じ扱いにしないと、DXF でだけ絵が上下逆さまになる */
     const place = (pr) => (x, y) => {
@@ -510,7 +511,7 @@ function pageToDXF(page) {
         ents += dxfArc(acx, acy, pr.r * kk, pr.t1 + (pr.up ? 0 : (dev.rot || 0) * Math.PI / 180), pr.dt, lyr, pr.lt);
       } else if (pr.type === "circle") {
         const [cx, cy] = at(pr.cx, pr.cy);
-        ents += dxfCircle(cx, cy, pr.r, lyr, pr.lt);
+        ents += dxfCircle(cx, cy, pr.r * kk, lyr, pr.lt);
       } else if (pr.up) {        // 正立グループの中の文字
         const [tx2, ty2] = at(pr.x, pr.y);
         ents += dxfText(tx2, ty2, pr.size * kk, pr.text, lyr, pr.anchor || "middle", 0, { mono: pr.mono });
@@ -521,7 +522,7 @@ function pageToDXF(page) {
         const [sbx, sby, sbw, sbh] = sym.bounds;
         const scx = sbx + sbw / 2, scy = sby + sbh / 2;
         const [rcx, rcy] = xf(scx, scy);
-        const k = contentScale();
+        const k = contentScale() * devScale(dev);
         ents += dxfText(rcx + (pr.x - scx) * k, rcy + (pr.y - scy) * k,
           pr.size * k, pr.text, symLyr, pr.anchor || "middle", 0, { mono: pr.mono });
       }
