@@ -35,6 +35,7 @@ const SYMEDIT_TOOLS = [
   ["text", "文字", "クリックした位置に文字を入れる"],
   ["pin", "端子", "配線をつなぐ点。5mm グリッドに乗ります"],
   ["conn", "コネクタ", "多極コネクタ (CN3 など) をまとめて置く。クリックした位置が1番ピン"],
+  ["table", "表", "パラメーター表。クリックで 3列×3行 の表を置く。選択して列数・行数を変更、罫線をドラッグで列幅・行高、セルをダブルクリックで文字"],
   ["select", "選択", "クリックで選択、空白からドラッグで範囲選択 (まとめて移動/Del)。矢印キーで微調整 0.5mm (Shift=5mm)。青いシンボル枠は角をドラッグでサイズ変更"],
 ];
 
@@ -61,6 +62,11 @@ function symEditXY(ev) {
 function symSnap(v, g) { return Math.round(v / g) * g; }
 
 /** 図形1つを SVG 文字列に */
+/** 表図形の全体幅・高さ (列幅・行高の合計) */
+function symTableWH(sh) {
+  return [(sh.colWs || []).reduce((a, b) => a + b, 0), (sh.rowHs || []).reduce((a, b) => a + b, 0)];
+}
+
 function symShapeSVG(sh, opts = {}) {
   // 破線は図形ごとの寸法 (sh.dash) を優先。無ければ従来の機械リンク寸法 3/0.75
   const dash = sh.style === "dash"
@@ -100,6 +106,33 @@ function symShapeSVG(sh, opts = {}) {
     let sweep = ((sh.a1 - sh.a0) % 360 + 360) % 360;
     const large = sweep > 180 ? 1 : 0;
     return `<path d="M${+x0.toFixed(2)},${+y0.toFixed(2)} A${+sh.r.toFixed(2)},${+sh.r.toFixed(2)} 0 ${large} 1 ${+x1.toFixed(2)},${+y1.toFixed(2)}"${dash}${extra}/>`;
+  }
+  if (sh.k === "table") {
+    // パラメーター表。罫線は1本のパスに、文字はセル内へ左詰め・上下中央で置く。
+    // body へそのまま書き出されるので、配置・印刷・DXF 出力にも同じ見た目で出る
+    const cw = sh.colWs || [10], rh = sh.rowHs || [6];
+    const [W, H] = symTableWH(sh);
+    const r2 = v => +v.toFixed(2);
+    const x0 = r2(sh.x), y0 = r2(sh.y);
+    const lw = sh.lw || LINE_W.thin;         // 表の罫線は細線 (図記号の輪郭と区別)
+    let d = `M${x0},${y0} H${r2(sh.x + W)} V${r2(sh.y + H)} H${x0} Z`;
+    let acc = sh.x;
+    for (let i = 0; i < cw.length - 1; i++) { acc += cw[i]; d += ` M${r2(acc)},${y0} V${r2(sh.y + H)}`; }
+    acc = sh.y;
+    for (let j = 0; j < rh.length - 1; j++) { acc += rh[j]; d += ` M${x0},${r2(acc)} H${r2(sh.x + W)}`; }
+    const th = sh.th || TEXT_H.small;
+    let out2 = `<g${opts.hl ? ` stroke="${SEL}"` : ""}><path d="${d}" fill="none" stroke-width="${lw}" stroke-linecap="butt"/>`;
+    let ay = sh.y;
+    (sh.cells || []).forEach((row, j) => {
+      const rhj = rh[j] || 0;
+      let ax = sh.x;
+      (row || []).forEach((cell, i) => {
+        if (cell) out2 += `<text x="${r2(ax + 1)}" y="${r2(ay + rhj / 2 + th * 0.35)}" data-h="${th}" font-size="${svgFontSizeFor(cell, th, false, { noMin: true })}" text-anchor="start" fill="currentColor" stroke="none" font-family="sans-serif">${escXML(cell)}</text>`;
+        ax += cw[i] || 0;
+      });
+      ay += rhj;
+    });
+    return out2 + `</g>`;
   }
   if (sh.k === "text") {
     const fam = sh.mono ? "monospace" : sh.serif ? "serif" : "sans-serif";
@@ -360,7 +393,7 @@ UI.openSymbolEditor = (symId = null) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はシンボルを作成できません"); return; }
   const S = SymEdit;
   S.shapes = []; S.pins = []; S.funcs = []; S.undo = []; S.sel = -1; S.draft = null; S.moving = null;
-  S.msel = { shapes: [], pins: [] }; S.marquee = null; S.frame = null; S.frameDrag = null;
+  S.msel = { shapes: [], pins: [] }; S.marquee = null; S.frame = null; S.frameDrag = null; S.tableDrag = null;
   S.connMeta = {};       // コネクタグループの設定 (gid → 極数・ピッチ…。「コネクタ編集」で作り直せる)
   S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
   S.th = TEXT_H.normal;
@@ -424,6 +457,15 @@ UI.openSymbolEditor = (symId = null) => {
         <button class="btn-solid" id="seConnEd" style="padding:4px 10px;font-size:11.5px" title="選択したコネクタの極数・信号名などを編集して作り直す">コネクタ編集</button>
       </div>
       <div class="prop-note" style="margin-top:4px">Ctrl+C コピー / Ctrl+X 切り取り / Ctrl+V 貼り付け / Ctrl+D 複製 / R 回転90° / Esc 選択ツールへ。未選択で回転すると全体が回ります。コネクタや挿入したシンボルは塊で選ばれます (「分解」でほどく)。</div>
+      <div class="prop-sect" id="seTblHead" style="display:none">表 (選択中)</div>
+      <div id="seTblProps" style="display:none">
+        <div class="prop-row"><label>列数</label><input type="number" id="seTblCols" min="1" max="30" step="1"/></div>
+        <div class="prop-row"><label>行数</label><input type="number" id="seTblRows" min="1" max="50" step="1"/></div>
+        <div class="prop-row"><label>文字高</label><select id="seTblTh">
+          ${[2.5, 3.5, 5, 7].map(v => `<option value="${v}">${v} mm</option>`).join("")}
+        </select></div>
+        <div class="prop-note">列・行は末尾で増減します (減らすとそのセルの文字は消えます)。罫線・右端・下端をドラッグすると列幅・行高を変えられます。セルをダブルクリックで文字を入力。</div>
+      </div>
       <div class="prop-sect">線種</div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="solid" checked/><span>実線 (導体・図記号)</span></label></div>
       <div class="prop-row"><label class="chk"><input type="radio" name="seStyle" value="dash"/><span>破線 (機械リンク・囲い)</span></label></div>
@@ -516,7 +558,7 @@ UI.openSymbolEditor = (symId = null) => {
   toolsEl.addEventListener("click", e => {
     const b = e.target.closest(".se-tool");
     if (!b) return;
-    S.tool = b.dataset.t; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null;
+    S.tool = b.dataset.t; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null; S.tableDrag = null;
     S.msel = { shapes: [], pins: [] };
     toolsEl.querySelectorAll(".se-tool").forEach(x => x.classList.toggle("on", x.dataset.t === S.tool));
     const t = SYMEDIT_TOOLS.find(x => x[0] === S.tool);
@@ -555,6 +597,57 @@ UI.openSymbolEditor = (symId = null) => {
     }
     thSel.value = String(h);
   };
+  // ── 表 (選択中) の列数・行数・文字高 ──
+  const tblHead = body.querySelector("#seTblHead"), tblProps = body.querySelector("#seTblProps");
+  const tblCols = body.querySelector("#seTblCols"), tblRows = body.querySelector("#seTblRows"), tblTh = body.querySelector("#seTblTh");
+  const selTable = () => {
+    const idx = selIdx().s.filter(i => S.shapes[i] && S.shapes[i].k === "table");
+    return idx.length ? S.shapes[idx[0]] : null;
+  };
+  const syncTbl = () => {
+    const t = selTable();
+    tblHead.style.display = tblProps.style.display = t ? "" : "none";
+    if (!t) return;
+    tblCols.value = String(t.colWs.length);
+    tblRows.value = String(t.rowHs.length);
+    if (![...tblTh.options].some(o => +o.value === (t.th || TEXT_H.small))) {
+      const o = document.createElement("option");
+      o.value = String(t.th); o.textContent = `${t.th} mm`;
+      tblTh.appendChild(o);
+    }
+    tblTh.value = String(t.th || TEXT_H.small);
+  };
+  const tblResize = (kind) => {
+    const t = selTable();
+    if (!t) return;
+    const want = Math.max(1, Math.min(kind === "col" ? 30 : 50, Math.round(+(kind === "col" ? tblCols : tblRows).value || 1)));
+    const arr = kind === "col" ? t.colWs : t.rowHs;
+    if (want === arr.length) return;
+    push();
+    while (arr.length < want) arr.push(arr[arr.length - 1] || (kind === "col" ? 14 : 7));
+    arr.length = want;
+    // セルの器も列・行数に合わせる (末尾で増減)
+    if (kind === "row") {
+      while (t.cells.length < want) t.cells.push(Array.from({ length: t.colWs.length }, () => ""));
+      t.cells.length = want;
+    } else {
+      t.cells.forEach((row, j) => {
+        while (row.length < want) row.push("");
+        row.length = want;
+      });
+    }
+    fitCanvas();     // 表が作画範囲からはみ出したら1段広げる
+    draw();
+  };
+  tblCols.addEventListener("change", () => tblResize("col"));
+  tblRows.addEventListener("change", () => tblResize("row"));
+  tblTh.addEventListener("change", () => {
+    const t = selTable();
+    if (!t) return;
+    push();
+    t.th = +tblTh.value || TEXT_H.small;
+    draw();
+  });
   body.querySelector("#seSize").addEventListener("change", e => {
     S.W = S.H = +e.target.value;
     S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);
@@ -656,6 +749,7 @@ UI.openSymbolEditor = (symId = null) => {
     if (S.cursorPos) moveCursor(S.cursorPos[0], S.cursorPos[1]);   // 再描画で消えた十字線を戻す
     refreshSide();
     syncTh();                       // 選んだ文字の高さを左の欄へ映す
+    syncTbl();                      // 表を選んでいれば列数・行数・文字高の欄を出す
   };
   const refreshSide = () => {
     const bd = S.frame ?? symShapesBounds(S.shapes, S.pins);
@@ -738,6 +832,10 @@ UI.openSymbolEditor = (symId = null) => {
       if (sh.k === "line" && (sh.pts.some(p => Math.hypot(p[0] - x, p[1] - y) < 2) ||
         sh.pts.some((p, j) => j > 0 && distSeg(x, y, sh.pts[j - 1][0], sh.pts[j - 1][1], p[0], p[1]) < 1.2))) return i;
       if (sh.k === "rect" && x > sh.x - 1 && x < sh.x + sh.w + 1 && y > sh.y - 1 && y < sh.y + sh.h + 1) return i;
+      if (sh.k === "table") {
+        const [tw, thh] = symTableWH(sh);
+        if (x > sh.x - 1 && x < sh.x + tw + 1 && y > sh.y - 1 && y < sh.y + thh + 1) return i;
+      }
       if ((sh.k === "circle" || sh.k === "arc" || sh.k === "half") && Math.abs(Math.hypot(x - sh.x, y - sh.y) - sh.r) < 2) return i;
       if (sh.k === "text" && Math.abs(x - sh.x) < 6 && Math.abs(y - sh.y) < 3) return i;
       if (sh.k === "raw") {
@@ -747,6 +845,25 @@ UI.openSymbolEditor = (symId = null) => {
     }
     return -1;
   };
+  /** 表の罫線 (縦横の区切り + 右端・下端) の当たり判定 → どの列・行を伸縮するか */
+  const tableDividerAt = (t, x, y) => {
+    const [W, H] = symTableWH(t);
+    const TOL = 0.8;
+    if (x < t.x - TOL || x > t.x + W + TOL || y < t.y - TOL || y > t.y + H + TOL) return null;
+    let acc = t.x;
+    for (let i = 0; i < t.colWs.length; i++) { acc += t.colWs[i]; if (Math.abs(x - acc) < TOL) return { kind: "col", b: i }; }
+    acc = t.y;
+    for (let j = 0; j < t.rowHs.length; j++) { acc += t.rowHs[j]; if (Math.abs(y - acc) < TOL) return { kind: "row", b: j }; }
+    return null;
+  };
+  /** 座標がどのセルの上か (r=行, c=列)。外なら null */
+  const tableCellAt = (t, x, y) => {
+    let c = -1, r = -1, acc = t.x;
+    for (let i = 0; i < t.colWs.length; i++) { if (x >= acc && x <= acc + t.colWs[i]) { c = i; break; } acc += t.colWs[i]; }
+    acc = t.y;
+    for (let j = 0; j < t.rowHs.length; j++) { if (y >= acc && y <= acc + t.rowHs[j]) { r = j; break; } acc += t.rowHs[j]; }
+    return (r >= 0 && c >= 0) ? { r, c } : null;
+  };
   /** 図形1つの外接矩形 [x0,y0,x1,y1]。範囲選択の当たり判定に使う (raw は対象外) */
   const shapeBBox = (sh) => {
     if (sh.k === "line") {
@@ -754,6 +871,7 @@ UI.openSymbolEditor = (symId = null) => {
       return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
     }
     if (sh.k === "rect") return [sh.x, sh.y, sh.x + sh.w, sh.y + sh.h];
+    if (sh.k === "table") { const [tw, thh] = symTableWH(sh); return [sh.x, sh.y, sh.x + tw, sh.y + thh]; }
     if (sh.k === "circle" || sh.k === "arc" || sh.k === "half") return [sh.x - sh.r, sh.y - sh.r, sh.x + sh.r, sh.y + sh.r];
     if (sh.k === "text") return [sh.x - 5, sh.y - 3, sh.x + 5, sh.y + 1];
     if (sh.k === "raw") return rawShapeBB(sh);
@@ -773,6 +891,26 @@ UI.openSymbolEditor = (symId = null) => {
     if (S.marquee) {
       if (!(e.buttons & 1)) { S.marquee = null; }
       else { S.marquee.x1 = p.x; S.marquee.y1 = p.y; draw(); return; }
+    }
+    if (S.tableDrag) {
+      if (!(e.buttons & 1)) { S.tableDrag = null; }
+      else {
+        // 罫線を引っぱって列幅・行高を変更 (0.5mm スナップ・最小 3mm)
+        const td = S.tableDrag, t = S.shapes[td.i];
+        if (t && t.k === "table") {
+          if (!td.pushed) { push(); td.pushed = true; }
+          const r1 = v => Math.round(v * 10) / 10;
+          if (td.kind === "col") {
+            const left = t.x + td.orig.colWs.slice(0, td.b).reduce((a, b2) => a + b2, 0);
+            t.colWs[td.b] = r1(Math.max(3, symSnap(p.x, 0.5) - left));
+          } else {
+            const top = t.y + td.orig.rowHs.slice(0, td.b).reduce((a, b2) => a + b2, 0);
+            t.rowHs[td.b] = r1(Math.max(3, symSnap(p.y, 0.5) - top));
+          }
+          draw();
+        }
+        return;
+      }
     }
     if (S.frameDrag) {
       if (!(e.buttons & 1)) { S.frameDrag = null; }
@@ -854,6 +992,12 @@ UI.openSymbolEditor = (symId = null) => {
     if (S.draft) return;
     if (S.tool === "select") {
       const p = symEditXY(e);
+      // 選択中の表の罫線をつまむ → 列幅・行高の変更 (右端・下端の外枠も含む)
+      if (S.sel >= 0 && S.shapes[S.sel] && S.shapes[S.sel].k === "table") {
+        const t = S.shapes[S.sel];
+        const hit = tableDividerAt(t, p.x, p.y);
+        if (hit) { S.tableDrag = { i: S.sel, ...hit, orig: deepCopy(t), pushed: false }; return; }
+      }
       // シンボル枠 (青) の角ハンドル → 枠のサイズ変更
       if (S.shapes.length || S.pins.length) {
         const fb = S.frame ?? symShapesBounds(S.shapes, S.pins);
@@ -934,6 +1078,10 @@ UI.openSymbolEditor = (symId = null) => {
         UI.setMsg(n ? `${n} 個を選択しました (つまんでドラッグで一緒に移動 / Del で削除)` : "範囲内に図形がありません");
       }
       draw(); return;
+    }
+    if (S.tableDrag) {
+      S.tableDrag = null; S.downAt = null; S.suppressClick = true;
+      fitCanvas(); draw(); return;
     }
     if (S.frameDrag) {
       S.frameDrag = null; S.downAt = null; S.suppressClick = true;
@@ -1021,6 +1169,20 @@ UI.openSymbolEditor = (symId = null) => {
       draw(); return;
     }
     if (S.tool === "conn") { openConnDialog(x, y); return; }
+    if (S.tool === "table") {
+      push();
+      const rh = Math.max(5, Math.round(S.th * 2 * 10) / 10);
+      S.shapes.push({ k: "table", x, y, colWs: [14, 14, 14], rowHs: [rh, rh, rh], th: S.th,
+        cells: [["", "", ""], ["", "", ""], ["", "", ""]] });
+      S.sel = S.shapes.length - 1; clearMsel();
+      // 置いたらすぐ列・行・サイズをいじれるよう選択ツールへ移る
+      S.tool = "select";
+      toolsEl.querySelectorAll(".se-tool").forEach(x2 => x2.classList.toggle("on", x2.dataset.t === "select"));
+      const t0 = SYMEDIT_TOOLS.find(x2 => x2[0] === "select");
+      hintEl.textContent = t0 ? t0[2] : "";
+      UI.setMsg("表を置きました — 左の欄で列数・行数、罫線ドラッグでサイズ、セルをダブルクリックで文字");
+      draw(); return;
+    }
     if (S.tool === "text") {
       const t = prompt("記号の中に入れる文字 (例: M, 3~, PLC)", "");
       if (t && t.trim()) { push(); S.shapes.push({ k: "text", x, y, text: t.trim(), h: S.th, mono: false }); }
@@ -1053,7 +1215,29 @@ UI.openSymbolEditor = (symId = null) => {
     else if (d.k === "half") { if (d.r > 0.2) S.shapes.push({ k: "half", x: d.x, y: d.y, r: d.r, dir: d.dir, style: d.style, fill: d.fill }); }
     S.draft = null; draw();
   });
-  S.svg.addEventListener("dblclick", () => { finishLine(); });
+  S.svg.addEventListener("dblclick", (e) => {
+    if (S.tool === "select") {
+      const p = symEditXY(e);
+      const i = hitShape(p.x, p.y);
+      if (i >= 0 && S.shapes[i].k === "table") {
+        const t = S.shapes[i];
+        const cell = tableCellAt(t, p.x, p.y);
+        if (cell) {
+          const cur = (t.cells[cell.r] || [])[cell.c] || "";
+          const v = prompt(`セル (${cell.r + 1}行, ${cell.c + 1}列) の文字`, cur);
+          if (v !== null) {
+            push();
+            if (!t.cells[cell.r]) t.cells[cell.r] = [];
+            t.cells[cell.r][cell.c] = v.trim();
+            S.sel = i; clearMsel();
+            draw();
+          }
+          return;
+        }
+      }
+    }
+    finishLine();
+  });
   const finishLine = () => {
     const d = S.draft;
     if (!d || d.k !== "line") return;
@@ -1154,6 +1338,18 @@ UI.openSymbolEditor = (symId = null) => {
         const [nx, ny] = R(sh.x, sh.y);
         sh.x = r2(nx); sh.y = r2(ny);
         sh.dir = { right: "down", down: "left", left: "up", up: "right" }[sh.dir || "right"];
+      } else if (sh.k === "table") {
+        // 表は文字を水平に保ったまま 90° 回す = 行と列を入れ替えて置き直す
+        const [, H] = symTableWH(sh);
+        const [nx, ny] = R(sh.x, sh.y + H);
+        const rows = sh.rowHs.length;
+        const cells = sh.cells || [];
+        sh.cells = Array.from({ length: sh.colWs.length }, (_, rp) =>
+          Array.from({ length: rows }, (_, cp) => (cells[rows - 1 - cp] || [])[rp] || ""));
+        const cw0 = sh.colWs;
+        sh.colWs = [...sh.rowHs].reverse();
+        sh.rowHs = cw0;
+        sh.x = r2(nx); sh.y = r2(ny);
       } else if (sh.k === "raw") {
         const [nx, ny] = R(sh.dx || 0, sh.dy || 0);
         sh.dx = r2(nx); sh.dy = r2(ny); sh.rot = ((sh.rot || 0) + 90) % 360;
@@ -1429,7 +1625,7 @@ UI.openSymbolEditor = (symId = null) => {
         hintEl.textContent = t0 ? t0[2] : "";
         UI.setMsg("挿入を中止しました");
       } else if (S.draft) { S.draft = null; S.draftFromDown = false; S.moving = null; S.marquee = null; draw(); UI.setMsg("作画をキャンセルしました"); }
-      else if (S.sel !== -1 || S.msel.shapes.length || S.msel.pins.length) { S.sel = -1; clearMsel(); S.moving = null; S.marquee = null; S.frameDrag = null; draw(); }
+      else if (S.sel !== -1 || S.msel.shapes.length || S.msel.pins.length) { S.sel = -1; clearMsel(); S.moving = null; S.marquee = null; S.frameDrag = null; S.tableDrag = null; draw(); }
       else if (S.tool !== "select") {
         // 何も作画・選択していない Esc は選択ツールへ戻る
         S.tool = "select";
@@ -1534,7 +1730,7 @@ UI.openSymbolEditor = (symId = null) => {
   foot.querySelector("#seUndo").addEventListener("click", () => {
     const st = S.undo.pop();
     if (!st) return;
-    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.connMeta = st.connMeta || {}; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null;
+    S.shapes = st.shapes; S.pins = st.pins; S.funcs = st.funcs || []; S.connMeta = st.connMeta || {}; S.draft = null; S.sel = -1; S.moving = null; S.marquee = null; S.frameDrag = null; S.tableDrag = null;
     S.msel = { shapes: [], pins: [] }; draw();
   });
   foot.querySelector("#seClear").addEventListener("click", () => {
