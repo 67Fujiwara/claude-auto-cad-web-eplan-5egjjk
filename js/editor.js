@@ -1321,6 +1321,8 @@ function copySelection() {
   const zones = pageZones(page).filter(z => App.selection.has(z.id));
   if (!devs.length && !wires.length && !texts.length && !zones.length) return;
   App.clipboard = deepCopy({ devs, wires, texts, zones });
+  // 貼り付け先の尺度が違うときに配置を合わせられるよう、コピー元の尺度を控える
+  App.clipboard.scale = pageSheetMeta(page).scale;
   UI.setMsg(`${devs.length + wires.length + texts.length + zones.length} 個をコピーしました`);
 }
 
@@ -1333,11 +1335,27 @@ function pasteClipboard() {
   App.selection.clear();
   // 貼り付け位置: カーソル位置基準。カーソルが無効なら元位置+10mm (連続ペーストは累積)
   const cb = App.clipboard;
+  // 尺度の異なるページへ貼るとき: 図記号・文字は常に 1:1 のまま、配置座標・
+  // 配線経路・破線枠だけを尺度比で伸縮し、図枠に対する見た目 (占める割合) を保つ。
+  // 尺度変更が図枠だけを広げる仕様と同じ考え方。端子の張り出しは伸縮しないので、
+  // 端子につながっていた配線の端点は貼り付け後に端子へ吸着し直す
+  const fSrc = scaleFactor(cb.scale || pageSheetMeta(page).scale);
+  const fDst = scaleFactor(pageSheetMeta(page).scale);
+  const kf = fSrc > 0 && fDst > 0 ? fDst / fSrc : 1;
+  const rs = v => Math.round(v * kf * 100) / 100;
+  const pinHooks = [];               // 元座標での「配線端点 ⇔ 機器端子」の接続
+  if (kf !== 1) cb.wires.forEach((w0, wi) => [...new Set([0, w0.pts.length - 1])].forEach(pi => {
+    const pt = w0.pts[pi];
+    cb.devs.forEach((d0, di) => devPins(d0).forEach(pn => {
+      if (Math.abs(pn.x - pt[0]) < 0.01 && Math.abs(pn.y - pt[1]) < 0.01)
+        pinHooks.push({ wi, end: pi === 0 ? 0 : 1, di, pin: pn.idx });
+    }));
+  }));
   let minX = Infinity, minY = Infinity;
-  cb.devs.forEach(d => { minX = Math.min(minX, d.x); minY = Math.min(minY, d.y); });
-  cb.wires.forEach(w => w.pts.forEach(p => { minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]); }));
-  cb.texts.forEach(t => { minX = Math.min(minX, t.x); minY = Math.min(minY, t.y); });
-  (cb.zones || []).forEach(z => { minX = Math.min(minX, z.x); minY = Math.min(minY, z.y); });
+  cb.devs.forEach(d => { minX = Math.min(minX, rs(d.x)); minY = Math.min(minY, rs(d.y)); });
+  cb.wires.forEach(w => w.pts.forEach(p => { minX = Math.min(minX, rs(p[0])); minY = Math.min(minY, rs(p[1])); }));
+  cb.texts.forEach(t => { minX = Math.min(minX, rs(t.x)); minY = Math.min(minY, rs(t.y)); });
+  (cb.zones || []).forEach(z => { minX = Math.min(minX, rs(z.x)); minY = Math.min(minY, rs(z.y)); });
   if (!isFinite(minX)) { minX = 0; minY = 0; }
   let dx, dy;
   const lw = Editor.lastWorld;
@@ -1359,7 +1377,7 @@ function pasteClipboard() {
   cb.devs.forEach(d0 => {
     const d = deepCopy(d0);
     idMap[d0.id] = d.id = uid("d");
-    d.x += dx; d.y += dy;
+    d.x = rs(d.x) + dx; d.y = rs(d.y) + dy;
     page.devices.push(d);
     App.selection.add(d.id);
   });
@@ -1382,7 +1400,7 @@ function pasteClipboard() {
   cb.wires.forEach(w0 => {
     const w = deepCopy(w0);
     w.id = uid("w");
-    w.pts = w.pts.map(p => [p[0] + dx, p[1] + dy]);
+    w.pts = w.pts.map(p => [rs(p[0]) + dx, rs(p[1]) + dy]);
     w.num = null;
     page.wires.push(w);
     App.selection.add(w.id);
@@ -1390,7 +1408,7 @@ function pasteClipboard() {
   cb.texts.forEach(t0 => {
     const t = deepCopy(t0);
     t.id = uid("t");
-    t.x += dx; t.y += dy;
+    t.x = rs(t.x) + dx; t.y = rs(t.y) + dy;
     page.texts.push(t);
     App.selection.add(t.id);
   });
@@ -1398,11 +1416,27 @@ function pasteClipboard() {
   (cb.zones || []).forEach(z0 => {
     const z = deepCopy(z0);
     z.id = uid("z");
-    z.x += dx; z.y += dy;
+    z.x = rs(z.x) + dx; z.y = rs(z.y) + dy;
+    if (kf !== 1) {
+      z.w = rs(z.w); z.h = rs(z.h);          // 枠の大きさも図枠に対する割合を保つ
+      if (z.lx !== undefined) z.lx = rs(z.lx);
+      if (z.ly !== undefined) z.ly = rs(z.ly);
+    }
     pageZones(page).push(z);
     App.selection.add(z.id);
   });
+  // 伸縮で端子位置 (張り出しは 1:1 のまま) からずれた配線端点を端子へ吸着し直す
+  if (kf !== 1 && pinHooks.length) {
+    const dBase = page.devices.length - cb.devs.length;
+    const wBase = page.wires.length - cb.wires.length;
+    pinHooks.forEach(h => {
+      const d = page.devices[dBase + h.di], w = page.wires[wBase + h.wi];
+      const pn = d && devPins(d)[h.pin];
+      if (pn && w) moveWireEndpoint(w, h.end === 0 ? 0 : w.pts.length - 1, [pn.x, pn.y]);
+    });
+  }
   UI.setMsg("カーソル位置に貼り付けました");
+  if (kf !== 1) UI.toast(`尺度 ${cb.scale} → ${pageSheetMeta(page).scale}: 配置を ${Math.round(kf * 100) / 100} 倍にして図枠に合わせました (図記号・文字の大きさは常に 1:1)`, 5200);
   // 黙って行き先を消すと気づけないので知らせる
   if (droppedGoto) UI.toast(`⚠ 行き先 ${droppedGoto} 個は自分のページを指すことになるため未設定にしました`, 4200);
   requestRender();
