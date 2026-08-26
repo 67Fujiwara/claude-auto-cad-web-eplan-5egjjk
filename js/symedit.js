@@ -22,6 +22,7 @@ const SymEdit = {
   lw: LINE_W.thick,    // シンボル全体の線の太さ (mm)
   W: 60, H: 60,        // 作画領域 (mm)
   snap: 1,             // 図形のスナップ (mm)
+  th: TEXT_H.normal,   // 文字の高さ (mm)。新しく置く文字と、選択中の文字に効く
 };
 
 const SYMEDIT_TOOLS = [
@@ -362,6 +363,7 @@ UI.openSymbolEditor = (symId = null) => {
   S.msel = { shapes: [], pins: [] }; S.marquee = null; S.frame = null; S.frameDrag = null;
   S.connMeta = {};       // コネクタグループの設定 (gid → 極数・ピッチ…。「コネクタ編集」で作り直せる)
   S.tool = "line"; S.style = "solid"; S.fill = false; S.editingId = null; S.lw = LINE_W.thick;
+  S.th = TEXT_H.normal;
 
   let meta = { name: "", nameEn: "", letter: "E", typ: "", desc: "", group: "自作", sim: "none", mono: false };
   let asCopy = false;
@@ -432,6 +434,11 @@ UI.openSymbolEditor = (symId = null) => {
         <option value="0.25">0.25 mm 細線 (取り込み図形・補助)</option>
         <option value="0.35">0.35 mm 中線</option>
       </select></div>
+      <div class="prop-sect">文字の高さ</div>
+      <div class="prop-row"><select id="seTh">
+        ${[2.5, 3.5, 5, 7, 10, 14].map(v => `<option value="${v}"${v === TEXT_H.normal ? " selected" : ""}>${v} mm${v === 3.5 ? " (図記号の標準)" : v === 2.5 ? " (JIS の最小呼び)" : ""}</option>`).join("")}
+      </select></div>
+      <div class="prop-note" style="margin-top:4px">これから置く文字の高さです。文字を選んでから変えると、選んだ文字の高さが変わります。</div>
       <div class="prop-sect">作画範囲</div>
       <div class="prop-row"><select id="seSize">
         ${[40, 60, 100, 160, 240, 320].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
@@ -521,6 +528,33 @@ UI.openSymbolEditor = (symId = null) => {
   body.querySelector("#seFill").addEventListener("change", e => { S.fill = e.target.checked; });
   body.querySelector("#seLw").value = String(S.lw);
   body.querySelector("#seLw").addEventListener("change", e => { S.lw = parseFloat(e.target.value) || LINE_W.thick; draw(); });
+  /* 文字の高さ。選択中の文字があればその高さを変え、無ければ次に置く文字の高さになる */
+  const thSel = body.querySelector("#seTh");
+  thSel.value = String(S.th);
+  thSel.addEventListener("change", e => {
+    S.th = parseFloat(e.target.value) || TEXT_H.normal;
+    const idx = selIdx().s.filter(i => S.shapes[i] && S.shapes[i].k === "text");
+    if (idx.length) {
+      push();
+      idx.forEach(i => { S.shapes[i].h = S.th; });
+      UI.setMsg(`文字 ${idx.length} 個の高さを ${S.th}mm にしました`);
+    }
+    draw();
+  });
+  /** 選択が変わったら、選んだ文字の高さを欄に映す (今の高さが見える) */
+  const syncTh = () => {
+    const idx = selIdx().s.filter(i => S.shapes[i] && S.shapes[i].k === "text");
+    if (!idx.length) return;
+    const h = S.shapes[idx[0]].h || TEXT_H.normal;
+    S.th = h;
+    // 一覧に無い高さ (取り込んだ図面の文字など) は、その値の選択肢を足して見せる
+    if (![...thSel.options].some(o => +o.value === h)) {
+      const o = document.createElement("option");
+      o.value = String(h); o.textContent = `${h} mm (選択中の文字)`;
+      thSel.appendChild(o);
+    }
+    thSel.value = String(h);
+  };
   body.querySelector("#seSize").addEventListener("change", e => {
     S.W = S.H = +e.target.value;
     S.svg.setAttribute("viewBox", `${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}`);
@@ -621,6 +655,7 @@ UI.openSymbolEditor = (symId = null) => {
     S.svg.innerHTML = out;
     if (S.cursorPos) moveCursor(S.cursorPos[0], S.cursorPos[1]);   // 再描画で消えた十字線を戻す
     refreshSide();
+    syncTh();                       // 選んだ文字の高さを左の欄へ映す
   };
   const refreshSide = () => {
     const bd = S.frame ?? symShapesBounds(S.shapes, S.pins);
@@ -988,7 +1023,7 @@ UI.openSymbolEditor = (symId = null) => {
     if (S.tool === "conn") { openConnDialog(x, y); return; }
     if (S.tool === "text") {
       const t = prompt("記号の中に入れる文字 (例: M, 3~, PLC)", "");
-      if (t && t.trim()) { push(); S.shapes.push({ k: "text", x, y, text: t.trim(), h: TEXT_H.normal, mono: false }); }
+      if (t && t.trim()) { push(); S.shapes.push({ k: "text", x, y, text: t.trim(), h: S.th, mono: false }); }
       draw(); return;
     }
     if (!S.draft) {
