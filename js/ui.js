@@ -364,12 +364,23 @@ UI.showProps = (focusTag = false) => {
       ${sym.swapGroup ? (() => {
         /* 同じ仲間の記号への差し替え (機種違いなど)。タグ・機能テキスト・位置は
            そのまま残るので、結線図を描き直さずに機種だけ変えられる */
-        const kin = Object.values(SYMBOLS_BY_ID).filter(s2 => s2.swapGroup === sym.swapGroup && !s2.stretchOf)
+        const kin = Object.values(SYMBOLS_BY_ID).filter(s2 => s2.swapGroup === sym.swapGroup && !s2.stretchOf && !s2.altOf)
           .sort((a2, b2) => String(a2.typ || a2.id).localeCompare(String(b2.typ || b2.id)));
         return `<div class="prop-row"><label>機種 <span class="rp-dim">(差し替えると端子構成ごと入れ替わります)</span></label>
           <select id="pSwap">${kin.map(s2 =>
             `<option value="${s2.id}"${s2.id === sym.id ? " selected" : ""}>${escAttr(s2.name || s2.typ)}</option>`).join("")}</select></div>`;
       })() : ""}
+      ${(() => {
+        /* 拡張ユニットの台数 (先頭チャネル)。リレー番号は接続順で決まるので、
+           1〜3台目を選ぶと端子名 (600〜/700〜/800〜) と図中の注記が差し替わる。
+           端子の位置は同一なので配線・タグ・機能欄はそのまま残る */
+        const base = symStretchBase(sym) || sym;
+        if (!base.expAlts) return "";
+        const chs = Object.keys(base.expAlts).map(Number).sort((a2, b2) => a2 - b2);
+        return `<div class="prop-row"><label>拡張ユニットの台数 <span class="rp-dim">(接続順でリレー番号が変わります)</span></label>
+          <select id="pKvCh">${chs.map((c2, i2) =>
+            `<option value="${c2}"${c2 === base.expCh ? " selected" : ""}>拡張${i2 + 1}台目 (R${c2}00〜)</option>`).join("")}</select></div>`;
+      })()}
       ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
         <button class="btn-solid primary" id="pScaffold" style="padding:3px 10px;font-size:11px">結線図の下地を作る</button></div>` : ""}
       ${(sym.nonstd && sym.stdNote) ? `<div class="prop-row"><label>規格外図記号の凡例 <span class="rp-dim">(JIS C 0617-1: 規格にない図記号は図面上で説明する)</span></label>
@@ -426,6 +437,18 @@ UI.showProps = (focusTag = false) => {
     // 「この用紙にする」— ページの用紙を記号に合わせ、図枠の中へ入れ直す
     // 機種の差し替え。位置・タグ・機能テキストは残し、つないである配線は
     // 端子が動いたぶんだけ知らせる (検図の未接続で拾える)
+    bind("#pKvCh", v => {
+      const cur = symOf(dev.sym);
+      const base = symStretchBase(cur) || cur;
+      const id = base.expAlts && base.expAlts[v];
+      if (!id || id === base.id) return;
+      // 行ピッチの寸法違いはそのまま持ち越す (図形は同一・端子名だけ変わる)
+      if (cur.span) { symStretchVariant(SYMBOLS_BY_ID[id], cur.span); dev.sym = `${id}@${cur.span}`; }
+      else dev.sym = id;
+      const chs = Object.keys(base.expAlts).map(Number).sort((a2, b2) => a2 - b2);
+      App.labelRev++;
+      UI.toast(`拡張${chs.indexOf(+v) + 1}台目 (R${v}00〜) の割付にしました — 端子名と図中の注記が変わります`, 3600);
+    });
     bind("#pSwap", v => {
       if (!v || v === dev.sym) return;
       const before = symOf(dev.sym), n0 = devPins(dev).length;

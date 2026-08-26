@@ -281,9 +281,14 @@ function kvBuild(o, pitch) {
   /* 保護接地の図記号は焼き込まない。焼き込むと「紙の上は接地済み・モデルは
      未接続」という食い違いが起き、利用者が指示どおり結線すると導体が接地記号を
      貫き、別に prot_earth を置けば接地記号が 2 つ並ぶ */
+  /* 拡張ユニット: 割付の前提 (何台目 = 先頭チャネル) を図面の面に残す。
+     端子番号の正しさが接続順という図面外の前提に依存するため、
+     プロパティの説明だけでなく紙にも出す (IEC 61082-1 の一義性) */
+  if (o.expNote) parts.push(kvText(BX, r1(bh + 7), 2.5, o.expNote, "start", false));
+  const BOT = o.expNote ? 11 : 4;              // 注記のぶん外接矩形を下へ広げる
   const bounds = flip
-    ? [r1(BX - 2), -2, r1((FX + KV_FN_W + 2) - (BX - 2)), r1(bh + 4)]
-    : [-2, -2, r1(W + KV_FN_X + KV_FN_W + 4), r1(bh + 4)];
+    ? [r1(BX - 2), -2, r1((FX + KV_FN_W + 2) - (BX - 2)), r1(bh + BOT)]
+    : [-2, -2, r1(W + KV_FN_X + KV_FN_W + 4), r1(bh + BOT)];
   /* 実際に線を引いている帯。外接矩形 (余白つき) をそのまま「インク」として
      申告すると、記号に触れていない導体まで「貫通」になる。
      ① 端子の丸 + 外郭  ② 機能欄の下線 — その間 (出力では現場側の区画) は何も無い */
@@ -294,6 +299,8 @@ function kvBuild(o, pitch) {
     ? [[BX, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]]
     : [[0, 0, W, bh], [FX, KV_Y0, KV_FN_W, bh - KV_Y0]])
     .map(([x, y, w2, h2]) => [r1(x - HW), r1(y - HW), r1(w2 + HW * 2), r1(h2 + HW * 2)]);
+  // 注記の帯もインクとして申告 (ラベルの自動配置が上に乗らないように)
+  if (o.expNote) inkBoxes.push([r1(BX), r1(bh + 3), 48, 5.5]);
   // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
   /* 現場機器の置き場所の目安 (内側レールから引出しぶん端子側)。
      配線は自分で引く方式なので、これは配置の案内に使うだけ */
@@ -327,7 +334,8 @@ function mkKvSheet(o) {
     id: o.id, db: true, group: "PLC入出力結線図", cat: "db", letter: "A",
     nonstd: true, swapGroup: o.swapGroup, unitSheet: true,
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.model,
-    stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
+    ...(o.expCh ? { expCh: o.expCh, expAlts: o.expAlts, ...(o.altOf ? { altOf: o.altOf } : {}) } : {}),
+    stdNote: o.stdNote || "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
       "外郭 + 端子 + 端子名。端子の図記号番号は規格原本との照合が必要)。" +
       "端子の刻印とコモンの分割は取扱説明書の入出力回路図どおり " +
       "(写しで確認できたのは KV-N14AR。AT 形の出力コモンの刻印と、" +
@@ -408,6 +416,16 @@ const KV_UNITS = [
       { pts: ["500"], com: "C1" }, { pts: ["501"], com: "C2" },
       { pts: ["502"], com: "C3" }, { pts: ["503", "504", "505"], com: "C4" },
     ] }],
+  /* 拡張ユニット (トランジスタ・シンク出力形)。exp = 拡張:
+     ・入力枚は無し。サービス電源 (0V/24V) の端子も無い — あれは基本ユニット
+       (交流電源形) の出力端子台のもの
+     ・リレー番号は接続順で決まる (拡張1台目 = R600〜, 2台目 = R700〜 …
+       1 ユニット 1 チャネル占有の前提)。記号の刻印は「拡張1台目」を既定にする。
+       2台目以降に使うときはシンボル編集で複製して端子名を読み替える
+     ・コモンは 1 つ (N16ET は 16点/1コモン — カタログ値)。刻印は N14AR の
+       出力コモンからの類推で COM のまま (実機未確認) */
+  ["KV-N8ET", { nOut: 8, ch0: 6, exp: true }],
+  ["KV-N16ET", { nOut: 16, ch0: 6, exp: true }],
 ];
 
 /** KV Nano 基本ユニットの結線図記号。1 枚 = A3 横に収まる高さまで */
@@ -443,24 +461,67 @@ function mkKvUnit(model, cfg) {
           at += take;
         }
         const fits = trial.every((gs, k) =>
-          kvSeqH(mkSeq(gs, kind === "出力" && sheets.length === 0 && k === 0), KV_PITCH_DEF) <= KV_FIT_H);
+          kvSeqH(mkSeq(gs, kind === "出力" && !cfg.exp && sheets.length === 0 && k === 0), KV_PITCH_DEF) <= KV_FIT_H);
         if (fits) { trial.forEach(gs => sheets.push(gs)); break; }
       }
     }
     return sheets;
   };
-  const inSheets = autoSheets(0, cfg.nIn, "C0", "入力");
-  const outSheets = cfg.outGroups ? [cfg.outGroups] : autoSheets(5, cfg.nOut, "COM", "出力");
+  /* 拡張ユニット (出力専用)。リレー番号は接続順で決まるので、1〜3台目
+     (KV Nano は拡張 3 台まで) の 3 通りを同じ姿で作る。パレットに出すのは
+     1台目だけ — 2/3台目は「拡張ユニットの台数」プロパティで差し替える
+     (端子の位置・図形は同一なので、配線・タグ・機能欄はそのまま残る) */
+  if (cfg.exp) {
+    const chs = [cfg.ch0, cfg.ch0 + 1, cfg.ch0 + 2];
+    const idOf = ch => `${model.toLowerCase().replace(/-/g, "_")}_out${ch === cfg.ch0 ? "" : `_c${ch}`}`;
+    const altIds = {};
+    chs.forEach(ch => { altIds[ch] = idOf(ch); });
+    chs.forEach((ch, ci) => {
+      const n = ci + 1;
+      const sheets = autoSheets(ch, cfg.nOut, "COM", "出力");
+      // 螺子端子の拡張出力は最大 16 点 = 1 枚に収まる (収まらない機種を
+      // 足すときは基本ユニットと同じ枚割り・id 連番に戻すこと)
+      sheets.forEach(gs => {
+        const seq = mkSeq(gs, false);
+        const pts = gs.flatMap(g => g.pts);
+        out.push(mkKvSheet({
+          id: altIds[ch], model,
+          title: `拡張出力 ${pts.length}点`,
+          seq, allSeqs: sheets.map(g2 => mkSeq(g2, false)),
+          railTags: { branch: "P24V", supply: "N24V" },
+          fieldSide: "right",
+          swapGroup: "kv_nano_out",
+          expCh: ch, expAlts: altIds, ...(ch !== cfg.ch0 ? { altOf: altIds[cfg.ch0] } : {}),
+          expNote: `※拡張${n}台目の割付 (R${ch}00〜)`,
+          name: `${model} 出力結線図${ch === cfg.ch0 ? "" : ` (拡張${n}台目 R${ch}00〜)`}`,
+          nameEn: `${model} output wiring${ch === cfg.ch0 ? "" : ` (unit ${n})`}`,
+          stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示)。" +
+            `ただし端子位置の表示は KV のデバイス番号 (R を除いた数字) — 実機の端子台の刻印ではない (${model} の刻印は未確認)。` +
+            "リレー番号は接続順で決まるため、図中の『※拡張◯台目の割付』注記とプロパティ「拡張ユニットの台数」を実機の接続順に合わせること。" +
+            "コモンの刻印 COM は N14AR からの類推 (実機未確認)。ユニットの電源と接地は別紙の電源回路図に描きます",
+          desc: `キーエンス KV Nano 拡張ユニット ${model} の出力結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点・拡張${n}台目 R${ch}00〜)。` +
+            `プロパティ「拡張ユニットの台数」で 1〜3台目 (R${cfg.ch0}00〜 / R${cfg.ch0 + 1}00〜 / R${cfg.ch0 + 2}00〜) を切り替えられます — 端子の位置は同じなので配線・タグ・機能欄はそのまま。` +
+            `コモンは 1 つ (${pts.length}点/1コモン) — コモン線には全点の合計電流が乗るのでサイズ選定に注意。` +
+            `サービス電源 (0V/24V) の端子は無い (拡張バスから給電)。` +
+            `置くと P24V/N24V のレールとコモンの結線が実線で引かれます — 端子までの配線は自分で引きます。機能欄の文言はプロパティでまとめて入れられます。`,
+        }));
+      });
+    });
+    return out;
+  }
+  const inSheets = cfg.nIn ? autoSheets(0, cfg.nIn, "C0", "入力") : [];
+  const outSheets = cfg.outGroups ? [cfg.outGroups]
+    : autoSheets(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.nOut, "COM", "出力");
   // 用紙は機種でそろえる (入力・出力ぜんぶの中でいちばん背の高い枚に合わせる)
   const allSeqs = [
     ...inSheets.map(gs => mkSeq(gs, false)),
-    ...outSheets.map((gs, i) => mkSeq(gs, i === 0)),
+    ...outSheets.map((gs, i) => mkSeq(gs, i === 0 && !cfg.exp)),
   ];
   const build = (kind, sheetsG) => {
     const many = sheetsG.length > 1;
     const kindId = kind === "入力" ? "in" : "out";
     sheetsG.forEach((gs, i) => {
-      const seq = mkSeq(gs, kind === "出力" && i === 0);
+      const seq = mkSeq(gs, kind === "出力" && i === 0 && !cfg.exp);
       const pts = gs.flatMap(g => g.pts);
       const no = many ? ` (${i + 1}/${sheetsG.length})` : "";
       out.push(mkKvSheet({
@@ -1036,7 +1097,10 @@ function symRestoreStd(id) {
 }
 
 /* キーエンス KV Nano 基本ユニットの入出力結線図 (機種を差し替えれば端子ごと入れ替わる) */
-KV_UNITS.forEach(([m, cfg]) => mkKvUnit(m, cfg).forEach(s2 => DB_SYMBOLS.push(s2)));
+KV_UNITS.forEach(([m, cfg]) => mkKvUnit(m, cfg).forEach(s2 => {
+  if (s2.altOf) { SYMBOLS_BY_ID[s2.id] = s2; return; }   // 台数違いはパレットに出さない (プロパティで差し替える)
+  DB_SYMBOLS.push(s2);
+}));
 
 // 全シンボル辞書へ統合 (描画・配置・部品表・DXFすべてで使える)
 DB_SYMBOLS.forEach(s => { SYMBOLS_BY_ID[s.id] = s; });
