@@ -479,14 +479,17 @@ function pageToDXF(page) {
   });
 
   // ── 配線 + ジャンクション + 線番 + 電線仕様 ──
+  // 丸端子などの下は導体を描かない (画面と同じ切り取りを通す)
+  const wireMasks = pageWireMasks(page);
   page.wires.forEach(wr => {
     // 作図線 (破線・一点鎖線) は AUXLINE レイヤに線種つきで出力する
     const lt = { dash: "DASHED", dashdot: "DASHDOT", dashdotdot: "DIVIDE" }[wr.style] || null;
+    const parts = trimPolyByCircles(wr.pts, wireMasks);
     if (!isWireConductive(wr)) {
-      ents += dxfPoly(wr.pts, "AUXLINE", lt || "DASHED");
+      parts.forEach(pt2 => { ents += dxfPoly(pt2, "AUXLINE", lt || "DASHED"); });
       return;
     }
-    ents += dxfPoly(wr.pts, "WIRE", lt);
+    parts.forEach(pt2 => { ents += dxfPoly(pt2, "WIRE", lt); });
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
       ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
@@ -497,7 +500,11 @@ function pageToDXF(page) {
       ents += dxfText(sx, sy, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
     }
   });
-  junctionDots(page).forEach(([x, y]) => { ents += dxfCircle(x, y, C(LINE_W.thick * 1.5), "WIRE"); });
+  junctionDots(page).forEach(([x, y]) => {
+    // 丸端子の円の中には打たない (画面と同じ)
+    if (wireMasks.some(c => Math.hypot(x - c.x, y - c.y) < c.r + 0.01)) return;
+    ents += dxfCircle(x, y, C(LINE_W.thick * 1.5), "WIRE");
+  });
 
   // ── デバイス ──
   page.devices.forEach(dev => {

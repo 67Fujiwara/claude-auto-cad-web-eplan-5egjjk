@@ -1151,6 +1151,73 @@ const _boxAbs = (dev, r) => {
   const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
   return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 };
+/* 導体を「抜く」円 (丸端子など)。記号が wireMask で持ち、置いた位置・回転・
+   倍率を反映して図面座標で返す。抜くのは描画だけで、回路のつながりは
+   そのまま — 端子を動かせば線はもとどおり描かれる (状態を持たない) */
+function pageWireMasks(page) {
+  const out = [];
+  (page.devices || []).forEach(dev => {
+    const wm = symOf(dev.sym).wireMask;
+    if (!wm || !wm.length) return;
+    const k = devScale(dev);
+    wm.forEach(c => {
+      const a = pinAbs(dev, { x: c.x, y: c.y });
+      out.push({ x: a.x, y: a.y, r: c.r * k, dev });
+    });
+  });
+  return out;
+}
+/** 線分 (x1,y1)-(x2,y2) のうち、円の外に残る部分を返す */
+function segOutsideCircles(x1, y1, x2, y2, circles) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const L2 = dx * dx + dy * dy;
+  if (!L2) return [];
+  const cuts = [];                     // 円の内側になる [t0,t1] (0..1)
+  circles.forEach(c => {
+    // |P(t) - C|^2 = r^2 を解く
+    const fx = x1 - c.x, fy = y1 - c.y;
+    const b = 2 * (fx * dx + fy * dy);
+    const cc = fx * fx + fy * fy - c.r * c.r;
+    const disc = b * b - 4 * L2 * cc;
+    if (disc <= 0) return;             // 交わらない (接するだけなら抜かない)
+    const sq = Math.sqrt(disc);
+    let t0 = (-b - sq) / (2 * L2), t1 = (-b + sq) / (2 * L2);
+    t0 = Math.max(0, t0); t1 = Math.min(1, t1);
+    if (t1 > t0) cuts.push([t0, t1]);
+  });
+  if (!cuts.length) return [[[x1, y1], [x2, y2]]];
+  cuts.sort((a, b) => a[0] - b[0]);
+  const parts = [];
+  let at = 0;
+  // 切り口は 0.01mm に丸める (画面の d 属性・DXF に端数を残さない)
+  const r2 = v => Math.round(v * 100) / 100;
+  const P = t => [r2(x1 + dx * t), r2(y1 + dy * t)];
+  cuts.forEach(([t0, t1]) => {
+    if (t0 > at + 1e-6) parts.push([P(at), P(t0)]);
+    at = Math.max(at, t1);
+  });
+  if (at < 1 - 1e-6) parts.push([P(at), P(1)]);
+  return parts;
+}
+/** 折れ線から円の内側を抜いた小片の一覧 (描画・DXF 出力で共通に使う) */
+function trimPolyByCircles(pts, circles) {
+  if (!circles.length) return [pts];
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const parts = segOutsideCircles(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], circles);
+    parts.forEach((seg, j) => {
+      // 続いている小片はつなげて 1 本の折れ線にする (破線の刻みを保つため)
+      if (cur && Math.abs(cur[cur.length - 1][0] - seg[0][0]) < 1e-6
+        && Math.abs(cur[cur.length - 1][1] - seg[0][1]) < 1e-6) cur.push(seg[1]);
+      else { cur = [seg[0], seg[1]]; out.push(cur); }
+    });
+    if (parts.length === 0 || parts[parts.length - 1][1][0] !== pts[i + 1][0]
+      || parts[parts.length - 1][1][1] !== pts[i + 1][1]) cur = null;   // 円の中で切れた
+  }
+  return out;
+}
+
 /** 機器が実際に線を引いている範囲 (図面座標・帯ごと)。回転・位置を反映する */
 function devInkBoxes(dev) {
   const bs = symInkBoxes(symOf(dev.sym));

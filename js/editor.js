@@ -330,8 +330,12 @@ function wiresSVG(page, opts = {}) {
   const print = !!opts.print;
   const sim = App.sim.running ? App.sim.energized : null;
   const fr = contentScale();
+  // 丸端子などの下は導体を描かない (電気的にはつながったまま・端子を動かせば戻る)
+  const masks = pageWireMasks(page);
   page.wires.forEach(w => {
-    const d = "M" + w.pts.map(p => p[0] + "," + p[1]).join(" L");
+    // 見せる線は円の内側を抜いた小片。当たり判定・選択は元の線のまま
+    const dOf = pts2 => "M" + pts2.map(p => p[0] + "," + p[1]).join(" L");
+    const d = trimPolyByCircles(w.pts, masks).map(dOf).join(" ");
     const cond = isWireConductive(w);
     // 線の太さは JIS Z 8312 の系列 (配線=太線 0.5 / 作図線=細線 0.25、比 2:1)
     const wk = objScale(w);            // 尺度の違うページから貼った配線の倍率
@@ -348,7 +352,7 @@ function wiresSVG(page, opts = {}) {
     if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="${2.2 * fr}" fill="none" opacity="0.28" stroke-linecap="round"/>`;
     out += `<path d="${d}" stroke="${color}" stroke-width="${sw}" fill="none"${dash} data-id="${w.id}" class="wire"/>`;
     // 当たり判定用の太い透明パス (画面のみ)
-    if (!print) out += `<path d="${d}" stroke="rgba(0,0,0,0)" stroke-width="${4 * fr}" fill="none" data-id="${w.id}" class="wire-hit"/>`;
+    if (!print) out += `<path d="${dOf(w.pts)}" stroke="rgba(0,0,0,0)" stroke-width="${4 * fr}" fill="none" data-id="${w.id}" class="wire-hit"/>`;
     // 配線番号 (numShow=false のワイヤはネット内の代表ワイヤに表示を譲る)
     if (w.num && w.numShow !== false && cond) {
       const [mx, my, horiz] = wireLabelPos(w, page);
@@ -363,8 +367,10 @@ function wiresSVG(page, opts = {}) {
       out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr * wk, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
     }
   });
-  // ジャンクションドット (直径は線幅の約3倍)
+  /* ジャンクションドット (直径は線幅の約3倍)。丸端子の円の中には打たない —
+     端子の丸そのものが接続を表しているので、二重に描くと黒点で潰れる */
   junctionDots(page).forEach(([x, y]) => {
+    if (masks.some(c => Math.hypot(x - c.x, y - c.y) < c.r + 0.01)) return;
     out += `<circle cx="${x}" cy="${y}" r="${LINE_W.thick * 1.5 * fr}" fill="${INK}"/>`;
   });
   return out;

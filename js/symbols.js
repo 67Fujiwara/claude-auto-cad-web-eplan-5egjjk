@@ -382,6 +382,18 @@ const SYMBOLS = [
     body: `<path d="M0,0 V${10 - TERM_R} M0,20 V${10 + TERM_R}"/><circle cx="0" cy="10" r="${TERM_R}"/>`,
   },
   {
+    /* 丸のみの端子。導体の途中に落として使う (端子台の1点・測定点)。
+       円の中を通る導体は、描くときだけ円の内側を抜いて印刷する
+       (wireMask)。電気的にはつながったまま — 端子を動かせば線は戻る */
+    id: "term_dot", stdNote: "端子 (JIS C 0617-3 接続部品。図記号番号は規格原本との照合が必要)",
+    cat: "misc", letter: "X", name: "端子 (丸のみ)", nameEn: "Terminal (circle only)",
+    desc: "導体の上に重ねて置く端子。円の中の線は消えて印刷される (端子を動かせば元に戻る)",
+    typ: "UK-2.5N", pins: [{ x: 0, y: 0, n: "" }],
+    sim: "none", bounds: [-4.2, -4.2, 8.4, 8.4],
+    wireMask: [{ x: 0, y: 0, r: TERM_R }],
+    body: `<circle cx="0" cy="0" r="${TERM_R}"/>`,
+  },
+  {
     id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
     desc: "ページ間の電位接続点 (タグ一致で接続)", pins: [{x:0,y:0,n:""}],
     sim: "link", bounds: [-9,-2, 18, 12],
