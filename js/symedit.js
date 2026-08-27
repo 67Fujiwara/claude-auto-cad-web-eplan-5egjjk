@@ -84,7 +84,9 @@ function symShapeSVG(sh, opts = {}) {
     return `<path d="${d}${sh.closed ? " Z" : ""}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
   }
   if (sh.k === "rect") {
-    return `<rect x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" width="${+sh.w.toFixed(2)}" height="${+sh.h.toFixed(2)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
+    // r = 角R (コネクタの外形など。0/未指定なら角のまま)
+    const rr = sh.r > 0 ? ` rx="${+Math.min(sh.r, sh.w / 2, sh.h / 2).toFixed(2)}"` : "";
+    return `<rect x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" width="${+sh.w.toFixed(2)}" height="${+sh.h.toFixed(2)}"${rr}${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
   }
   if (sh.k === "circle") {
     return `<circle cx="${+sh.x.toFixed(2)}" cy="${+sh.y.toFixed(2)}" r="${+sh.r.toFixed(2)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
@@ -329,8 +331,10 @@ function symBodyToShapes(body) {
         if (!tr || tm) { walk(ch, ox + (tm ? +tm[1] : 0), oy + (tm && tm[2] !== undefined ? +tm[2] : 0)); continue; }
         out.push({ k: "raw", body: ch.outerHTML, dx: ox, dy: oy, rot: 0 });
       } else if (tag === "rect") {
+        const rx0 = parseFloat(ch.getAttribute("rx") || ch.getAttribute("ry") || 0) || 0;
         out.push({ k: "rect", x: +(ch.getAttribute("x") || 0) + ox, y: +(ch.getAttribute("y") || 0) + oy,
           w: +ch.getAttribute("width"), h: +ch.getAttribute("height"),
+          ...(rx0 > 0 ? { r: rx0 } : {}),      // 角R も引き継ぐ (再編集で変えられる)
           ...(st.fill ? { fill: true } : {}), ...(st.style ? { style: "dash", dash: st.dash } : {}), ...(st.lw ? { lw: st.lw } : {}) });
       } else if (tag === "circle") {
         out.push({ k: "circle", x: +(ch.getAttribute("cx") || 0) + ox, y: +(ch.getAttribute("cy") || 0) + oy,
@@ -481,6 +485,11 @@ UI.openSymbolEditor = (symId = null) => {
         ${[2.5, 3.5, 5, 7, 10, 14].map(v => `<option value="${v}"${v === TEXT_H.normal ? " selected" : ""}>${v} mm${v === 3.5 ? " (図記号の標準)" : v === 2.5 ? " (JIS の最小呼び)" : ""}</option>`).join("")}
       </select></div>
       <div class="prop-note" style="margin-top:4px">これから置く文字の高さです。文字を選んでから変えると、選んだ文字の高さが変わります。</div>
+      <div class="prop-sect" id="seRHead" style="display:none">角R (選択中の四角形)</div>
+      <div class="prop-row" id="seRRow" style="display:none">
+        <input type="number" id="seR" class="mono" min="0" max="20" step="0.5" value="0"/>
+      </div>
+      <div class="prop-note" id="seRNote" style="display:none;margin-top:4px">四角形を選ぶと出ます。0 で角のまま。図面・DXF とも丸角で出ます (外形の枠なので電気記号の意味は変わりません)。</div>
       <div class="prop-sect">作画範囲</div>
       <div class="prop-row"><select id="seSize">
         ${[40, 60, 100, 160, 240, 320].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
@@ -597,6 +606,31 @@ UI.openSymbolEditor = (symId = null) => {
     }
     thSel.value = String(h);
   };
+  // ── 角R (選択中の四角形) ──
+  const rHead = body.querySelector("#seRHead"), rRow = body.querySelector("#seRRow");
+  const rNote = body.querySelector("#seRNote"), rIn = body.querySelector("#seR");
+  const selRects = () => selIdx().s.filter(i => S.shapes[i] && S.shapes[i].k === "rect");
+  const syncR = () => {
+    const idx = selRects();
+    const show = idx.length ? "" : "none";
+    rHead.style.display = rRow.style.display = rNote.style.display = show;
+    if (!idx.length) return;
+    if (document.activeElement !== rIn) rIn.value = String(S.shapes[idx[0]].r || 0);
+  };
+  rIn.addEventListener("change", () => {
+    const idx = selRects();
+    if (!idx.length) return;
+    push();
+    const v = Math.max(0, Math.min(20, parseFloat(rIn.value) || 0));
+    idx.forEach(i => {
+      const sh = S.shapes[i];
+      const cr = Math.min(v, sh.w / 2, sh.h / 2);
+      if (cr > 0) sh.r = Math.round(cr * 100) / 100; else delete sh.r;
+    });
+    draw();
+    UI.setMsg(v > 0 ? `角R を ${v}mm にしました` : "角を角のままに戻しました");
+  });
+
   // ── 表 (選択中) の列数・行数・文字高 ──
   const tblHead = body.querySelector("#seTblHead"), tblProps = body.querySelector("#seTblProps");
   const tblCols = body.querySelector("#seTblCols"), tblRows = body.querySelector("#seTblRows"), tblTh = body.querySelector("#seTblTh");
@@ -750,6 +784,7 @@ UI.openSymbolEditor = (symId = null) => {
     refreshSide();
     syncTh();                       // 選んだ文字の高さを左の欄へ映す
     syncTbl();                      // 表を選んでいれば列数・行数・文字高の欄を出す
+    syncR();                        // 四角形を選んでいれば角Rの欄を出す
   };
   const refreshSide = () => {
     const bd = S.frame ?? symShapesBounds(S.shapes, S.pins);
@@ -1564,20 +1599,12 @@ UI.openSymbolEditor = (symId = null) => {
           S.shapes.push({ k: "text", x: px, y: py - 8.6, text: num, h: TEXT_H.small, mono: true });
         }
       }
-      /* 外形 (山形と番号を囲う)。角R を付けるときはコネクタシェルの姿
-         (D-sub などの丸角) に合わせ、直線 4 本 + 四分円弧 4 個で描く —
-         円弧のまま DXF へ出て、分解すれば個々に編集もできる */
+      /* 外形 (山形と番号を囲う)。角R は四角形図形が持つ — 配置したあとに
+         外形をクリックして選び、左の「角R」で変えられる。DXF へは丸角の
+         まま (直線 + 円弧) 出力される */
       const pushOutline = (bx, by, w2, h2) => {
         const cr = Math.min(rr, w2 / 2, h2 / 2);
-        if (!(cr > 0)) { S.shapes.push({ k: "rect", x: bx, y: by, w: w2, h: h2, style: "solid" }); return; }
-        S.shapes.push({ k: "line", pts: [[bx + cr, by], [bx + w2 - cr, by]], style: "solid" });
-        S.shapes.push({ k: "line", pts: [[bx + w2, by + cr], [bx + w2, by + h2 - cr]], style: "solid" });
-        S.shapes.push({ k: "line", pts: [[bx + w2 - cr, by + h2], [bx + cr, by + h2]], style: "solid" });
-        S.shapes.push({ k: "line", pts: [[bx, by + h2 - cr], [bx, by + cr]], style: "solid" });
-        S.shapes.push({ k: "arc", x: bx + cr, y: by + cr, r: cr, a0: 180, a1: 270, style: "solid" });
-        S.shapes.push({ k: "arc", x: bx + w2 - cr, y: by + cr, r: cr, a0: 270, a1: 360, style: "solid" });
-        S.shapes.push({ k: "arc", x: bx + w2 - cr, y: by + h2 - cr, r: cr, a0: 0, a1: 90, style: "solid" });
-        S.shapes.push({ k: "arc", x: bx + cr, y: by + h2 - cr, r: cr, a0: 90, a1: 180, style: "solid" });
+        S.shapes.push({ k: "rect", x: bx, y: by, w: w2, h: h2, style: "solid", ...(cr > 0 ? { r: cr } : {}) });
       };
       if (vert) {
         const bx = s2 > 0 ? x0 + 2 : x0 - 14.8;

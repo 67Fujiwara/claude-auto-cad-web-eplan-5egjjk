@@ -213,7 +213,22 @@ function dxfSymPrimitives(sym) {
     } else if (tag === "rect") {
       const x = +attr(attrs, "x"), y = +attr(attrs, "y");
       const w = +attr(attrs, "width"), h = +attr(attrs, "height");
-      prims.push({ type: "poly", lt, sw, up, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
+      /* rx = 角R (コネクタの外形など)。丸角は直線 4 本 + 四分円弧 4 個で出す —
+         受け取った CAD で角が尖ったり、鈍った四角として届いたりしないように。
+         角度は SVG (y 下向き) の値で持つ。dxfArc 側で y を反転する */
+      const rx = Math.min(+(attr(attrs, "rx") || attr(attrs, "ry") || 0) || 0, w / 2, h / 2);
+      if (rx > 0) {
+        const X = x + ox, Y = y + oy;
+        [[[X + rx, Y], [X + w - rx, Y]], [[X + w, Y + rx], [X + w, Y + h - rx]],
+         [[X + w - rx, Y + h], [X + rx, Y + h]], [[X, Y + h - rx], [X, Y + rx]]]
+          .forEach(pts => prims.push({ type: "poly", lt, sw, up, pts }));
+        const D = Math.PI / 180;
+        [[X + rx, Y + rx, 180], [X + w - rx, Y + rx, 270],
+         [X + w - rx, Y + h - rx, 0], [X + rx, Y + h - rx, 90]]
+          .forEach(([cx, cy, a0]) => prims.push({ type: "arc", lt, sw, up, cx, cy, r: rx, t1: a0 * D, dt: 90 * D }));
+      } else {
+        prims.push({ type: "poly", lt, sw, up, pts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]].map(p => [p[0] + ox, p[1] + oy]) });
+      }
     } else if (tag === "circle") {
       prims.push({ type: "circle", lt, sw, up, cx: +attr(attrs, "cx") + ox, cy: +attr(attrs, "cy") + oy, r: +attr(attrs, "r") });
     } else if (tag === "text") {
