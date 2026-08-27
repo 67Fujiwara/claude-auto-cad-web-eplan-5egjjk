@@ -2347,7 +2347,8 @@ function mirrorLabelBoxes(coilDev) {
 }
 
 /** 連動接点の実効端子番号: 同一コイル配下の n 番目の接点は 13/14 → n3/n4 に採番 */
-function effectivePinName(dev, idx) {
+/** 自動採番の端子番号 (連動接点は同一コイル内の順位で 13/14 → 23/24 …) */
+function autoPinName(dev, idx) {
   const sym = symOf(dev.sym);
   const base = sym.pins[idx] ? sym.pins[idx].n : "";
   if (!dev.linkTo || !/^[1-8][1-8]$/.test(base)) return base;
@@ -2357,6 +2358,13 @@ function effectivePinName(dev, idx) {
   const pos = siblings.findIndex(c => c.id === dev.id);
   if (pos < 0) return base;
   return String(pos + 1) + base[1];
+}
+/* 表示・出図・検図・接続リストが使う端子番号。プロパティで機器ごとに
+   上書きできる (props.pinNames[端子index])。空欄 = 自動採番 */
+function effectivePinName(dev, idx) {
+  const ov = dev && dev.props && dev.props.pinNames;
+  if (ov && ov[idx] !== undefined && String(ov[idx]).trim() !== "") return String(ov[idx]).trim();
+  return autoPinName(dev, idx);
 }
 
 /**

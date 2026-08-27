@@ -346,6 +346,21 @@ UI.showProps = (focusTag = false) => {
         ${coils.map(c => `<option value="${c.id}" ${dev.linkTo === c.id ? "selected" : ""}>${c.tag} (${symOf(c.sym).name})</option>`).join("")}
         </select></div>` : ""}
       ${sym.timer ? `<div class="prop-row"><label>遅延時間 (秒)</label><input id="pDelay" class="mono" type="number" step="0.5" min="0" value="${dev.props.delay || 2}"/></div>` : ""}
+      ${(() => {
+        /* 端子番号の上書き。接点の 13/14 を 53/54 に変える等。空欄 = 自動採番
+           (連動接点の 13/14 → 23/24 の自動繰り上げも空欄なら従来どおり)。
+           結線図の枠記号 (端子名を外郭内に描く) と端子台は対象外 */
+        const pins2 = sym.pins || [];
+        if (!pins2.length || pins2.length > 12 || sym.ioSheet || dev.sym === "terminal") return "";
+        const rows = pins2.map((p2, i) => {
+          if (!p2.n || p2.inBody) return "";
+          const auto = autoPinName(dev, i);
+          const ov = (dev.props && dev.props.pinNames && dev.props.pinNames[i] !== undefined) ? dev.props.pinNames[i] : "";
+          return `<div class="prop-row"><label>端子 ${i + 1} <span class="rp-dim">(既定 ${escAttr(auto || "—")})</span></label>
+            <input class="mono pPinNm" data-pi="${i}" maxlength="8" value="${escAttr(ov)}" placeholder="${escAttr(auto)}"/></div>`;
+        }).join("");
+        return rows ? `<div class="prop-row" style="margin-bottom:0"><label>端子番号 <span class="rp-dim">(空欄 = 自動採番)</span></label></div>` + rows : "";
+      })()}
       ${symStretchBase(sym) ? (() => {
         const st = symStretchBase(sym).stretch;
         const span = sym.span || st.def;
@@ -557,6 +572,17 @@ UI.showProps = (focusTag = false) => {
       App.labelRev++;
     });
     bind("#pDelay", v => { const n = parseFloat(v); dev.props.delay = isNaN(n) ? 2 : n; });
+    pane.querySelectorAll(".pPinNm").forEach(el => el.addEventListener("change", () => {
+      commit();
+      const i = +el.dataset.pi;
+      dev.props = dev.props || {};
+      const m2 = dev.props.pinNames || {};
+      const v = el.value.trim();
+      if (v) m2[i] = v; else delete m2[i];
+      if (Object.keys(m2).length) dev.props.pinNames = m2; else delete dev.props.pinNames;
+      App.labelRev++;
+      UI.refresh(false);
+    }));
     // 行ピッチ (mm 指定の寸法違い)。下地を引き直せるよう、古い下地は消して知らせる
     bind("#pSpanMM", v => {
       const base = symStretchBase(symOf(dev.sym));
