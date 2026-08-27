@@ -84,9 +84,33 @@ function symShapeSVG(sh, opts = {}) {
     return `<path d="${d}${sh.closed ? " Z" : ""}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
   }
   if (sh.k === "rect") {
-    // r = 角R (コネクタの外形など。0/未指定なら角のまま)
-    const rr = sh.r > 0 ? ` rx="${+Math.min(sh.r, sh.w / 2, sh.h / 2).toFixed(2)}"` : "";
-    return `<rect x="${+sh.x.toFixed(2)}" y="${+sh.y.toFixed(2)}" width="${+sh.w.toFixed(2)}" height="${+sh.h.toFixed(2)}"${rr}${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
+    /* r = 角R。rc = どの角を丸めるか ("nw"/"ne"/"se"/"sw" の 1 つ、または "all")。
+       4 隅なら rect の rx で足りるが、一か所だけのときは path で描く。
+       再編集で角Rの欄へ戻せるよう、寸法と設定を data-rr に持たせる */
+    const cr = sh.r > 0 ? Math.min(sh.r, sh.w / 2, sh.h / 2) : 0;
+    const f2 = v => +v.toFixed(2);
+    if (!cr) {
+      return `<rect x="${f2(sh.x)}" y="${f2(sh.y)}" width="${f2(sh.w)}" height="${f2(sh.h)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
+    }
+    const rc = sh.rc || "nw";
+    if (rc === "all") {
+      return `<rect x="${f2(sh.x)}" y="${f2(sh.y)}" width="${f2(sh.w)}" height="${f2(sh.h)}" rx="${f2(cr)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
+    }
+    const has = c => rc === c;
+    const x0 = sh.x, y0 = sh.y, x1 = sh.x + sh.w, y1 = sh.y + sh.h;
+    const A = (px, py) => `A${f2(cr)},${f2(cr)} 0 0 1 ${f2(px)},${f2(py)}`;   // 時計回り (画面は y 下向き)
+    let d = `M${f2(x0 + (has("nw") ? cr : 0))},${f2(y0)}`;
+    d += ` L${f2(x1 - (has("ne") ? cr : 0))},${f2(y0)}`;
+    if (has("ne")) d += ` ${A(x1, y0 + cr)}`;
+    d += ` L${f2(x1)},${f2(y1 - (has("se") ? cr : 0))}`;
+    if (has("se")) d += ` ${A(x1 - cr, y1)}`;
+    d += ` L${f2(x0 + (has("sw") ? cr : 0))},${f2(y1)}`;
+    if (has("sw")) d += ` ${A(x0, y1 - cr)}`;
+    d += ` L${f2(x0)},${f2(y0 + (has("nw") ? cr : 0))}`;
+    if (has("nw")) d += ` ${A(x0 + cr, y0)}`;
+    /* Z は付けない — 最後の線分/円弧で始点へ戻っているので、付けると
+       DXF に長さ 0 の線が 1 本増える。塗りは開いたパスでも閉じて塗られる */
+    return `<path data-rr="${f2(sh.x)},${f2(sh.y)},${f2(sh.w)},${f2(sh.h)},${f2(cr)},${rc}" d="${d}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
   }
   if (sh.k === "circle") {
     return `<circle cx="${+sh.x.toFixed(2)}" cy="${+sh.y.toFixed(2)}" r="${+sh.r.toFixed(2)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
@@ -330,11 +354,16 @@ function symBodyToShapes(body) {
         const tm = /^\s*translate\(\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?\s*\)\s*$/.exec(tr);
         if (!tr || tm) { walk(ch, ox + (tm ? +tm[1] : 0), oy + (tm && tm[2] !== undefined ? +tm[2] : 0)); continue; }
         out.push({ k: "raw", body: ch.outerHTML, dx: ox, dy: oy, rot: 0 });
+      } else if (tag === "path" && ch.getAttribute("data-rr")) {
+        // 一か所だけ丸めた四角形 (角Rの欄で作ったもの) は四角形へ戻す
+        const v = ch.getAttribute("data-rr").split(",");
+        out.push({ k: "rect", x: +v[0] + ox, y: +v[1] + oy, w: +v[2], h: +v[3], r: +v[4], rc: v[5] || "nw",
+          ...(st.fill ? { fill: true } : {}), ...(st.style ? { style: "dash", dash: st.dash } : {}), ...(st.lw ? { lw: st.lw } : {}) });
       } else if (tag === "rect") {
         const rx0 = parseFloat(ch.getAttribute("rx") || ch.getAttribute("ry") || 0) || 0;
         out.push({ k: "rect", x: +(ch.getAttribute("x") || 0) + ox, y: +(ch.getAttribute("y") || 0) + oy,
           w: +ch.getAttribute("width"), h: +ch.getAttribute("height"),
-          ...(rx0 > 0 ? { r: rx0 } : {}),      // 角R も引き継ぐ (再編集で変えられる)
+          ...(rx0 > 0 ? { r: rx0, rc: "all" } : {}),   // 角R も引き継ぐ (rx は 4 隅)
           ...(st.fill ? { fill: true } : {}), ...(st.style ? { style: "dash", dash: st.dash } : {}), ...(st.lw ? { lw: st.lw } : {}) });
       } else if (tag === "circle") {
         out.push({ k: "circle", x: +(ch.getAttribute("cx") || 0) + ox, y: +(ch.getAttribute("cy") || 0) + oy,
@@ -488,8 +517,12 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-sect" id="seRHead" style="display:none">角R (選択中の四角形)</div>
       <div class="prop-row" id="seRRow" style="display:none">
         <input type="number" id="seR" class="mono" min="0" max="20" step="0.5" value="0"/>
+        <select id="seRWhich" style="margin-top:4px">
+          ${[["nw", "一か所: 左上"], ["ne", "一か所: 右上"], ["se", "一か所: 右下"], ["sw", "一か所: 左下"], ["all", "4隅すべて"]]
+            .map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
+        </select>
       </div>
-      <div class="prop-note" id="seRNote" style="display:none;margin-top:4px">四角形を選ぶと出ます。0 で角のまま。図面・DXF とも丸角で出ます (外形の枠なので電気記号の意味は変わりません)。</div>
+      <div class="prop-note" id="seRNote" style="display:none;margin-top:4px">四角形を選ぶと出ます。0 で角のまま。既定は一か所 (左上) だけを丸めます — 「4隅すべて」に切り替えるとコネクタの外形のような姿になります。図面・DXF とも丸角で出ます (外形の枠なので電気記号の意味は変わりません)。</div>
       <div class="prop-sect">作画範囲</div>
       <div class="prop-row"><select id="seSize">
         ${[40, 60, 100, 160, 240, 320].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
@@ -609,27 +642,35 @@ UI.openSymbolEditor = (symId = null) => {
   // ── 角R (選択中の四角形) ──
   const rHead = body.querySelector("#seRHead"), rRow = body.querySelector("#seRRow");
   const rNote = body.querySelector("#seRNote"), rIn = body.querySelector("#seR");
+  const rWhich = body.querySelector("#seRWhich");
   const selRects = () => selIdx().s.filter(i => S.shapes[i] && S.shapes[i].k === "rect");
   const syncR = () => {
     const idx = selRects();
     const show = idx.length ? "" : "none";
     rHead.style.display = rRow.style.display = rNote.style.display = show;
     if (!idx.length) return;
-    if (document.activeElement !== rIn) rIn.value = String(S.shapes[idx[0]].r || 0);
+    const sh = S.shapes[idx[0]];
+    if (document.activeElement !== rIn) rIn.value = String(sh.r || 0);
+    if (document.activeElement !== rWhich) rWhich.value = sh.rc || "nw";
   };
-  rIn.addEventListener("change", () => {
+  const applyR = () => {
     const idx = selRects();
     if (!idx.length) return;
     push();
     const v = Math.max(0, Math.min(20, parseFloat(rIn.value) || 0));
+    const which = rWhich.value || "nw";
     idx.forEach(i => {
       const sh = S.shapes[i];
       const cr = Math.min(v, sh.w / 2, sh.h / 2);
-      if (cr > 0) sh.r = Math.round(cr * 100) / 100; else delete sh.r;
+      if (cr > 0) { sh.r = Math.round(cr * 100) / 100; sh.rc = which; }
+      else { delete sh.r; delete sh.rc; }
     });
     draw();
-    UI.setMsg(v > 0 ? `角R を ${v}mm にしました` : "角を角のままに戻しました");
-  });
+    const label = { nw: "左上", ne: "右上", se: "右下", sw: "左下", all: "4隅" }[which];
+    UI.setMsg(v > 0 ? `${label} の角R を ${v}mm にしました` : "角を角のままに戻しました");
+  };
+  rIn.addEventListener("change", applyR);
+  rWhich.addEventListener("change", applyR);
 
   // ── 表 (選択中) の列数・行数・文字高 ──
   const tblHead = body.querySelector("#seTblHead"), tblProps = body.querySelector("#seTblProps");
@@ -1366,6 +1407,8 @@ UI.openSymbolEditor = (symId = null) => {
         const [nx, ny] = R(sh.x, sh.y + sh.h);
         sh.x = r2(nx); sh.y = r2(ny);
         const w0 = sh.w; sh.w = sh.h; sh.h = w0;
+        // 丸めた角も一緒に回す (時計回り 90°)
+        if (sh.rc && sh.rc !== "all") sh.rc = { nw: "ne", ne: "se", se: "sw", sw: "nw" }[sh.rc] || sh.rc;
       } else if (sh.k === "arc") {
         const [nx, ny] = R(sh.x, sh.y);
         sh.x = r2(nx); sh.y = r2(ny); sh.a0 = r2(sh.a0 + 90); sh.a1 = r2(sh.a1 + 90);
@@ -1604,7 +1647,7 @@ UI.openSymbolEditor = (symId = null) => {
          まま (直線 + 円弧) 出力される */
       const pushOutline = (bx, by, w2, h2) => {
         const cr = Math.min(rr, w2 / 2, h2 / 2);
-        S.shapes.push({ k: "rect", x: bx, y: by, w: w2, h: h2, style: "solid", ...(cr > 0 ? { r: cr } : {}) });
+        S.shapes.push({ k: "rect", x: bx, y: by, w: w2, h: h2, style: "solid", ...(cr > 0 ? { r: cr, rc: "all" } : {}) });
       };
       if (vert) {
         const bx = s2 > 0 ? x0 + 2 : x0 - 14.8;
