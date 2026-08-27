@@ -337,8 +337,8 @@ UI.showProps = (focusTag = false) => {
       <div class="prop-row"><label>機能テキスト</label><input id="pDesc" value="${(dev.desc || "").replace(/"/g, "&quot;")}"/></div>
       <div class="prop-row"><label>型式 (部品表用)</label><input id="pType" class="mono" value="${(dev.typeRef || "").replace(/"/g, "&quot;")}" placeholder="${sym.typ ? "例: " + sym.typ : "型式を入力"}"/></div>
       <div class="prop-grid2">
-        <div class="prop-row"><label>X (mm)</label><input id="pX" class="mono" type="number" step="5" value="${dev.x}"/></div>
-        <div class="prop-row"><label>Y (mm)</label><input id="pY" class="mono" type="number" step="5" value="${dev.y}"/></div>
+        <div class="prop-row"><label>X (mm)</label><input id="pX" class="mono" type="number" step="0.5" value="${dev.x}"/></div>
+        <div class="prop-row"><label>Y (mm)</label><input id="pY" class="mono" type="number" step="0.5" value="${dev.y}"/></div>
       </div>
       ${symOf(dev.sym).linked || sym.sim?.startsWith("contact") ? `
       <div class="prop-row"><label>コイルにリンク (クロスリファレンス)</label>
@@ -453,8 +453,11 @@ UI.showProps = (focusTag = false) => {
     bind("#pDesc", v => dev.desc = v.trim());
     bind("#pType", v => dev.typeRef = v.trim());
     const num = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : snap(n); }; // 0 も入力可
-    bind("#pX", v => dev.x = num(v, dev.x));
-    bind("#pY", v => dev.y = num(v, dev.y));
+    /* X/Y は 0.5mm 刻みで受ける。端子の張り出しが 5mm の倍数でない記号を
+       配線と真横に合わせるには、格子ちょうどでは置けないため */
+    const numF = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : Math.round(n / FINE) * FINE; };
+    bind("#pX", v => dev.x = numF(v, dev.x));
+    bind("#pY", v => dev.y = numF(v, dev.y));
     bind("#pLink", v => dev.linkTo = v || null);
     // 「この用紙にする」— ページの用紙を記号に合わせ、図枠の中へ入れ直す
     // 機種の差し替え。位置・タグ・機能テキストは残し、つないである配線は
@@ -2344,10 +2347,12 @@ UI.setupKeys = () => {
         UI.setTool("select");
         return;
       case "F2": e.preventDefault(); UI.openWizard(); return;
-      case "ArrowLeft": if (App.selection.size) { e.preventDefault(); nudgeSelection(-GRID, 0); } return;
-      case "ArrowRight": if (App.selection.size) { e.preventDefault(); nudgeSelection(GRID, 0); } return;
-      case "ArrowUp": if (App.selection.size) { e.preventDefault(); nudgeSelection(0, -GRID); } return;
-      case "ArrowDown": if (App.selection.size) { e.preventDefault(); nudgeSelection(0, GRID); } return;
+      /* 矢印 = 5mm 格子。Shift+矢印 = 0.5mm の微調整 —
+         端子の張り出しが 5mm の倍数でない記号を配線と真横に合わせるため */
+      case "ArrowLeft": if (App.selection.size) { e.preventDefault(); nudgeSelection(e.shiftKey ? -FINE : -GRID, 0); } return;
+      case "ArrowRight": if (App.selection.size) { e.preventDefault(); nudgeSelection(e.shiftKey ? FINE : GRID, 0); } return;
+      case "ArrowUp": if (App.selection.size) { e.preventDefault(); nudgeSelection(0, e.shiftKey ? -FINE : -GRID); } return;
+      case "ArrowDown": if (App.selection.size) { e.preventDefault(); nudgeSelection(0, e.shiftKey ? FINE : GRID); } return;
       case " ":
         if (!Editor.spaceHeld) { Editor.spaceHeld = true; document.getElementById("canvas").style.cursor = "grab"; }
         e.preventDefault();

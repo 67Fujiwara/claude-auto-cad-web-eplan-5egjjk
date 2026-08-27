@@ -967,7 +967,14 @@ function onMouseMove(e) {
     const zonesOnly = (a.zoneIds || []).length > 0 &&
       !a.devIds.length && !a.wireIds.length && !(a.textIds || []).length;
     const st = zonesOnly ? snapZone : snap;
-    const dx = st(w.x - d.startW.x), dy = st(w.y - d.startW.y);
+    let dx = st(w.x - d.startW.x), dy = st(w.y - d.startW.y);
+    /* 端子どうしの吸着 — 格子だけでは真横に揃わない記号を合わせる。
+       Alt を押しているあいだは切る (格子ちょうどに置きたいとき) */
+    if (!zonesOnly && !e.altKey) {
+      const c = alignSnapOffset(d.attach, dx, dy);
+      dx += c.cx; dy += c.cy;
+      d.snapped = !!(c.cx || c.cy);
+    } else d.snapped = false;
     if (dx === 0 && dy === 0 && !d.moved) return;
     d.moved = true;
     applyMove(d.attach, dx, dy);
@@ -1004,6 +1011,51 @@ function onMouseMove(e) {
     d.moved = z.x !== d.x0 || z.y !== d.y0 || z.w !== d.w0 || z.h !== d.h0;
     requestRender();
   }
+}
+
+/* 端子どうしの吸着 (オブジェクトスナップ)。
+   機器は 5mm 格子で動くので、端子の張り出しが 5mm の倍数でない記号
+   (M12 コネクタなど) は配線や相手の端子と真横に揃えられない。
+   格子で動かしたうえで、あと格子の半分 (2.5mm) 以内に「揃う相手」があれば、
+   その差だけ足して合わせる。格子上どうしなら差は 0 か 5mm 以上なので、
+   格子移動と取り合いにならない — 効くのは格子から外れた端子のときだけ */
+const ALIGN_TOL = GRID / 2;
+function alignSnapOffset(attach, dx, dy) {
+  const page = curPage();
+  const movingD = new Set(attach.devIds.map(o => o.id));
+  const movingW = new Set(attach.wireIds.map(o => o.id));
+  const pins = [];
+  attach.devIds.forEach(({ id, x0, y0 }) => {
+    const dev = page.devices.find(d => d.id === id);
+    if (dev) devPins({ ...dev, x: x0 + dx, y: y0 + dy }).forEach(p => pins.push(p));
+  });
+  if (!pins.length) return { cx: 0, cy: 0 };
+  // 揃える相手: 静止している機器の端子と、動かしていない配線の頂点
+  const xs = [], ys = [];
+  page.devices.forEach(d => {
+    if (movingD.has(d.id)) return;
+    devPins(d).forEach(p => { xs.push(p.x); ys.push(p.y); });
+  });
+  page.wires.forEach(w => {
+    if (movingW.has(w.id)) return;
+    w.pts.forEach(p => { xs.push(p[0]); ys.push(p[1]); });
+  });
+  // いちばん小さい補正を選ぶ (どの端子でも良いので、揃う組を総当たりで探す)
+  const pick = (vals, cur) => {
+    let bd = 0;
+    vals.forEach(v => {
+      const d2 = v - cur;
+      if (Math.abs(d2) > 0.001 && Math.abs(d2) <= ALIGN_TOL + 0.001 && (bd === 0 || Math.abs(d2) < Math.abs(bd))) bd = d2;
+    });
+    return bd;
+  };
+  let cx = 0, cy = 0;
+  pins.forEach(p => {
+    const ax = pick(xs, p.x), ay = pick(ys, p.y);
+    if (ax && (cx === 0 || Math.abs(ax) < Math.abs(cx))) cx = ax;
+    if (ay && (cy === 0 || Math.abs(ay) < Math.abs(cy))) cy = ay;
+  });
+  return { cx, cy };
 }
 
 function applyMove(attach, dx, dy) {
@@ -1146,7 +1198,10 @@ function onMouseUp(e) {
     if (App.undoStack.length > 100) App.undoStack.shift();
     App.redoStack.length = 0;
     saveLocal();
-    UI.setMsg("移動しました");
+    UI.setMsg(d.snapped
+      ? "端子の高さ・位置を相手に合わせました (Alt を押しながらだと格子のまま / Shift+矢印で 0.5mm 微調整)"
+      : "移動しました");
+    UI.showProps();      // X/Y は 0.5mm 単位で動くので、欄も動いた値に更新する
     requestRender();
   }
 }
@@ -1528,6 +1583,11 @@ function nudgeSelection(dx, dy) {
   const attach = buildMoveAttachment();
   applyMove(attach, dx, dy);
   requestRender();
+  // 0.5mm の微調整では、揃った/外れたが分かりにくいので座標を知らせる
+  if (Math.abs(dx) < GRID && Math.abs(dy) < GRID) {
+    const d0 = curPage().devices.find(dv => App.selection.has(dv.id));
+    if (d0) UI.setMsg(`微調整 ${Math.abs(dx) ? "X" : "Y"} = ${(Math.abs(dx) ? d0.x : d0.y).toFixed(1)}mm (0.5mm 刻み / 矢印キーのみで 5mm)`);
+  }
 }
 
 /* ══════════════ ステータスバー ══════════════ */

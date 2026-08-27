@@ -5,6 +5,9 @@
 "use strict";
 
 const GRID = 5;              // スナップグリッド 5mm
+/* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
+   配線と真横に合わせるための逃げ。Shift+矢印キーで使う */
+const FINE = 0.5;
 /* 作図領域。margin = 輪郭線の幅 c (JIS Z 8311)、marginLeft = とじ代側 (20mm) */
 const SHEET = { w: 420, h: 297, margin: 10, marginLeft: 20, cols: 10, rows: 6, f: 1, paper: "A3", orient: "landscape", scale: "1:1" };
 
