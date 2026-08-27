@@ -1510,6 +1510,8 @@ UI.openSymbolEditor = (symId = null) => {
           ${[["recept", "レセプタクル (機器側)"], ["plug", "プラグ (ケーブル側)"], ["term", "端子台"]]
             .map(([v, t]) => `<option value="${v}"${prev && prev.kind === v ? " selected" : ""}>${t}</option>`).join("")}
         </select></div>
+        <div class="prop-row"><label>角R (mm) <span class="rp-dim">(0 = 角のまま)</span></label>
+          <input id="cnR" class="mono" type="number" min="0" max="6" step="0.5" value="${prev && prev.r ? prev.r : 0}"/></div>
       </div>
       <div class="prop-row"><label>信号名 (改行区切り・任意)</label></div>
       <textarea id="cnSig" rows="5" placeholder="L1&#10;L2&#10;L1C&#10;L2C&#10;NC&#10;PE" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;outline:none">${prev ? escXML(prev.sigs || "") : ""}</textarea>
@@ -1527,6 +1529,7 @@ UI.openSymbolEditor = (symId = null) => {
       const n = Math.max(1, Math.min(40, parseInt(q("#cnN").value, 10) || 1));
       const pitch = Math.max(5, parseInt(q("#cnP").value, 10) || 5);
       const dir = q("#cnDir").value, kind = q("#cnKind").value;
+      const rr = Math.max(0, Math.min(6, parseFloat(q("#cnR").value) || 0));
       const name = q("#cnName").value.trim();
       const startNo = parseInt(q("#cnStart").value, 10);
       const sigsRaw = q("#cnSig").value;
@@ -1561,19 +1564,33 @@ UI.openSymbolEditor = (symId = null) => {
           S.shapes.push({ k: "text", x: px, y: py - 8.6, text: num, h: TEXT_H.small, mono: true });
         }
       }
-      // 外形と名称 (山形と番号を囲う)
+      /* 外形 (山形と番号を囲う)。角R を付けるときはコネクタシェルの姿
+         (D-sub などの丸角) に合わせ、直線 4 本 + 四分円弧 4 個で描く —
+         円弧のまま DXF へ出て、分解すれば個々に編集もできる */
+      const pushOutline = (bx, by, w2, h2) => {
+        const cr = Math.min(rr, w2 / 2, h2 / 2);
+        if (!(cr > 0)) { S.shapes.push({ k: "rect", x: bx, y: by, w: w2, h: h2, style: "solid" }); return; }
+        S.shapes.push({ k: "line", pts: [[bx + cr, by], [bx + w2 - cr, by]], style: "solid" });
+        S.shapes.push({ k: "line", pts: [[bx + w2, by + cr], [bx + w2, by + h2 - cr]], style: "solid" });
+        S.shapes.push({ k: "line", pts: [[bx + w2 - cr, by + h2], [bx + cr, by + h2]], style: "solid" });
+        S.shapes.push({ k: "line", pts: [[bx, by + h2 - cr], [bx, by + cr]], style: "solid" });
+        S.shapes.push({ k: "arc", x: bx + cr, y: by + cr, r: cr, a0: 180, a1: 270, style: "solid" });
+        S.shapes.push({ k: "arc", x: bx + w2 - cr, y: by + cr, r: cr, a0: 270, a1: 360, style: "solid" });
+        S.shapes.push({ k: "arc", x: bx + w2 - cr, y: by + h2 - cr, r: cr, a0: 0, a1: 90, style: "solid" });
+        S.shapes.push({ k: "arc", x: bx + cr, y: by + h2 - cr, r: cr, a0: 90, a1: 180, style: "solid" });
+      };
       if (vert) {
         const bx = s2 > 0 ? x0 + 2 : x0 - 14.8;
-        S.shapes.push({ k: "rect", x: bx, y: y0 - 4, w: 12.8, h: len + 8, style: "solid" });
+        pushOutline(bx, y0 - 4, 12.8, len + 8);
         if (name) S.shapes.push({ k: "text", x: bx + 6.4, y: y0 - 6, text: name, h: TEXT_H.small, mono: true });
       } else {
-        S.shapes.push({ k: "rect", x: x0 - 4, y: y0 - 14.8, w: len + 8, h: 12.8, style: "solid" });
+        pushOutline(x0 - 4, y0 - 14.8, len + 8, 12.8);
         if (name) S.shapes.push({ k: "text", x: x0 + len / 2, y: y0 - 16.8, text: name, h: TEXT_H.small, mono: true });
       }
       // グループ化: まとめて選択・移動でき、「コネクタ編集」で作り直せる
       S.shapes.slice(s0).forEach(sh => { sh.grp = gid; });
       S.pins.slice(p0).forEach(pn => { pn.grp = gid; });
-      S.connMeta[gid] = { x0, y0, name, n, pitch, dir, kind, start: q("#cnStart").value.trim(), sigs: sigsRaw };
+      S.connMeta[gid] = { x0, y0, name, n, pitch, dir, kind, r: rr, start: q("#cnStart").value.trim(), sigs: sigsRaw };
       draw();
       UI.setMsg(`コネクタ「${name || ""}」を ${n} 極で${editGid ? "作り直しました" : "配置しました"}`);
     });
