@@ -1,0 +1,164 @@
+/* 図面集の頭 3 枚 (表紙・目次・仕様) が標準で付くこと。
+
+   ・defaultPages : 新規プロジェクトが 表紙 / 目次 / 仕様 / 回路 の順で始まる
+   ・coverDraw    : 表紙は客先名と装置名の 2 行 + 下線。プロパティで書き換わる
+   ・tocAuto      : 目次はページ名と図番の一覧。ページを足すと自動で増え、
+                    表紙と目次そのものは載らない
+   ・specDefault  : 仕様は既定の選択 (IP54 など) で ◯ が付いている
+   ・specClick    : 図面の選択肢をクリックすると ◯ が移る (チェックするだけ)
+   ・specMemo     : 「その他」用の記入欄はプロパティにあり、図面に出る
+   ・drcSkip      : 表紙・目次・仕様は検図の対象外 (図枠の未接続などを出さない)
+   ・noDraw       : これらのページでは配線ツールで線が引かれない
+   ・addMenu      : あとから「表紙/目次/仕様を追加」でき、頭 3 枚の順に入る
+   ・saveLoad     : 保存 → 読み込みで種別・選択・表紙の文字が残る */
+import { chromium } from "playwright-core";
+const b = await chromium.launch({
+  executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+  args: ["--no-sandbox"],
+});
+const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
+const errs = []; p.on("pageerror", e => errs.push(String(e)));
+await p.goto(`file://${new URL("../index.html", import.meta.url).pathname}`);
+await p.waitForTimeout(900);
+
+const R = await p.evaluate(async () => {
+  const out = {};
+  App.project = newProject("挽肉異物検査 AI 画像検査装置 電気図面");
+  App.pageIdx = 0; App.selection.clear();
+  UI.renumberPages();
+  UI.refresh();
+  await new Promise(r => setTimeout(r, 200));
+  out.defaultPages = App.project.pages.map(pg => [pg.kind || "draw", pg.name]);
+
+  // ── 表紙 ──
+  const cover = App.project.pages[0];
+  cover.cover = { customer: "スターゼン株式会社 松尾工場", title: "挽肉異物検査 AI 画像検査装置 電気図面" };
+  App.pageIdx = 0; UI.refresh();
+  await new Promise(r => setTimeout(r, 200));
+  const svg = () => Editor.layers.sheet.innerHTML;
+  out.coverDraw = {
+    cust: svg().includes("スターゼン株式会社 松尾工場"),
+    title: svg().includes("挽肉異物検査 AI 画像検査装置 電気図面"),
+    underlines: (svg().match(/stroke-width="0.25"/g) || []).length >= 2,
+  };
+  // プロパティ欄が出て、書き換えると図面に反映される
+  UI.showProps();
+  await new Promise(r => setTimeout(r, 150));
+  const cvc = document.querySelector("#cvCust");
+  out.coverProp = !!cvc;
+  if (cvc) {
+    cvc.value = "○○食品 第2工場";
+    cvc.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    out.coverProp = svg().includes("○○食品 第2工場") && cover.cover.customer === "○○食品 第2工場";
+  }
+
+  // ── 目次 ──
+  App.pageIdx = 1; UI.refresh();
+  await new Promise(r => setTimeout(r, 200));
+  const before = tocRows().map(r2 => r2.name);
+  UI.addPage();                       // 回路ページを 1 枚足す
+  App.pageIdx = 1; UI.refresh();
+  await new Promise(r => setTimeout(r, 200));
+  out.tocAuto = {
+    before, after: tocRows().map(r2 => r2.name),
+    noCover: !tocRows().some(r2 => r2.name === "表紙" || r2.name === "目次"),
+    drawn: svg().includes("メイン回路") && svg().includes("名称") && svg().includes("項"),
+  };
+
+  // ── 仕様 ──
+  const spec = App.project.pages.find(pg => pg.kind === "spec");
+  App.pageIdx = App.project.pages.indexOf(spec);
+  UI.refresh();
+  await new Promise(r => setTimeout(r, 200));
+  out.specDefault = { ip: spec.spec.sel.ip, env: spec.spec.sel.env,
+    circles: (svg().match(/<circle /g) || []).length };
+  return out;
+});
+
+// ── 仕様: 図面の選択肢を実クリック ──
+const clicked = await p.evaluate(async () => {
+  const o = Editor.specBoxes.find(q => q.k === "ip" && q.i === 0);
+  const bb = Editor.svg.getBoundingClientRect();
+  const { tx, ty, s } = Editor.view;
+  return { x: bb.left + tx + (o.x + o.w / 2) * s, y: bb.top + ty + (o.y + o.h / 2) * s };
+});
+await p.mouse.click(clicked.x, clicked.y);
+await p.waitForTimeout(200);
+R.specClick = await p.evaluate(() => {
+  const spec = App.project.pages.find(pg => pg.kind === "spec");
+  return { ip: spec.spec.sel.ip };
+});
+
+R.rest = await p.evaluate(async () => {
+  const out = {};
+  const spec = App.project.pages.find(pg => pg.kind === "spec");
+  // 記入欄 (プロパティ)
+  UI.showProps();
+  await new Promise(r => setTimeout(r, 150));
+  const memo = document.querySelector('.spMemo[data-k="env"]');
+  out.memoField = !!memo;
+  if (memo) {
+    memo.value = "冷蔵環境 (5℃)";
+    memo.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    out.memoDrawn = Editor.layers.sheet.innerHTML.includes("冷蔵環境 (5℃)") && spec.spec.memo.env === "冷蔵環境 (5℃)";
+  }
+  /* 検図は頭 3 枚を見ない。素通しでは確かめられないので、回路ページなら
+     必ず指摘が出るもの (未接続の端子を持つ機器) を仕様ページへ置いて試す */
+  addDevice(spec, "coil", 100, 100, { tag: "-KX" });
+  const kindNos = App.project.pages.filter(pg => pg.kind).map(pg => pg.no);
+  const all = runDRC();
+  out.drcSkip = all.every(i => !kindNos.includes(i.page)) && all.every(i => i.target !== spec.devices[0].id);
+  spec.devices.pop();
+  // 配線ツールでは線が引かれない
+  UI.setTool("wire");
+  const before = spec.wires.length;
+  /* 選択肢の枠に当たらない空白 (図枠の下の方) で試す —
+     選択肢の上だと「仕様を選ぶ」動作になってしまい、線を引かない確認にならない */
+  const bb = Editor.svg.getBoundingClientRect();
+  const { tx, ty, s: vs } = Editor.view;
+  const empty = { x: SHEET.w * 0.25, y: SHEET.h * 0.8 };
+  const hit = (Editor.specBoxes || []).some(o =>
+    empty.x >= o.x && empty.x <= o.x + o.w && empty.y >= o.y && empty.y <= o.y + o.h);
+  const cx = bb.left + tx + empty.x * vs, cy = bb.top + ty + empty.y * vs;
+  const ev = (t) => Editor.svg.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: cx, clientY: cy }));
+  ev("mousedown"); ev("mouseup");
+  ev("mousedown"); ev("mouseup");
+  out.noDraw = !hit && spec.wires.length === before && !Editor.wireDraft
+    && spec.spec.sel.ip === 0;          // 仕様の選択も変わっていないこと
+  UI.setTool("select");
+  // あとから追加 (頭 3 枚の順に入る)
+  UI.addSpecialPage("toc");
+  out.addMenu = App.project.pages.map(pg => pg.kind || "draw").join(",");
+  // 保存 → 読み込み
+  const json = JSON.stringify(App.project);
+  App.project = JSON.parse(json);
+  App.pageIdx = 0; UI.refresh();
+  await new Promise(r => setTimeout(r, 200));
+  const c2 = App.project.pages[0], s2 = App.project.pages.find(pg => pg.kind === "spec");
+  out.saveLoad = { kind: c2.kind, cust: c2.cover && c2.cover.customer,
+    ip: s2.spec && s2.spec.sel.ip, memo: s2.spec && s2.spec.memo.env };
+  return out;
+});
+
+const checks = {
+  noPageErrors: errs.length === 0,
+  defaultPages: JSON.stringify(R.defaultPages) ===
+    JSON.stringify([["cover", "表紙"], ["toc", "目次"], ["spec", "仕様"], ["draw", "メイン回路"]]),
+  coverDraw: R.coverDraw.cust && R.coverDraw.title && R.coverDraw.underlines && R.coverProp === true,
+  tocAuto: R.tocAuto.after.length === R.tocAuto.before.length + 1 && R.tocAuto.noCover && R.tocAuto.drawn,
+  specDefault: R.specDefault.ip === 5 && R.specDefault.env === 0 && R.specDefault.circles >= 10,
+  specClick: R.specClick.ip === 0,
+  specMemo: R.rest.memoField === true && R.rest.memoDrawn === true,
+  drcSkip: R.rest.drcSkip === true,
+  noDraw: R.rest.noDraw === true,
+  addMenu: R.rest.addMenu === "cover,toc,toc,spec,draw,draw",
+  saveLoad: R.rest.saveLoad.kind === "cover" && R.rest.saveLoad.cust === "○○食品 第2工場"
+    && R.rest.saveLoad.ip === 0 && R.rest.saveLoad.memo === "冷蔵環境 (5℃)",
+};
+const bad = Object.entries(checks).filter(([, v]) => !v);
+console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
+await b.close();
+if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
+console.log("front-pages OK");

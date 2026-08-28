@@ -165,7 +165,8 @@ const R = await p.evaluate(() => {
   Object.entries(SPEC).forEach(([id, sp], i) => {
     const sym = symOf(id), want = sym && symSheetSpec(sym);
     if (!want || !sym.ioSheet) { out.sheet[id] = { inFrame: false, onBlock: true, railRoom: -1 }; return; }
-    const pg = i === 0 ? App.project.pages[0] : (() => {
+    // 頭 3 枚 (表紙・目次・仕様) は回路ページではないので、最初の回路ページを使う
+    const pg = i === 0 ? App.project.pages.find(isDrawingPage) : (() => {
       const q = newPage(id, App.project.pages.length + 1); App.project.pages.push(q); return q;
     })();
     pg.name = sym.name;

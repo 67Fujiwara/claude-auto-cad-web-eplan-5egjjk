@@ -1812,15 +1812,63 @@ function newProject(name = "無題プロジェクト") {
       paper: "A3", scale: "1:1", dwgNo: "", rev: "0",
       designer: "", checker: "", date: todayStr(), author: "ElectraCAD Studio",
     },
-    pages: [newPage("メイン回路", 1)],
+    /* 図面集の頭 3 枚 (表紙・目次・仕様) を標準で付ける。
+       いずれも要らなければページのタブから消せる */
+    pages: [newPage("表紙", 1, "cover"), newPage("目次", 2, "toc"),
+            newPage("仕様", 3, "spec"), newPage("メイン回路", 4)],
   };
 }
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-function newPage(name, no) {
-  return { id: uid("p"), no, name, devices: [], wires: [], texts: [], zones: [] };
+function newPage(name, no, kind) {
+  const pg = { id: uid("p"), no, name, devices: [], wires: [], texts: [], zones: [] };
+  if (kind) pg.kind = kind;                 // "cover" 表紙 / "toc" 目次 / "spec" 仕様
+  if (kind === "spec") pg.spec = defaultSpec();
+  return pg;
+}
+/** 図面ページ (回路を描くページ) か。表紙・目次・仕様は作図の対象外 */
+function isDrawingPage(page) { return !page || !page.kind; }
+
+/* ══════════════ 標準の頭 3 枚 (表紙・目次・仕様) ══════════════
+   実務の図面集の作法にそろえる:
+   ・表紙 … 客先名と装置名。図枠は他ページと同じものを使う
+   ・目次 … ページ名と図番の一覧。ページを足すたびに自動で作り直す
+   ・仕様 … 制御盤の仕様書。選ぶだけ (チェック) で決まる — 数値の
+            入力欄は「その他」を選んだときだけ書き込む */
+
+/** 仕様シートの様式。行 = { k: 保存キー, label, opts:[選択肢], note?: 記入欄 } */
+const SPEC_FORM = [
+  { title: "制御盤筐体仕様", groups: [
+    { name: "使用環境", k: "env", opts: ["一般環境 (10℃〜40℃)", "特殊環境 (指定環境)"], memo: "特記事項" },
+    { name: "保護等級", k: "ip", opts: ["IP40", "IP41", "IP42", "IP43", "IP44", "IP54", "その他"] },
+    { name: "材質 (鉄)", k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色"], memo: "指定色" },
+    { name: "材質 (ステンレス)", k: "mat_sus", opts: ["無処理 (購入標準)", "鏡面", "ヘアライン"] },
+    { name: "電源接続方法", k: "pwr", opts: ["当社標準: 主幹用遮断器一次側へ引き込み (端子台)", "御社指定方法"], memo: "指定方法" },
+  ] },
+  { title: "制御盤配線仕様", groups: [
+    { name: "AC200V 3相", k: "w_ac200_3", opts: ["黒/黒/黒", "赤/白/黒"], fixed: "300V 以上" },
+    { name: "AC200V 単相", k: "w_ac200_1", opts: ["黒", "黄"], fixed: "300V 以上" },
+    { name: "AC100V 制御回路", k: "w_ac100", opts: ["黒", "赤", "黄"], fixed: "300V 以上" },
+    { name: "DC24V 全般", k: "w_dc24", opts: ["青", "その他"], fixed: "30V 以上" },
+    { name: "計装", k: "w_inst", opts: ["シールド付"], fixed: "30V 以上シールド付" },
+    { name: "マークチューブ長", k: "tube", opts: ["標準 (20mm)", "その他 (** mm)"], memo: "長さ" },
+    { name: "取付方向", k: "tube_dir", opts: ["標準 (読上げ)", "その他 (図示)"], memo: "指定" },
+  ] },
+];
+/** 既定の選択 (いちばん標準的な組み合わせ) */
+function defaultSpec() {
+  const sel = {};
+  SPEC_FORM.forEach(sec => sec.groups.forEach(g => { sel[g.k] = 0; }));
+  sel.ip = 5;                    // IP54 (盤の実務でいちばん多い)
+  return { sel, memo: {} };
+}
+/** 目次の行 (表紙と目次そのものは載せない — 図面集の作法) */
+function tocRows() {
+  return App.project.pages
+    .filter(pg => pg.kind !== "cover" && pg.kind !== "toc")
+    .map(pg => ({ name: pg.name, no: pageDwgNo(pg) }));
 }
 /** プロジェクトに同梱されたシンボル定義を辞書へ取り込む (読込・undo 後に呼ぶ) */
 function mergeProjectSymbols() {
@@ -2850,6 +2898,7 @@ function runDRC() {
       })
     : [closedData];
   App.project.pages.forEach((page, pageIdx) => {
+    if (!isDrawingPage(page)) return;   // 表紙・目次・仕様は回路の検査対象外
     applySheet(page);        // 図枠まわりの検査はページごとの用紙・尺度で行う
     const closed = closedData[pageIdx];
     const open = openData[pageIdx];

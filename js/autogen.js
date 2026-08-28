@@ -48,9 +48,12 @@ function aiGenerate(sel) {
   const report = [];
   const L = AI_L;
   const project = App.project;
-  // 生成前が「空のページ1枚だけ」なら、生成後にその空ページを取り除く
-  const removeEmptyFirst = project.pages.length === 1 &&
-    !project.pages[0].devices.length && !project.pages[0].wires.length && !project.pages[0].texts.length;
+  /* 生成前が「空の回路ページ 1 枚だけ」なら、生成後にその空ページを取り除く。
+     図面集の頭 3 枚 (表紙・目次・仕様) は回路ページではないので数に入れない */
+  const drawPages = project.pages.filter(isDrawingPage);
+  const firstDraw = project.pages.findIndex(isDrawingPage);
+  const removeEmptyFirst = drawPages.length === 1 && firstDraw >= 0 &&
+    !drawPages[0].devices.length && !drawPages[0].wires.length && !drawPages[0].texts.length;
 
   const inputs = aiExpand(sel.inputs);
   const logics = aiExpand(sel.logics);
@@ -539,7 +542,7 @@ function aiGenerate(sel) {
   // ── 空の初期ページはここで除去する ──
   // (電位リンクの行先参照・主回路のページ番号が確定する前に再採番しないと 1 ずれる)
   if (removeEmptyFirst) {
-    project.pages.shift();
+    project.pages.splice(firstDraw, 1);
     project.pages.forEach((p, i) => p.no = i + 1);
     for (let i = 0; i < pageIdxs.length; i++) pageIdxs[i]--;
   }

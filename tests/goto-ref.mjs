@@ -58,10 +58,12 @@ const R = await p.evaluate(() => {
     App.project.pages.push(pg); UI.renumberPages(); return pg;
   };
   App.project = newProject("行き先テスト");     // 既定のページ構成に左右されないように
-  const p1 = App.project.pages[0];
+  // 頭 3 枚 (表紙・目次・仕様) の後ろが最初の回路ページ
+  const i1 = App.project.pages.findIndex(isDrawingPage);
+  const p1 = App.project.pages[i1];
   p1.name = "制御回路"; UI.renumberPages();
   const p2 = mk("主回路"), p3 = mk("動力回路");
-  App.pageIdx = 0;
+  App.pageIdx = i1;
   const dev = addDevice(p1, "goto_ref", 100, 60, { tag: "" });
   addWire(p1, [[85, 60], [100, 60]]);          // 行き先は線の終端に置く記号
 
@@ -123,9 +125,10 @@ const R = await p.evaluate(() => {
     JSON.stringify(dev).includes(pageDwgNo(p2));
 
   // ④ 並べ替えに追従 (2 ページ目を先頭へ)
-  UI.movePage(1, 0);
+  const at2 = App.project.pages.indexOf(p2);
+  UI.movePage(at2, 0);
   out.moved = { shown: shown(), want: pageDwgNo(App.project.pages.find(pg => pg.id === p2.id)), order: App.project.pages.map(pg => pg.no + ":" + pg.name).join(",") };
-  UI.movePage(0, 1);   // 戻す
+  UI.movePage(0, at2);   // 戻す
 
   // ⑤ 図番の接頭辞を変えると追従
   projectMeta().dwgNo = "TK-2026-010"; UI.renumberPages();
@@ -137,26 +140,27 @@ const R = await p.evaluate(() => {
   delete p2.dwgNoManual; UI.renumberPages();
 
   // ⑦ 前にページを足して番号がずれても追従
-  const p0 = mk("表紙");
+  const p0 = mk("差し込みページ");
   App.project.pages.pop(); App.project.pages.unshift(p0); UI.renumberPages();
-  out.inserted = { shown: shown(), want: pageDwgNo(p2), pageNo: p2.no };
+  out.inserted = { shown: shown(), want: pageDwgNo(p2), pageNo: p2.no, at: App.project.pages.indexOf(p2) + 1 };
   App.project.pages.shift(); UI.renumberPages();
   projectMeta().dwgNo = ""; UI.renumberPages();
 
   // ⑧ 保存 → 読込 のあとも追従が続く (id を保存しているので)
   const json = JSON.stringify(App.project);
-  App.project = JSON.parse(json); App.pageIdx = 0;
-  const dev2 = App.project.pages[0].devices.find(d => symOf(d.sym).gotoRef);
-  const q2 = App.project.pages[1];
-  out.reload = { shown: deviceXrefBox(App.project.pages[0], dev2).text, want: pageDwgNo(q2) };
-  UI.movePage(1, 2);   // 読み込んだ側でも並べ替えに追従するか
-  out.reloadMoved = { shown: deviceXrefBox(App.project.pages[0], dev2).text, want: pageDwgNo(App.project.pages.find(pg => pg.id === q2.id)) };
+  App.project = JSON.parse(json); App.pageIdx = i1;
+  const r1 = App.project.pages[i1], r2 = App.project.pages[i1 + 1];
+  const dev2 = r1.devices.find(d => symOf(d.sym).gotoRef);
+  out.reload = { shown: deviceXrefBox(r1, dev2).text, want: pageDwgNo(r2) };
+  UI.movePage(i1 + 1, i1 + 2);   // 読み込んだ側でも並べ替えに追従するか
+  out.reloadMoved = { shown: deviceXrefBox(App.project.pages[i1], dev2).text,
+    want: pageDwgNo(App.project.pages.find(pg => pg.id === r2.id)) };
   UI.movePage(2, 1);
 
   /* ⑨ 文字の位置: 旗の平行部の中央にあり、五角形の内側に判読できるあき
      (0.7mm) を残して収まる。外接矩形ではなく五角形の 5 辺で見るので、
      先端の斜辺への食い込みも捕まえる */
-  const d3 = App.project.pages[0].devices.find(x => symOf(x.sym).gotoRef);
+  const d3 = App.project.pages.find(isDrawingPage).devices.find(x => symOf(x.sym).gotoRef);
   // 五角形の頂点 (記号ローカル)。辺への距離で判定する
   const poly = [[g0.x0, -g0.h], [g0.x1, -g0.h], [g0.tip, 0], [g0.x1, g0.h], [g0.x0, g0.h]];
   const distToEdges = (px, py) => {
@@ -183,7 +187,7 @@ const R = await p.evaluate(() => {
   out.place = {};
   [0, 90, 180, 270].forEach(rot => {
     d3.rot = rot;
-    const xr = deviceXrefBox(App.project.pages[0], d3);
+    const xr = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
     const c = { x: xr.box.x + xr.box.w / 2, y: xr.box.y + xr.box.h / 2 };
     const want = pinAbs(d3, { x: (g0.x0 + g0.x1) / 2, y: 0 });     // 平行部の中央
     // 文字の 4 隅を記号ローカルへ戻し、五角形の辺までのあきを測る
@@ -197,14 +201,14 @@ const R = await p.evaluate(() => {
       gap: Math.min(...gaps).toFixed(3),      // 文字と旗の輪郭のあき
       angle: xr.angle,      // 旗の長手に沿う (文字は下辺から/右辺から読む: JIS Z 8317-1)
       // 画面 (SVG) の文字も同じ角度で出ているか
-      svg: /transform="rotate\(-90 /.test(devLabelsSVG(d3, symOf(d3.sym), App.project.pages[0])),
+      svg: /transform="rotate\(-90 /.test(devLabelsSVG(d3, symOf(d3.sym), App.project.pages.find(isDrawingPage))),
     };
   });
   d3.rot = 0;
 
   // ⑩ DXF に同じ文字が同じ位置で出る
-  const xr0 = deviceXrefBox(App.project.pages[0], d3);
-  const t = pageToDXF(App.project.pages[0]);
+  const xr0 = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
+  const t = pageToDXF(App.project.pages.find(isDrawingPage));
   const re = new RegExp(`\\n1\\n${xr0.text}\\n`);
   out.dxf = { has: re.test(t), text: xr0.text };
   // TEXT エンティティを拾って画面と同じ位置か見る (DXF は Y 反転)
@@ -225,8 +229,8 @@ const R = await p.evaluate(() => {
 
   // ⑩b 縦置きの行き先は DXF でも 90° で出る
   d3.rot = 90;
-  const xr9 = deviceXrefBox(App.project.pages[0], d3);
-  const t9 = pageToDXF(App.project.pages[0]);
+  const xr9 = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
+  const t9 = pageToDXF(App.project.pages.find(isDrawingPage));
   const e9 = t9.split("\n0\nTEXT\n").find(s2 => s2.startsWith("8\nXREF") && s2.includes("\n1\n" + xr9.text + "\n"));
   out.dxfRot = e9 ? {
     ang: (/\n50\n(-?[\d.]+)/.exec(e9) || [])[1],
@@ -243,9 +247,10 @@ const R = await p.evaluate(() => {
   /* ⑪ 片道だけの相互参照は追えない。相手の葉から指し返して初めて対になる
      (IEC 61082-1)。対ができると図番に相手の区分 (列) が付く */
   out.oneWay = drc2();                     // 「対が無い」と「電位リンクが無い」の 2 件
-  const home = App.project.pages[0];
+  const home = App.project.pages.find(isDrawingPage);
   const to = App.project.pages.find(pg => pg.id === d3.props.toPage);
-  const third = App.project.pages.find(pg => pg !== home && pg !== to);
+  // 3 枚目も回路ページから選ぶ (表紙・目次・仕様は検図の対象外なので使えない)
+  const third = App.project.pages.find(pg => isDrawingPage(pg) && pg !== home && pg !== to);
   const mate = addDevice(to, "goto_ref", 150, 80, { tag: "" });
   mate.props = { toPage: home.id };
   addWire(to, [[135, 80], [150, 80]]);
@@ -277,7 +282,8 @@ const R = await p.evaluate(() => {
   addWire(to, [[135, 120], [150, 120]]);
   const lk4 = addDevice(to, "link", 135, 120, { tag: "-W101" });
   touch();
-  out.ambiguous = { shown: deviceXrefBox(home, d3).text, drc: drc2("行き先の対が定まらない") };
+  // 対が定まらないときは図番だけ (区分なし)。比べる図番はその時点の相手ページのもの
+  out.ambiguous = { shown: deviceXrefBox(home, d3).text, want: pageDwgNo(to), drc: drc2("行き先の対が定まらない") };
   [mate2, lk4].forEach(d => to.devices.splice(to.devices.indexOf(d), 1));
   touch();
   to.wires.pop();
@@ -287,18 +293,18 @@ const R = await p.evaluate(() => {
 
   // ⑫ 行き先どうしが近すぎる (5mm ピッチで並べると旗が接する)
   const near = addDevice(to, "goto_ref", 150, 85, { tag: "" });
-  near.props = { toPage: App.project.pages[0].id };
+  near.props = { toPage: App.project.pages.find(isDrawingPage).id };
   out.tooNear = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
   to.devices.splice(to.devices.indexOf(near), 1);
   // 格子 2 目 (10mm) 離せば出ない
   const far = addDevice(to, "goto_ref", 150, 90, { tag: "" });
-  far.props = { toPage: App.project.pages[0].id };
+  far.props = { toPage: App.project.pages.find(isDrawingPage).id };
   out.farOk = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
   to.devices.splice(to.devices.indexOf(far), 1);
 
   // ⑬ 自分のページを指したらエラー (貼り付けで起こりうる)
   const back0 = d3.props.toPage;
-  d3.props.toPage = App.project.pages[0].id;
+  d3.props.toPage = App.project.pages.find(isDrawingPage).id;
   out.selfRef = drc2();
   d3.props.toPage = back0;
 
@@ -306,7 +312,7 @@ const R = await p.evaluate(() => {
   const ti = App.project.pages.findIndex(pg => pg.id === d3.props.toPage);
   const keep = App.project.pages[ti];
   App.project.pages.splice(ti, 1); UI.renumberPages();
-  out.deleted = { shown: deviceXrefBox(App.project.pages[0], d3).text, drc: drc2() };
+  out.deleted = { shown: deviceXrefBox(App.project.pages.find(isDrawingPage), d3).text, drc: drc2() };
   App.project.pages.splice(ti, 0, keep); UI.renumberPages();
 
   // ⑮ 図番が旗に入りきらない (判定は旗の実寸から計算する)
@@ -319,7 +325,7 @@ const R = await p.evaluate(() => {
      外接矩形も呼び寸法ではなく実際のインク (基線の下へ出る分を含む) で返すこと */
   const pgTo = App.project.pages.find(pg => pg.id === d3.props.toPage);
   pgTo.dwgNo = "制御盤"; pgTo.dwgNoManual = true;   // 幅は足りるが高さが足りない図番
-  const xrJ = deviceXrefBox(App.project.pages[0], d3);
+  const xrJ = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
   const inkJ = textInkMM(xrJ.text, xrJ.size, true, false);
   out.cjk = { size: xrJ.size, h: +xrJ.box.h.toFixed(2), ink: +(inkJ.up + inkJ.down).toFixed(2),
     boxIsInk: Math.abs(xrJ.box.h - (inkJ.up + inkJ.down)) < 0.001,
@@ -329,7 +335,7 @@ const R = await p.evaluate(() => {
   delete pgTo.dwgNoManual; UI.renumberPages();
   /* 欧文でも "/" は基線の下へ出る。呼び 2.5mm の箱で測ると図枠・重なりの
      検図が甘くなるので、実インクで返していることを確かめる */
-  const xrA = deviceXrefBox(App.project.pages[0], d3);
+  const xrA = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
   const inkA = textInkMM(xrA.text, xrA.size, true, false);
   out.small = TEXT_H.small;
   out.ascii = { text: xrA.text, h: +xrA.box.h.toFixed(3), ink: +(inkA.up + inkA.down).toFixed(3),
@@ -347,9 +353,11 @@ console.log(JSON.stringify(R, null, 1));
 
 /* ここからは実際の操作経路。プルダウンで選べなければ要求を満たさない */
 await p.evaluate(() => {
-  const dev = App.project.pages[0].devices.find(d => symOf(d.sym).gotoRef);
+  const dev = App.project.pages.find(isDrawingPage).devices.find(d => symOf(d.sym).gotoRef);
   dev.props = {};                     // 未設定に戻してから操作で選ぶ
-  App.pageIdx = 0; App.selection.clear(); App.selection.add(dev.id);
+  // プロパティは表示中のページの選択を出すので、機器のいるページを開く
+  App.pageIdx = App.project.pages.findIndex(isDrawingPage);
+  App.selection.clear(); App.selection.add(dev.id);
   UI.showProps();
 });
 await p.waitForSelector("#pGoto");
@@ -364,8 +372,8 @@ const target = await p.evaluate(() => App.project.pages[2].id);
 await p.selectOption("#pGoto", target);
 await p.waitForTimeout(300);
 U.afterSelect = await p.evaluate(() => {
-  const dev = App.project.pages[0].devices.find(d => symOf(d.sym).gotoRef);
-  return { shown: deviceXrefBox(App.project.pages[0], dev).text, want: pageDwgNo(App.project.pages[2]),
+  const dev = App.project.pages.find(isDrawingPage).devices.find(d => symOf(d.sym).gotoRef);
+  return { shown: deviceXrefBox(App.project.pages.find(isDrawingPage), dev).text, want: pageDwgNo(App.project.pages[2]),
     stored: JSON.stringify(dev.props) };
 });
 // 並べ替えたあと、プルダウンの表示も新しい図番になっているか
@@ -398,7 +406,7 @@ console.log("操作:", JSON.stringify(U, null, 1));
 const S = await p.evaluate(() => {
   const o = {};
   App.project = newProject("シミュレーション影響なし");
-  const pg = App.project.pages[0];
+  const pg = App.project.pages.find(isDrawingPage);
   const p2 = newPage("次葉", 2); App.project.pages.push(p2); UI.renumberPages(); App.pageIdx = 0;
   addDevice(pg, "psu24", 60, 40, { tag: "-G1" });
   const co = addDevice(pg, "coil", 50, 90, { tag: "-K1" });
@@ -447,10 +455,10 @@ console.log("シミュレーション:", JSON.stringify(S, null, 1));
 const N = await p.evaluate(() => {
   const o = {};
   App.project = newProject("線番の継続");
-  const p1 = App.project.pages[0];
+  const p1 = App.project.pages.find(isDrawingPage);
   const p2 = newPage("次葉", 2); App.project.pages.push(p2);
   const p3 = newPage("別回路", 3); App.project.pages.push(p3);
-  UI.renumberPages(); App.pageIdx = 0;
+  UI.renumberPages(); App.pageIdx = App.project.pages.indexOf(p1);
   const w1 = addWire(p1, [[60, 60], [100, 60]]); w1.num = "101";
   addDevice(p1, "link", 100, 60, { tag: "-W101" });
   const g1 = addDevice(p1, "goto_ref", 100, 60, { tag: "" }); g1.props = { toPage: p2.id };
@@ -475,28 +483,28 @@ console.log("線番の継続:", JSON.stringify(N, null, 1));
    ユーザのデータを黙って書き換える処理なので、知らせも出すこと */
 const P = await p.evaluate(() => {
   App.project = newProject("貼り付け");
-  const p1 = App.project.pages[0];
+  const p1 = App.project.pages.find(isDrawingPage);
   const p2 = newPage("次葉", 2); App.project.pages.push(p2); UI.renumberPages();
-  App.pageIdx = 0;
+  App.pageIdx = App.project.pages.indexOf(p1);
   const g = addDevice(p1, "goto_ref", 100, 60, { tag: "" }); g.props = { toPage: p2.id };
   App.selection.clear(); App.selection.add(g.id);
   copySelection();
   // 指し先のページへ貼ると、自分の葉を指すことになる
-  App.pageIdx = 1; App.selection.clear();
+  App.pageIdx = App.project.pages.indexOf(p2); App.selection.clear();
   Editor.lastWorld = { x: 100, y: 60 };
   const msgs = [];
   const toast0 = UI.toast; UI.toast = (m) => msgs.push(m);
   pasteClipboard();
   UI.toast = toast0;
-  const pasted = App.project.pages[1].devices.find(d => symOf(d.sym).gotoRef);
+  const pasted = p2.devices.find(d => symOf(d.sym).gotoRef);
   const o = { toPage: (pasted.props || {}).toPage || "(未設定)", told: msgs.join("|") };
   App.labelRev++;
   o.drc = runDRC().filter(i => i.target === pasted.id && i.rule === "行き先の自己参照").length;
   // 同じページへの貼り付けでは指し先を保つ
-  App.pageIdx = 0; App.selection.clear(); Editor.lastWorld = { x: 100, y: 90 };
+  App.pageIdx = App.project.pages.indexOf(p1); App.selection.clear(); Editor.lastWorld = { x: 100, y: 90 };
   pasteClipboard();
-  const same = App.project.pages[0].devices.filter(d => symOf(d.sym).gotoRef);
-  o.keptOnSamePage = same.length === 2 && same.every(d => d.props.toPage === App.project.pages[1].id);
+  const same = p1.devices.filter(d => symOf(d.sym).gotoRef);
+  o.keptOnSamePage = same.length === 2 && same.every(d => d.props.toPage === p2.id);
   return o;
 });
 console.log("貼り付け:", JSON.stringify(P, null, 1));
@@ -520,7 +528,7 @@ const checks = {
   followsMove: R.moved.shown === R.moved.want && R.moved.shown !== R.set.shown,
   followsPrefix: R.prefix.shown === R.prefix.want && /^TK-2026-0/.test(R.prefix.shown),
   followsManual: R.manual === "SPECIAL-77",
-  followsInsert: R.inserted.shown === R.inserted.want && R.inserted.pageNo === 3,
+  followsInsert: R.inserted.shown === R.inserted.want && R.inserted.pageNo === R.inserted.at,
   followsAfterReload: R.reload.shown === R.reload.want &&
     R.reloadMoved.shown === R.reloadMoved.want && R.reloadMoved.shown !== R.reload.shown,
   // 置き方
@@ -554,7 +562,7 @@ const checks = {
   zoneWhenPaired: R.paired.shown === R.paired.want && /\/\d+[A-HJ-NP-Z]$/.test(R.paired.shown),
   // 別回路の旗を対にしない (他人の位置を書かない) / 定まらないときは警告
   zoneOnlyWhenUnique: R.otherCircuit.shown === R.paired.shown &&
-    R.ambiguous.shown === R.set.want && R.ambiguous.drc.length === 1 &&
+    R.ambiguous.shown === R.ambiguous.want && R.ambiguous.drc.length === 1 &&
     R.ambiguous.drc[0].startsWith("warn:行き先の対が定まらない"),
   // 和文の図番は 3.5mm に上がって旗に収まらない → エラーで知らせる。
   // 外接矩形は呼びでなく実インク、しかも旗の中心に合っていること

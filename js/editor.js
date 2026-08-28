@@ -74,7 +74,7 @@ function renderAll() {
   const { tx, ty, s } = Editor.view;
   const world = svg.querySelector("#world");
   world.setAttribute("transform", `translate(${tx},${ty}) scale(${s})`);
-  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page);
+  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page) + kindSVG(page);
   Editor.layers.wires.innerHTML = wiresSVG(page);
   Editor.layers.devices.innerHTML = devicesSVG(page);
   Editor.layers.texts.innerHTML = textsSVG(page);
@@ -537,6 +537,115 @@ function textsSVG(page, opts = {}) {
 function textHeight(t) { return t.size || TEXT_H.normal; }
 
 /* ── オーバーレイ (ピン / 作図中ワイヤ / ゴースト / ラバーバンド) ── */
+/* ══════════════ 表紙・目次・仕様 (図面集の頭 3 枚) ══════════════
+   図枠 (輪郭線・表題欄) は回路ページと同じものを使い、その内側へ描く。
+   中身はページの内容から毎回組み立てる — 目次はページを足せば自動で増える */
+function sheetInner() {
+  const { w, h, margin: m, marginLeft: ml } = SHEET;
+  return { x: ml, y: m, w: w - ml - m, h: h - 2 * m };
+}
+/** 罫線つきの表 (目次・仕様で共用)。cols = [{w, align}] / rows = [[cell…]] */
+function tableSVG(x, y, cols, rows, o = {}) {
+  const rh = o.rh || 8, th = o.th || TEXT_H.normal;
+  const W = cols.reduce((a, c) => a + c.w, 0);
+  let d = "";
+  for (let i = 0; i <= rows.length; i++) d += `M${x},${y + i * rh} H${x + W} `;
+  let ax = x;
+  cols.forEach((c, i) => { d += `M${ax},${y} V${y + rows.length * rh} `; ax += c.w; });
+  d += `M${x + W},${y} V${y + rows.length * rh}`;
+  let out = `<path d="${d}" stroke="${INK}" stroke-width="${LINE_W.thin}" fill="none"/>`;
+  rows.forEach((row, r) => {
+    let cx = x;
+    row.forEach((cell, i) => {
+      const c = cols[i] || cols[cols.length - 1];
+      const al = c.align || "middle";
+      const tx = al === "start" ? cx + 2 : al === "end" ? cx + c.w - 2 : cx + c.w / 2;
+      if (cell !== "" && cell != null) {
+        out += `<text x="${tx}" y="${y + r * rh + rh / 2 + th * 0.36}" font-size="${svgFontSizeFor(String(cell), th)}" text-anchor="${al}" fill="${INK}" font-family="sans-serif">${escXML(String(cell))}</text>`;
+      }
+      cx += c.w;
+    });
+  });
+  return out;
+}
+/** 表紙 — 客先名と装置名を中央に置き、下線を引く */
+function coverSVG(page) {
+  const b = sheetInner();
+  const cx = b.x + b.w / 2;
+  const cust = (page.cover && page.cover.customer) || "";
+  const title = (page.cover && page.cover.title !== undefined && page.cover.title !== "")
+    ? page.cover.title : (App.project.name || "");
+  const line = (y, txt, size) => {
+    if (!txt) return "";
+    const wdt = Math.max(textWidthMM(txt, size) + 24, b.w * 0.45);
+    return `<text x="${cx}" y="${y}" font-size="${svgFontSizeFor(txt, size)}" text-anchor="middle" fill="${INK}" font-family="sans-serif" font-weight="600">${escXML(txt)}</text>` +
+      `<path d="M${cx - wdt / 2},${y + 2.5} H${cx + wdt / 2}" stroke="${INK}" stroke-width="${LINE_W.thin}"/>`;
+  };
+  return line(b.y + b.h * 0.34, cust, 7) + line(b.y + b.h * 0.47, title, 7);
+}
+/** 目次 — ページ名と図番。行が多ければ 2 段組にする (実務の目次の作法) */
+function tocSVG(page) {
+  const b = sheetInner();
+  const rows = tocRows();
+  // 行が少ないうちは 1 列で十分 (2 列に割ると右へ 1 行だけ飛んで読みにくい)
+  const per = rows.length <= 14 ? rows.length : Math.ceil(rows.length / 2);
+  const cols = [{ w: 78, align: "middle" }, { w: 22, align: "middle" }];
+  const head = ["名称", "項"];
+  let out = `<text x="${b.x + 4}" y="${b.y + 10}" font-size="${svgFontSizeFor("目次", 5)}" fill="${INK}" font-family="sans-serif">目次</text>`;
+  const y0 = b.y + 18;
+  const left = rows.slice(0, per), right = rows.slice(per);
+  out += tableSVG(b.x + 8, y0, cols, [head, ...left.map(r => [r.name, r.no])]);
+  if (right.length) out += tableSVG(b.x + 8 + 100 + 16, y0, cols, [head, ...right.map(r => [r.name, r.no])]);
+  return out;
+}
+/** 仕様 — 選ぶだけのチェックシート。選んだ項目に ◯ を打つ */
+function specSVG(page) {
+  const b = sheetInner();
+  const sel = (page.spec && page.spec.sel) || {};
+  const memo = (page.spec && page.spec.memo) || {};
+  let out = "";
+  Editor.specBoxes = [];        // 選択肢の枠 (図面座標)。クリック判定に使う
+  const colW = (b.w - 16) / 2;
+  SPEC_FORM.forEach((sec, si) => {
+    const x = b.x + 6 + si * (colW + 4);
+    let y = b.y + 12;
+    out += `<text x="${x}" y="${y}" font-size="${svgFontSizeFor(sec.title, 5)}" fill="${INK}" font-family="sans-serif">${escXML(sec.title)}</text>`;
+    y += 8;
+    sec.groups.forEach(g => {
+      out += `<text x="${x}" y="${y}" font-size="${svgFontSizeFor(g.name, TEXT_H.normal)}" fill="${INK}" font-family="sans-serif">${escXML(g.name)}</text>`;
+      y += 3;
+      const rh = 7.5, ow = colW - 6;
+      g.opts.forEach((opt, oi) => {
+        const on = sel[g.k] === oi;
+        const cy = y + rh / 2;
+        // 選択マーク: 選んだ番号を ◯ で囲む (図面の様式と同じ)
+        Editor.specBoxes.push({ x, y, w: ow, h: rh, k: g.k, i: oi });
+        out += `<rect x="${x}" y="${y}" width="${ow}" height="${rh}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin}" class="spec-opt" data-k="${g.k}" data-i="${oi}"/>`;
+        out += `<text x="${x + 6}" y="${cy + 1.2}" font-size="${svgFontSizeFor(String(oi + 1), TEXT_H.small)}" text-anchor="middle" fill="${INK}" font-family="sans-serif">${oi + 1}</text>`;
+        if (on) out += `<circle cx="${x + 6}" cy="${cy}" r="2.6" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin}"/>`;
+        out += `<text x="${x + 11}" y="${cy + 1.2}" font-size="${svgFontSizeFor(opt, TEXT_H.small)}" fill="${INK}" font-family="sans-serif">${escXML(opt)}</text>`;
+        if (g.fixed && oi === 0) {
+          out += `<text x="${x + ow - 2}" y="${cy + 1.2}" font-size="${svgFontSizeFor(g.fixed, TEXT_H.small)}" text-anchor="end" fill="${INK}" font-family="sans-serif">${escXML(g.fixed)}</text>`;
+        }
+        y += rh;
+      });
+      if (g.memo && memo[g.k]) {
+        out += `<text x="${x + 2}" y="${y + 4}" font-size="${svgFontSizeFor(memo[g.k], TEXT_H.small)}" fill="${INK}" font-family="sans-serif">${escXML(g.memo)}: ${escXML(memo[g.k])}</text>`;
+        y += 6;
+      }
+      y += 3;
+    });
+  });
+  return out;
+}
+/** 頭 3 枚の中身 (図枠の内側に描く) */
+function kindSVG(page) {
+  if (page.kind === "cover") return coverSVG(page);
+  if (page.kind === "toc") return tocSVG(page);
+  if (page.kind === "spec") return specSVG(page);
+  return "";
+}
+
 function overlaySVG(page) {
   let out = "";
   const toolWire = App.tool === "wire";
@@ -796,6 +905,24 @@ function onMouseDown(e) {
     return;
   }
 
+  /* 仕様ページ: 選択肢の枠をクリックすると ◯ が移る (選ぶだけの様式)。
+     回路は描かないページなので、作図ツールはここで打ち切る */
+  if (curPage().kind) {
+    if (curPage().kind === "spec") {
+      const box = (Editor.specBoxes || []).find(o =>
+        w.x >= o.x && w.x <= o.x + o.w && w.y >= o.y && w.y <= o.y + o.h);
+      if (box) {
+        commit();
+        const pg = curPage();
+        pg.spec = pg.spec || defaultSpec();
+        pg.spec.sel[box.k] = box.i;
+        requestRender();
+        UI.setMsg("仕様を選びました (クリックで ◯ が移ります)");
+        return;
+      }
+    }
+    return;
+  }
   if (App.tool === "wire") {
     const pin = findPinNear(w.x, w.y);
     const px = pin ? pin.x : sx, py = pin ? pin.y : sy;

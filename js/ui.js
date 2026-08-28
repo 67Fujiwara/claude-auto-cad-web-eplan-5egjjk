@@ -316,6 +316,45 @@ UI.showProps = (focusTag = false) => {
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
   const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
+  /* 表紙・目次・仕様のページは回路を選ばないので、ページの内容そのものを
+     プロパティに出す (表紙の 2 行・仕様の記入欄) */
+  if (page.kind) {
+    const sp = page.spec || {};
+    const memo = sp.memo || {};
+    const cov = page.cover || {};
+    pane.innerHTML = `
+      <div class="prop-head"><div><b>${page.kind === "cover" ? "表紙" : page.kind === "toc" ? "目次" : "仕様"}</b>
+        <div class="rp-dim">図面集の頭に置くページ (回路は描きません)</div></div></div>
+      ${page.kind === "cover" ? `
+        <div class="prop-sect">表紙の文字</div>
+        <div class="prop-row"><label>客先名 (1 行目)</label><input id="cvCust" value="${escAttr(cov.customer || "")}" placeholder="例: スターゼン株式会社 松尾工場"/></div>
+        <div class="prop-row"><label>装置名 (2 行目)</label><input id="cvTitle" value="${escAttr(cov.title !== undefined ? cov.title : App.project.name)}" placeholder="例: 挽肉異物検査 AI 画像検査装置 電気図面"/></div>
+        <div class="prop-note">空欄にすると図名 (プロジェクト名) を使います。</div>` : ""}
+      ${page.kind === "toc" ? `
+        <div class="prop-note" style="margin-top:8px">ページを足したり並べ替えたりすると、目次は自動で作り直されます (表紙と目次そのものは載せません)。</div>` : ""}
+      ${page.kind === "spec" ? `
+        <div class="prop-sect">選び方</div>
+        <div class="prop-note" style="margin-top:0">図面の選択肢をクリックすると ◯ が移ります。下は「その他・指定」を選んだときの記入欄です。</div>
+        ${SPEC_FORM.flatMap(sec => sec.groups.filter(g => g.memo).map(g =>
+          `<div class="prop-row"><label>${escAttr(g.memo)} <span class="rp-dim">(${escAttr(g.name)})</span></label>
+            <input class="spMemo" data-k="${g.k}" value="${escAttr(memo[g.k] || "")}" placeholder="記入すると図面に出ます"/></div>`)).join("")}` : ""}
+    `;
+    const bindPg = (id, fn) => {
+      const el = pane.querySelector(id);
+      if (el) el.addEventListener("change", () => { commit(); fn(el.value); UI.refresh(false); });
+    };
+    bindPg("#cvCust", v => { page.cover = page.cover || {}; page.cover.customer = v.trim(); });
+    bindPg("#cvTitle", v => { page.cover = page.cover || {}; page.cover.title = v.trim(); });
+    pane.querySelectorAll(".spMemo").forEach(el => el.addEventListener("change", () => {
+      commit();
+      page.spec = page.spec || defaultSpec();
+      page.spec.memo = page.spec.memo || {};
+      const v = el.value.trim();
+      if (v) page.spec.memo[el.dataset.k] = v; else delete page.spec.memo[el.dataset.k];
+      UI.refresh(false);
+    }));
+    return;
+  }
   const only1 = App.selection.size === 1; // 単体パネルは1点選択時のみ (混在選択は一覧パネル)
   if (selDevs.length === 1 && only1) {
     const dev = selDevs[0];
@@ -948,6 +987,9 @@ const MENUS = {
     { label: "AI自動作図…", key: "F2", fn: () => UI.openWizard() },
     { sep: true },
     { label: "ページを追加", key: "", fn: () => UI.addPage() },
+    { label: "表紙を追加", key: "", fn: () => UI.addSpecialPage("cover") },
+    { label: "目次を追加", key: "", fn: () => UI.addSpecialPage("toc") },
+    { label: "仕様を追加", key: "", fn: () => UI.addSpecialPage("spec") },
     { label: "テキスト", key: "T", fn: () => UI.setTool("text") },
     { label: "破線枠 (盤外/グループ)", key: "", fn: () => UI.insertZone() },
   ],
@@ -1063,12 +1105,32 @@ UI.addPage = () => {
   UI.refresh();
   zoomFit(); // 追加したページに切り替わるので全体表示にする
 };
+/** 表紙・目次・仕様のページを足す (頭 3 枚と同じもの) */
+UI.addSpecialPage = (kind) => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中はページを追加できません"); return; }
+  commit();
+  const nm = { cover: "表紙", toc: "目次", spec: "仕様" }[kind] || "ページ";
+  /* 頭の 3 枚は図面集の先頭に置くのが作法。既にある同種のページの直後、
+     無ければ回路ページより前 (表紙 → 目次 → 仕様 の順) へ入れる */
+  const order = ["cover", "toc", "spec"];
+  const rank = k => (k ? order.indexOf(k) : order.length);
+  let at = App.project.pages.findIndex(pg => rank(pg.kind) > rank(kind));
+  if (at < 0) at = App.project.pages.length;
+  const pg = newPage(nm, at + 1, kind);
+  App.project.pages.splice(at, 0, pg);
+  UI.renumberPages();
+  App.pageIdx = at;
+  App.selection.clear();
+  UI.refresh();
+  zoomFit();
+  UI.setMsg(`${nm}のページを ${at + 1} ページ目に追加しました`);
+};
 UI.newProject = () => {
   if (!confirm("現在のプロジェクトを破棄して新規作成しますか？\n(ブラウザ保存済みデータも上書きされます)")) return;
   if (App.sim.running) UI.toggleSim(); // 確定後にのみ停止 (キャンセルは完全な無操作)
   App.project = newProject();
   App.fileHandle = null;
-  App.pageIdx = 0;
+  App.pageIdx = Math.max(0, App.project.pages.findIndex(isDrawingPage));
   App.selection.clear();
   App.undoStack.length = 0;
   App.redoStack.length = 0;
@@ -2469,7 +2531,8 @@ function demoProject() {
   } catch (e) {
     console.error("demo generation failed", e);
   }
-  App.pageIdx = 0;
+  // 頭 3 枚 (表紙・目次・仕様) の次 = 最初の回路ページを開いておく
+  App.pageIdx = Math.max(0, App.project.pages.findIndex(isDrawingPage));
   return App.project;
 }
 
