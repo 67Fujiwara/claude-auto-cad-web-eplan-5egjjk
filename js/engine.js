@@ -930,7 +930,9 @@ function pageDrawnMinima(page) {
     // アプリが描くラベル (端子番号・タグ) も記号の倍率で描かれる
     if ((sym.pins || []).some((p, i) => pinLabelVisible(page, dev, i))) h = Math.min(h, TEXT_H.small * f * k);
     if (sym.ioSheet) w = Math.min(w, LINE_W.thin * f * devScale(dev));   // 機能欄の下線 (動的に描く)
-    if (displayTag(dev) || dev.desc) h = Math.min(h, TEXT_H.normal * f * k);
+    // タグは出力に出るときだけ数える (尺度の検図は「用紙に刷られる寸法」を見る)
+    // タグは出力に出るときだけ数える (尺度の検図は「用紙に刷られる寸法」を見る)
+    if ((displayTag(dev) && tagShownFor(dev, true)) || dev.desc) h = Math.min(h, TEXT_H.normal * f * k);
   });
   condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f * objScale(wr)); });
   (page.texts || []).forEach(t => { h = Math.min(h, (t.size || TEXT_H.normal) * f); });

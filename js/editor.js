@@ -425,7 +425,7 @@ function devicesSVG(page, opts = {}) {
       out += `<text x="${tx}" y="${ty}" font-size="${svgFontSizeFor(name, pos.size || TEXT_H.small * fr, true)}" fill="#42506a" stroke="none" font-family="monospace">${escXML(name)}</text>`;
     });
     // タグ・機能テキスト (回転に追従させず水平表示)
-    out += devLabelsSVG(dev, sym, page);
+    out += devLabelsSVG(dev, sym, page, { print });
     // コイルの接点ミラー
     if (sym.mirror) out += mirrorSVG(dev);
   });
@@ -457,13 +457,15 @@ function simDevVisual(dev, sym) {
   }
 }
 
-function devLabelsSVG(dev, sym, page) {
+function devLabelsSVG(dev, sym, page, opts = {}) {
   const fr = contentScale();
   const b = devBounds(dev);
   let out = "";
   // 配置はエンジンの deviceLabelBoxes に一本化 (検図・DXF と同じ結果になる)
   const boxes = deviceLabelBoxes(page || curPage(), dev);
   boxes.forEach((o) => {
+    // タグの表示モード (シンボルDBで選ぶ): 非表示 / 出力時非表示に従う
+    if (o.isTag && !tagShownFor(dev, !!opts.print)) return;
     const isTag = o.isTag;
     out += `<text x="${o.x}" y="${o.y}" font-size="${svgFontSizeFor(o.text, o.size, isTag, { bold: isTag })}" text-anchor="${o.anchor}" fill="${isTag ? INK : INK_SOFT}"` +
       `${isTag ? ' font-weight="600" font-family="monospace"' : ""}>${escXML(o.text)}</text>`;

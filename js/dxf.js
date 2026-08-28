@@ -560,7 +560,11 @@ function pageToDXF(page) {
     // タグ / 機能テキスト (配置は画面と同じ deviceLabelBoxes に従う)
     const b = devBounds(dev);
     const lboxes = deviceLabelBoxes(page, dev);
-    lboxes.forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor); });
+    lboxes.forEach(o => {
+      // タグの表示モード: DXF は「出力」なので show のときだけ出す
+      if (o.isTag && !tagShownFor(dev, true)) return;
+      ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", o.anchor);
+    });
     const xr = deviceXrefBox(page, dev);      // 位置は画面と同じ探索結果を使う
     // 入出力結線図の機能欄 (行ごとの文言)
     deviceRowTexts(page, dev).forEach(o => { ents += dxfText(o.x, o.y, o.size, o.text, "TEXT", "start", 0, { mono: false }); });

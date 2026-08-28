@@ -37,6 +37,9 @@ const R = await p.evaluate(async () => {
   out.titleShows = tb.includes("1:1.25");
 
   // 3.5mm の文字だけのページ → 1:1.25 は下限 2.5mm を保つ (2.8mm) → 検図は沈黙
+  /* タグの既定は「出力時非表示」になった (symtag-vis) ので、この検査の
+     前提 (3.5mm のタグが用紙に刷られる) を保つために「表示」へ切り替える */
+  setSymTagVis("earth", "show");
   addDevice(pg, "earth", 100, 100, { tag: "-E1" });   // タグ 3.5mm のみ (端子番号・小文字なし)
   const drcOf = () => runDRC().filter(i => i.rule === "尺度と用紙上の寸法" && i.page === pg.no).length;
   out.quietAt125 = drcOf();
@@ -47,6 +50,7 @@ const R = await p.evaluate(async () => {
   // 尺度を 1:1 に戻せば沈黙
   pg.scale = "1:1"; applySheet(pg);
   out.quietAt1 = drcOf();
+  setSymTagVis("earth", "noprint");     // 片付け (既定へ戻す)
   return out;
 });
 

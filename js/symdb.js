@@ -1068,6 +1068,39 @@ function setSymCat(id, cat) {
   try { localStorage.setItem("electracad.symCats", JSON.stringify(SYM_CAT_OVR)); } catch (e) { }
 }
 
+/* デバイスタグの表示モード (シンボル単位・localStorage)。
+   "show"    = 画面にも PDF/DXF 出力にも出す
+   "hide"    = どこにも出さない
+   "noprint" = 画面には出すが、PDF/DXF 出力には出さない (既定)
+   タグは作図中の手がかりとして要るが、納品する紙には載せたくない、が既定の運用 */
+const TAG_VIS_MODES = ["show", "hide", "noprint"];
+const TAG_VIS_DEFAULT = "noprint";
+let SYM_TAG_VIS = {};
+(function symTagVisLoad() {
+  try {
+    const s2 = localStorage.getItem("electracad.symTagVis");
+    const v = s2 ? JSON.parse(s2) : {};
+    SYM_TAG_VIS = (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+  } catch (e) { SYM_TAG_VIS = {}; }
+})();
+function symTagVis(sym) {
+  const v = sym && SYM_TAG_VIS[sym.id];
+  return TAG_VIS_MODES.includes(v) ? v : TAG_VIS_DEFAULT;
+}
+function setSymTagVis(id, v) {
+  if (!TAG_VIS_MODES.includes(v)) return;
+  if (v === TAG_VIS_DEFAULT) delete SYM_TAG_VIS[id];
+  else SYM_TAG_VIS[id] = v;
+  try { localStorage.setItem("electracad.symTagVis", JSON.stringify(SYM_TAG_VIS)); } catch (e) { }
+}
+/** タグをこの場面 (print = PDF/DXF 出力) で出すか */
+function tagShownFor(dev, print) {
+  const v = symTagVis(symOf(dev.sym));
+  if (v === "hide") return false;
+  if (v === "noprint") return !print;
+  return true;
+}
+
 /* パレットから外した記号 (localStorage)。「データベース」以外の分類の記号は
    既定で棚に出るので、外したものだけをここに記録する */
 function symHiddenList() {

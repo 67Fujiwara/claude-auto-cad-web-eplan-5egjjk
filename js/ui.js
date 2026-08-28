@@ -1783,8 +1783,22 @@ UI.openSymDB = () => {
           ${pinBtn}
           <button class="btn-solid" data-edit="${s.id}" style="flex:0 0 auto;padding:4px 8px;font-size:11px">編集</button>
         </div>
+        <div style="display:flex;gap:4px;margin-top:4px;align-items:center">
+          <span class="rp-dim" style="font-size:10.5px;flex:0 0 auto">タグ</span>
+          <select data-tag="${s.id}" title="デバイスタグ (-S1 など) の表示。既定は「出力時非表示」 — 画面には出すが PDF/DXF には出さない" style="flex:1;min-width:0;font-size:11px;padding:3px 4px;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--text)">
+            ${[["noprint", "出力時非表示 (画面のみ)"], ["show", "表示 (出力にも出す)"], ["hide", "非表示"]]
+              .map(([v, t]) => `<option value="${v}"${v === symTagVis(s) ? " selected" : ""}>${t}</option>`).join("")}
+          </select>
+        </div>
       </div>`;
     }).join("");
+    grid.querySelectorAll("[data-tag]").forEach(el => el.addEventListener("change", () => {
+      setSymTagVis(el.dataset.tag, el.value);
+      App.labelRev++;
+      requestRender();
+      const nm = { noprint: "出力時非表示 (画面のみ)", show: "表示", hide: "非表示" }[el.value];
+      UI.setMsg(`「${(SYMBOLS_BY_ID[el.dataset.tag] || {}).name}」のタグを ${nm} にしました`);
+    }));
     grid.querySelectorAll("[data-pal]").forEach(b => b.addEventListener("click", () => {
       const id = b.dataset.pal;
       if (symCatOf(SYMBOLS_BY_ID[id]) === "db") {
