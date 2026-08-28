@@ -1389,8 +1389,11 @@ function finishWireDraft() {
     /* raw: 作図中に決めた座標をそのまま使う。頂点は既に 5mm 格子か端子の上に
        乗せてあるので、ここで格子へ丸めると、格子から外れた端子 (M12 など) に
        合わせた端点が引き戻されて線が端子から外れる */
-    addWire(curPage(), d.pts, { raw: true });
-    UI.setMsg("配線を作成しました");
+    const w = addWire(curPage(), d.pts, { raw: true });
+    /* 線番は手で入れなくても付く: 図番×100+連番で、機器を跨ぐと区間が
+       変わる。引いた瞬間に振るので、そのまま図面に表示される */
+    autoNumberWires();
+    UI.setMsg(w && w.num ? `配線を作成しました (線番 ${w.num} — 図番×100+連番の自動採番。手で変えると保護されます)` : "配線を作成しました");
   }
   requestRender();
 }

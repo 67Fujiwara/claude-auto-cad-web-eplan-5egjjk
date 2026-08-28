@@ -998,7 +998,7 @@ const MENUS = {
     { sep: true },
     { label: "設計ルールチェック (DRC)", key: "", fn: () => UI.runDRC() },
     { label: "部品表 (BOM)", key: "", fn: () => UI.showBOM() },
-    { label: "配線番号の自動付与", key: "", fn: () => { commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (手動線番は保護)"); } },
+    { label: "配線番号の自動付与", key: "", fn: () => { commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (図番×100+連番・機器を跨ぐと区間が変わります。手動線番は保護)"); } },
     { label: "線番の編集…", key: "", fn: () => UI.editWireNumbers() },
     { sep: true },
     { label: "部品表CSV を出力", key: "", fn: () => downloadFile(App.project.name + "_部品表.csv", bomCSV(), "text/csv") },
@@ -2496,7 +2496,7 @@ function boot() {
   document.getElementById("btnDelete").addEventListener("click", deleteSelection);
   document.getElementById("btnWireNum").addEventListener("click", () => {
     if (App.sim.running) return;
-    commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (手動線番は保護)");
+    commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (図番×100+連番・機器を跨ぐと区間が変わります。手動線番は保護)");
   });
   document.getElementById("btnDRC").addEventListener("click", UI.runDRC);
   document.getElementById("btnBOM").addEventListener("click", UI.showBOM);

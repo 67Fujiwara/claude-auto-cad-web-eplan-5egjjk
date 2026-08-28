@@ -2614,9 +2614,16 @@ function autoNumberWires() {
     condWires(page).forEach(w => { if (w.fixed && w.num) reserved.add(String(w.num)); });
   });
   const used = new Set(reserved);
-  let n = 10;
-  const nextNum = () => { while (used.has(String(n))) n++; used.add(String(n)); return String(n++); };
   App.project.pages.forEach(page => {
+    /* 線番は「ページの図番 × 100 + 連番」で振る (E-003 → 301, 302 …)。
+       図面のタイトル (図番) で番号体系が破断するので、線番を見れば
+       どの葉の線か分かり、ページを跨いだ重複も起きない。
+       機器 (接点・コイル) を跨ぐと区間が変わる ("open" 採番) のと合わせて、
+       「周辺の記号と図番で決まる線番」になる — 手入力は要らない */
+    const m0 = /(\d+)\s*$/.exec(String(pageDwgNo(page)));
+    const base = (m0 ? parseInt(m0[1], 10) : page.no) * 100;
+    let n = base + 1;
+    const nextNum = () => { while (used.has(String(n))) n++; used.add(String(n)); return String(n++); };
     // "open" モード: 接点・コイルを跨いで番号が伝播しない (実務どおり区間ごとに採番)
     const { pinNet, wireNet } = computeNets(page, "open");
     const netNum = new Map();
