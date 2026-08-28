@@ -2550,28 +2550,48 @@ function pinAtPoint(page, x, y) {
 }
 
 /** ジャンクション(T接続)ドット位置の一覧 */
+/* 接続ドット (JIS C 0617-3 / IEC 60617): 導体が「分かれる・集まる」点にだけ打つ。
+   まっすぐ続くだけの継ぎ目 (線を 2 本に分けて引いた・同じ道に重ねて引いた) や、
+   曲がり角には打たない — その点から出ていく向きが 3 方向以上あるかで決める */
 function junctionDots(page) {
-  const dots = [];
-  const endpointCount = new Map(); // 同一点に3本以上の端点が集まる場合
   const wires = condWires(page); // 作図線には接続ドットを打たない
+  const cand = new Map();        // 候補点 (端点が他の線に触れている点)
+  const add = (x, y) => { const k = ptKey(x, y); if (!cand.has(k)) cand.set(k, [x, y]); };
+  const same = (a, b) => Math.abs(a[0] - b[0]) < 0.01 && Math.abs(a[1] - b[1]) < 0.01;
   wires.forEach(w => {
     [w.pts[0], w.pts[w.pts.length - 1]].forEach(ep => {
-      const k = ptKey(ep[0], ep[1]);
-      endpointCount.set(k, (endpointCount.get(k) || 0) + 1);
-      // 他ワイヤの区間中点に載る端点
       wires.forEach(w2 => {
         if (w === w2) return;
         for (let i = 0; i < w2.pts.length - 1; i++) {
-          if (ptOnSeg(ep[0], ep[1], w2.pts[i][0], w2.pts[i][1], w2.pts[i + 1][0], w2.pts[i + 1][1])) {
-            dots.push([ep[0], ep[1]]);
-          }
+          if (ptOnSeg(ep[0], ep[1], w2.pts[i][0], w2.pts[i][1], w2.pts[i + 1][0], w2.pts[i + 1][1])
+            || same(ep, w2.pts[i]) || same(ep, w2.pts[i + 1])) add(ep[0], ep[1]);
         }
       });
     });
   });
-  endpointCount.forEach((n, k) => {
-    if (n >= 3) { const [x, y] = k.split(",").map(v => v / 10); dots.push([x, y]); }
-  });
+  /* その点から導体が出ていく向きの数。まっすぐ続くだけなら 2 (上下) なので
+     打たない。T 分岐は 3、十字は 4 */
+  const dirsAt = (x, y) => {
+    const set = new Set();
+    const push = (dx, dy) => {
+      const L = Math.hypot(dx, dy);
+      if (L < 1e-6) return;
+      set.add(`${Math.round(dx / L * 1000)},${Math.round(dy / L * 1000)}`);
+    };
+    wires.forEach(w => {
+      for (let i = 0; i < w.pts.length - 1; i++) {
+        const a2 = w.pts[i], b2 = w.pts[i + 1];
+        const onA = same([x, y], a2), onB = same([x, y], b2);
+        const inside = ptOnSeg(x, y, a2[0], a2[1], b2[0], b2[1]);
+        if (onA) push(b2[0] - a2[0], b2[1] - a2[1]);
+        else if (onB) push(a2[0] - b2[0], a2[1] - b2[1]);
+        else if (inside) { push(b2[0] - x, b2[1] - y); push(a2[0] - x, a2[1] - y); }
+      }
+    });
+    return set.size;
+  };
+  const dots = [];
+  cand.forEach(([x, y]) => { if (dirsAt(x, y) >= 3) dots.push([x, y]); });
   return dots;
 }
 
