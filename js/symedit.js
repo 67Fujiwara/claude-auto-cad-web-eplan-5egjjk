@@ -62,6 +62,14 @@ function symEditXY(ev) {
 function symSnap(v, g) { return Math.round(v / g) * g; }
 
 /** 図形1つを SVG 文字列に */
+const RC_ALL = ["nw", "ne", "se", "sw"];
+/** 角Rを付ける角の集合。"nw" / "nw+se" / "all" のいずれの書き方も受ける */
+function rcSet(rc) {
+  if (!rc) return new Set(["nw"]);
+  if (rc === "all") return new Set(RC_ALL);
+  return new Set(String(rc).split("+").filter(v => RC_ALL.includes(v)));
+}
+
 /** 表図形の全体幅・高さ (列幅・行高の合計) */
 function symTableWH(sh) {
   return [(sh.colWs || []).reduce((a, b) => a + b, 0), (sh.rowHs || []).reduce((a, b) => a + b, 0)];
@@ -93,10 +101,11 @@ function symShapeSVG(sh, opts = {}) {
       return `<rect x="${f2(sh.x)}" y="${f2(sh.y)}" width="${f2(sh.w)}" height="${f2(sh.h)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
     }
     const rc = sh.rc || "nw";
-    if (rc === "all") {
+    const set = rcSet(rc);
+    if (set.size === 4) {      // 4 隅そろっていれば rect の rx で足りる
       return `<rect x="${f2(sh.x)}" y="${f2(sh.y)}" width="${f2(sh.w)}" height="${f2(sh.h)}" rx="${f2(cr)}"${sh.fill ? ' fill="currentColor" stroke="none"' : ""}${dash}${extra}/>`;
     }
-    const has = c => rc === c;
+    const has = c => set.has(c);
     const x0 = sh.x, y0 = sh.y, x1 = sh.x + sh.w, y1 = sh.y + sh.h;
     const A = (px, py) => `A${f2(cr)},${f2(cr)} 0 0 1 ${f2(px)},${f2(py)}`;   // 時計回り (画面は y 下向き)
     let d = `M${f2(x0 + (has("nw") ? cr : 0))},${f2(y0)}`;
@@ -517,12 +526,12 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-sect" id="seRHead" style="display:none">角R (選択中の四角形)</div>
       <div class="prop-row" id="seRRow" style="display:none">
         <input type="number" id="seR" class="mono" min="0" max="20" step="0.5" value="0"/>
-        <select id="seRWhich" style="margin-top:4px">
-          ${[["nw", "一か所: 左上"], ["ne", "一か所: 右上"], ["se", "一か所: 右下"], ["sw", "一か所: 左下"], ["all", "4隅すべて"]]
-            .map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}
-        </select>
+        <div id="seRWhich" style="margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:2px 8px">
+          ${[["nw", "左上"], ["ne", "右上"], ["sw", "左下"], ["se", "右下"]]
+            .map(([v, t]) => `<label class="chk"><input type="checkbox" class="seRC" value="${v}"${v === "nw" ? " checked" : ""}/><span>${t}</span></label>`).join("")}
+        </div>
       </div>
-      <div class="prop-note" id="seRNote" style="display:none;margin-top:4px">四角形を選ぶと出ます。0 で角のまま。既定は一か所 (左上) だけを丸めます — 「4隅すべて」に切り替えるとコネクタの外形のような姿になります。図面・DXF とも丸角で出ます (外形の枠なので電気記号の意味は変わりません)。</div>
+      <div class="prop-note" id="seRNote" style="display:none;margin-top:4px">四角形を選ぶと出ます。0 で角のまま。丸めたい角にチェックを入れてください (1 つでも 2 つでも、4 隅すべてでも可。既定は左上のみ)。図面・DXF とも丸角で出ます (外形の枠なので電気記号の意味は変わりません)。</div>
       <div class="prop-sect">作画範囲</div>
       <div class="prop-row"><select id="seSize">
         ${[40, 60, 100, 160, 240, 320].map(v => `<option value="${v}"${v === S.W ? " selected" : ""}>${v} × ${v} mm</option>`).join("")}
@@ -642,7 +651,7 @@ UI.openSymbolEditor = (symId = null) => {
   // ── 角R (選択中の四角形) ──
   const rHead = body.querySelector("#seRHead"), rRow = body.querySelector("#seRRow");
   const rNote = body.querySelector("#seRNote"), rIn = body.querySelector("#seR");
-  const rWhich = body.querySelector("#seRWhich");
+  const rBoxes = [...body.querySelectorAll(".seRC")];
   const selRects = () => selIdx().s.filter(i => S.shapes[i] && S.shapes[i].k === "rect");
   const syncR = () => {
     const idx = selRects();
@@ -651,26 +660,35 @@ UI.openSymbolEditor = (symId = null) => {
     if (!idx.length) return;
     const sh = S.shapes[idx[0]];
     if (document.activeElement !== rIn) rIn.value = String(sh.r || 0);
-    if (document.activeElement !== rWhich) rWhich.value = sh.rc || "nw";
+    // 角の指定は「選んだ四角形が持っている角」を映す (R が 0 なら既定のまま)
+    if (sh.r > 0) {
+      const set = rcSet(sh.rc);
+      rBoxes.forEach(cb => { if (document.activeElement !== cb) cb.checked = set.has(cb.value); });
+    }
   };
   const applyR = () => {
     const idx = selRects();
     if (!idx.length) return;
     push();
     const v = Math.max(0, Math.min(20, parseFloat(rIn.value) || 0));
-    const which = rWhich.value || "nw";
+    const picked = rBoxes.filter(cb => cb.checked).map(cb => cb.value);
+    if (!picked.length && v > 0) {          // 全部外したら角のままにする
+      rIn.value = "0";
+    }
+    const which = picked.length === 4 ? "all" : picked.join("+");
     idx.forEach(i => {
       const sh = S.shapes[i];
-      const cr = Math.min(v, sh.w / 2, sh.h / 2);
+      const cr = picked.length ? Math.min(v, sh.w / 2, sh.h / 2) : 0;
       if (cr > 0) { sh.r = Math.round(cr * 100) / 100; sh.rc = which; }
       else { delete sh.r; delete sh.rc; }
     });
     draw();
-    const label = { nw: "左上", ne: "右上", se: "右下", sw: "左下", all: "4隅" }[which];
-    UI.setMsg(v > 0 ? `${label} の角R を ${v}mm にしました` : "角を角のままに戻しました");
+    const nm = { nw: "左上", ne: "右上", se: "右下", sw: "左下" };
+    const label = picked.length === 4 ? "4隅" : picked.map(c => nm[c]).join("・");
+    UI.setMsg(v > 0 && picked.length ? `${label} の角R を ${v}mm にしました` : "角を角のままに戻しました");
   };
   rIn.addEventListener("change", applyR);
-  rWhich.addEventListener("change", applyR);
+  rBoxes.forEach(cb => cb.addEventListener("change", applyR));
 
   // ── 表 (選択中) の列数・行数・文字高 ──
   const tblHead = body.querySelector("#seTblHead"), tblProps = body.querySelector("#seTblProps");
@@ -1408,7 +1426,11 @@ UI.openSymbolEditor = (symId = null) => {
         sh.x = r2(nx); sh.y = r2(ny);
         const w0 = sh.w; sh.w = sh.h; sh.h = w0;
         // 丸めた角も一緒に回す (時計回り 90°)
-        if (sh.rc && sh.rc !== "all") sh.rc = { nw: "ne", ne: "se", se: "sw", sw: "nw" }[sh.rc] || sh.rc;
+        if (sh.rc && sh.rc !== "all") {
+          const m = { nw: "ne", ne: "se", se: "sw", sw: "nw" };
+          const moved = [...rcSet(sh.rc)].map(c => m[c] || c);
+          sh.rc = moved.length === 4 ? "all" : RC_ALL.filter(c => moved.includes(c)).join("+");
+        }
       } else if (sh.k === "arc") {
         const [nx, ny] = R(sh.x, sh.y);
         sh.x = r2(nx); sh.y = r2(ny); sh.a0 = r2(sh.a0 + 90); sh.a1 = r2(sh.a1 + 90);

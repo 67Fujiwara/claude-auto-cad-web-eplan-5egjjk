@@ -6,8 +6,10 @@
    ・shown     : 四角形を選ぶと欄が出て、現在の R (最初は 0) を映す
    ・setR      : 既定は「一か所 (左上)」— 3mm を入れると r=3・rc=nw が付き、
                  画面には円弧 1 つの path (data-rr つき) で描かれる
-   ・whichOne  : 「一か所: 右下」に切り替えると rc=se になり、丸まる角が変わる
-   ・allFour   : 「4隅すべて」に切り替えると rect の rx で描かれる
+   ・whichOne  : 指定した角だけが丸まる (右下だけにすると rc=se)
+   ・twoCorners: 2 つ以上の角も指定できる (左上+右下 → rc="nw+se"、円弧 2 個)
+   ・allFour   : 4 隅すべてにチェックすると rect の rx で描かれる
+   ・noneBack  : すべてのチェックを外すと角のままに戻る
    ・rotCorner : 回転 90° で丸める角も一緒に回る (左上 → 右上)
    ・clamp     : 幅・高さの半分を超える値は自動で頭打ち (裏返らない)
    ・zeroBack  : 0 に戻すと r が消えて角のままになる
@@ -75,37 +77,60 @@ const setR = async (v) => p.evaluate(async (v2) => {
   await new Promise(r => setTimeout(r, 80));
 }, v);
 
-const setWhich = async (v) => p.evaluate(async (v2) => {
-  const el = document.querySelector("#seRWhich");
-  el.value = v2;
-  el.dispatchEvent(new Event("change", { bubbles: true }));
+/* 丸める角をチェックで指定する (配列で渡した角だけ ON にする) */
+const setWhich = async (arr) => p.evaluate(async (want) => {
+  const boxes = [...document.querySelectorAll(".seRC")];
+  boxes.forEach(cb => { cb.checked = want.includes(cb.value); });
+  boxes[0].dispatchEvent(new Event("change", { bubbles: true }));
   await new Promise(r => setTimeout(r, 80));
-}, v);
+}, arr);
 
 await setR(3);
 R.setR = await p.evaluate(() => {
   const rc = SymEdit.shapes.find(sh => sh.k === "rect");
   const html = SymEdit.svg.innerHTML;
-  return { r: rc.r, corner: rc.rc, which: document.querySelector("#seRWhich").value,
+  const on = [...document.querySelectorAll(".seRC")].filter(cb => cb.checked).map(cb => cb.value).join(",");
+  return { r: rc.r, corner: rc.rc, which: on,
     path: /data-rr="[^"]*,nw"/.test(html), arcs: (html.match(/A3,3 /g) || []).length,
     noRx: !/<rect[^>]*rx="3"/.test(html) };
 });
 
-await setWhich("se");
+await setWhich(["se"]);
 R.whichOne = await p.evaluate(() => {
   const rc = SymEdit.shapes.find(sh => sh.k === "rect");
-  // 右下 (se) を丸めた path は、右下の角の手前で円弧に入る
-  return { corner: rc.rc, path: /data-rr="[^"]*,se"/.test(SymEdit.svg.innerHTML) };
+  const html = SymEdit.svg.innerHTML;
+  return { corner: rc.rc, path: /data-rr="[^"]*,se"/.test(html), arcs: (html.match(/A3,3 /g) || []).length };
 });
 
-await setWhich("all");
+// 2 つの角 (左上 + 右下) — 対角に R を付ける
+await setWhich(["nw", "se"]);
+R.twoCorners = await p.evaluate(() => {
+  const rc = SymEdit.shapes.find(sh => sh.k === "rect");
+  const html = SymEdit.svg.innerHTML;
+  return { corner: rc.rc, arcs: (html.match(/A3,3 /g) || []).length,
+    path: /data-rr="[^"]*,nw\+se"/.test(html) };
+});
+
+await setWhich(["nw", "ne", "se", "sw"]);
 R.allFour = await p.evaluate(() => {
   const rc = SymEdit.shapes.find(sh => sh.k === "rect");
   return { corner: rc.rc, rx: /<rect[^>]*rx="3"/.test(SymEdit.svg.innerHTML) };
 });
 
-// 回転 90° で丸める角が追従する (一か所のとき)
-await setWhich("nw");
+// すべて外す → 角のまま
+await setWhich([]);
+R.noneBack = await p.evaluate(() => {
+  const rc = SymEdit.shapes.find(sh => sh.k === "rect");
+  return { r: rc.r === undefined, rx: !/rx=|data-rr/.test(SymEdit.svg.innerHTML) };
+});
+
+// 回転 90° で丸める角が追従する
+await setWhich(["nw"]);
+await p.evaluate(async () => {
+  const el = document.querySelector("#seR");
+  el.value = "3"; el.dispatchEvent(new Event("change", { bubbles: true }));
+  await new Promise(r => setTimeout(r, 80));
+});
 R.rotCorner = await p.evaluate(async () => {
   const S = SymEdit;
   const i = S.shapes.findIndex(sh => sh.k === "rect");
@@ -156,7 +181,7 @@ R.undoBack = await p.evaluate(async () => {
 R.reedit = await p.evaluate(async () => {
   const S = SymEdit;
   S.msel = { shapes: S.shapes.map((sh, i) => sh.k === "rect" ? i : -1).filter(i => i >= 0), pins: [] };
-  document.querySelector("#seRWhich").value = "all";      // 4隅で登録する
+  [...document.querySelectorAll(".seRC")].forEach(cb => { cb.checked = true; });   // 4隅で登録する
   document.querySelector("#seR").value = "2.5";
   document.querySelector("#seR").dispatchEvent(new Event("change", { bubbles: true }));
   await new Promise(r => setTimeout(r, 80));
@@ -254,7 +279,7 @@ await p.waitForTimeout(120);
 await p.waitForTimeout(120);
 R.oneSaved.field = await p.evaluate(() => ({
   r: document.querySelector("#seR").value,
-  which: document.querySelector("#seRWhich").value,
+  which: [...document.querySelectorAll(".seRC")].filter(cb => cb.checked).map(cb => cb.value).join(","),
 }));
 
 const checks = {
@@ -263,7 +288,9 @@ const checks = {
   shown: R.shown.visible && R.shown.value === "0" && R.shown.selIsRect,
   setR: R.setR.r === 3 && R.setR.corner === "nw" && R.setR.which === "nw"
     && R.setR.path && R.setR.arcs === 1 && R.setR.noRx,
-  whichOne: R.whichOne.corner === "se" && R.whichOne.path === true,
+  whichOne: R.whichOne.corner === "se" && R.whichOne.path === true && R.whichOne.arcs === 1,
+  twoCorners: R.twoCorners.corner === "nw+se" && R.twoCorners.arcs === 2 && R.twoCorners.path === true,
+  noneBack: R.noneBack.r === true && R.noneBack.rx === true,
   allFour: R.allFour.corner === "all" && R.allFour.rx === true,
   rotCorner: R.rotCorner === "ne",
   clamp: R.clamp === 8,
