@@ -976,7 +976,7 @@ function onMouseMove(e) {
     let dx = st(w.x - d.startW.x), dy = st(w.y - d.startW.y);
     /* 端子どうしの吸着 — 格子だけでは真横に揃わない記号を合わせる。
        Alt を押しているあいだは切る (格子ちょうどに置きたいとき) */
-    if (!zonesOnly && !e.altKey) {
+    if (!zonesOnly && !e.altKey) {          // 機器・配線とも端子どうしの吸着を効かせる
       const c = alignSnapOffset(d.attach, dx, dy);
       dx += c.cx; dy += c.cy;
       d.snapped = !!(c.cx || c.cy);
@@ -1030,10 +1030,18 @@ function alignSnapOffset(attach, dx, dy) {
   const page = curPage();
   const movingD = new Set(attach.devIds.map(o => o.id));
   const movingW = new Set(attach.wireIds.map(o => o.id));
+  /* 動かしている機器につながっている配線は、端点が機器と一緒に動くので
+     「揃える相手」から外す (自分の写しに吸い寄せられてしまう) */
+  (attach.endpoints || []).forEach(ep => movingW.add(ep.wireId));
   const pins = [];
   attach.devIds.forEach(({ id, x0, y0 }) => {
     const dev = page.devices.find(d => d.id === id);
     if (dev) devPins({ ...dev, x: x0 + dx, y: y0 + dy }).forEach(p => pins.push(p));
+  });
+  /* 配線を動かしているときは、その頂点を「揃えたい点」として扱う。
+     機器の端子が格子から外れていると、5mm 格子だけでは届かないため */
+  attach.wireIds.forEach(({ id, pts0 }) => {
+    pts0.forEach(q => pins.push({ x: q[0] + dx, y: q[1] + dy }));
   });
   if (!pins.length) return { cx: 0, cy: 0 };
   // 揃える相手: 静止している機器の端子と、動かしていない配線の頂点
@@ -1249,7 +1257,10 @@ function finishWireDraft() {
   Editor.wireDraft = null;
   if (d && d.pts.length >= 2) {
     commit();
-    addWire(curPage(), d.pts);
+    /* raw: 作図中に決めた座標をそのまま使う。頂点は既に 5mm 格子か端子の上に
+       乗せてあるので、ここで格子へ丸めると、格子から外れた端子 (M12 など) に
+       合わせた端点が引き戻されて線が端子から外れる */
+    addWire(curPage(), d.pts, { raw: true });
     UI.setMsg("配線を作成しました");
   }
   requestRender();
