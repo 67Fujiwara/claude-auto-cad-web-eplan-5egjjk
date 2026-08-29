@@ -538,7 +538,7 @@ UI.openSymbolEditor = (symId = null) => {
       </select></div>
       <div class="prop-sect" id="sePinHead">端子</div>
       <div id="sePins" class="se-pins"></div>
-      <div class="prop-note" style="margin-top:6px">端子は 5mm グリッドに乗ります。番号は部品表・接続リストに出ます。</div>
+      <div class="prop-note" style="margin-top:6px">端子は 5mm グリッドに乗ります。番号は図面・部品表・接続リストに出ます (空欄なら図面に出しません)。</div>
     </div>
     <div class="se-mid">
       <svg id="seCanvas" viewBox="${-S.W / 2} ${-S.H / 2} ${S.W} ${S.H}" preserveAspectRatio="xMidYMid meet"></svg>
@@ -1259,7 +1259,9 @@ UI.openSymbolEditor = (symId = null) => {
     }
     if (S.tool === "pin") {
       push();
-      S.pins.push({ x, y, n: String(S.pins.length + 1) });
+      /* 端子番号は既定で空 (仮の連番 1,2,3… を図面に印字させない)。
+         番号が要る記号は右の一覧か、配置後のプロパティで入れる */
+      S.pins.push({ x, y, n: "" });
       draw(); return;
     }
     if (S.tool === "conn") { openConnDialog(x, y); return; }

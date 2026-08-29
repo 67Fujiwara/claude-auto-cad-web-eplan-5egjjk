@@ -7,7 +7,9 @@
                    その番号になり、空欄に戻すと自動採番 (23) へ戻る
    ・everywhere  : DXF 出力・接続リスト (buildConnectionList) にも上書きが出る
    ・undoBack    : 元に戻す (undo) で上書き前へ戻る
-   ・cleanProps  : 全端子を空欄に戻すと props.pinNames 自体が消える (保存を汚さない) */
+   ・blankHides  : 欄を空にすると、その端子の番号は画面にも DXF にも出ない
+   ・defaultBack : 既定値を入れ直すと上書きが消えて記号どおりに戻る
+   ・namelessAdd : 記号側に番号の無い端子でも、欄に入れれば図面に出る */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -38,7 +40,8 @@ const R = await p.evaluate(async () => {
   UI.refresh(); UI.showProps();
   await new Promise(r => setTimeout(r, 150));
   const inputs = [...document.querySelectorAll(".pPinNm")];
-  out.uiShown = { n: inputs.length, ph: inputs.map(el => el.placeholder).join(",") };
+  // 欄には今の番号が入っている (空欄 = 出さない、という見え方にそろえる)
+  out.uiShown = { n: inputs.length, val: inputs.map(el => el.value).join(",") };
 
   // ── 53/54 へ上書き ──
   const setPin = async (i, v) => {
@@ -55,8 +58,10 @@ const R = await p.evaluate(async () => {
     drawn: Editor.svg.innerHTML.includes(">53</text>") && Editor.svg.innerHTML.includes(">54</text>")
       && !Editor.svg.innerHTML.includes(">13</text>"),
   };
+  // DXF は行単位で見る (座標に 53 が含まれるので includes では判定にならない)
+  const dxfHasText = (pg2, t) => pageToDXF(pg2).split(/\r?\n/).includes(t);
   out.everywhere = {
-    dxf: pageToDXF(pg).includes("53"),
+    dxf: dxfHasText(pg, "53"),
     conn: JSON.stringify(buildConnectionList()),   // 後で 53 を含むか見る (配線なしなら空でも可)
   };
   // 配線で2端子を結んで接続リストに出す (1端子だけのネットは行にならない)
@@ -79,25 +84,61 @@ const R = await p.evaluate(async () => {
   const d1b = curPage().devices.find(x => x.id === d1.id);
   out.undoBack = effectivePinName(d1b, 1);
 
-  // ── 全部空欄に戻すと props.pinNames が消える ──
+  // ── 空欄 = その端子の番号を出さない ──
   App.selection.clear(); App.selection.add(d1b.id);
   UI.refresh(); UI.showProps();
   await new Promise(r => setTimeout(r, 150));
   await setPin(0, "");
   const d1c = curPage().devices.find(x => x.id === d1.id);
-  out.cleanProps = d1c.props.pinNames === undefined && effectivePinName(d1c, 0) === "13";
+  out.blankHides = {
+    name: effectivePinName(d1c, 0),
+    label: pinLabelVisible(curPage(), d1c, 0),
+    drawn: Editor.svg.innerHTML.includes(">53</text>"),
+    dxf: dxfHasText(curPage(), "53"),
+  };
+
+  // ── 既定値を入れ直すと上書きが消えて記号どおりに戻る ──
+  App.selection.clear(); App.selection.add(d1c.id);
+  UI.refresh(); UI.showProps();
+  await new Promise(r => setTimeout(r, 150));
+  await setPin(0, "13");
+  const d1d = curPage().devices.find(x => x.id === d1.id);
+  out.defaultBack = (d1d.props.pinNames === undefined || d1d.props.pinNames[0] === undefined)
+    && effectivePinName(d1d, 0) === "13";
+
+  // ── 記号に番号の無い端子 (自作記号の端子) でも、入れれば出る ──
+  const symN = allSymbols().find(s2 => (s2.pins || []).length && (s2.pins || []).every(q => !q.n && !q.inBody)
+    && s2.id !== "terminal" && !s2.ioSheet);
+  // undo でプロジェクトが差し替わっているので、今のページに置くこと
+  const dn = addDevice(curPage(), symN.id, 300, 160, {});
+  App.selection.clear(); App.selection.add(dn.id);
+  UI.refresh(); UI.showProps();
+  await new Promise(r => setTimeout(r, 150));
+  const nRows = document.querySelectorAll(".pPinNm").length;
+  const before = pinLabelVisible(curPage(), dn, 0);
+  await setPin(0, "X7");
+  const dn2 = curPage().devices.find(x => x.id === dn.id);
+  out.namelessAdd = {
+    sym: symN.id, rows: nRows, quietBefore: before === null,
+    name: effectivePinName(dn2, 0),
+    drawn: Editor.svg.innerHTML.includes(">X7</text>"),
+  };
   return out;
 });
 
 const checks = {
   noPageErrors: errs.length === 0,
   defaultAuto: R.defaultAuto.n0 === "13" && R.defaultAuto.n1 === "14" && R.defaultAuto.drawn,
-  uiShown: R.uiShown.n === 2 && R.uiShown.ph === "13,14",
+  uiShown: R.uiShown.n === 2 && R.uiShown.val === "13,14",
   override: R.override.n0 === "53" && R.override.n1 === "54" && R.override.drawn,
   linkedAuto: R.linkedAuto.second === "23" && R.linkedAuto.over === "31" && R.linkedAuto.back === "23",
   everywhere: R.everywhere.dxf === true && R.everywhere.connRows === true,
   undoBack: R.undoBack === "14",
-  cleanProps: R.cleanProps === true,
+  blankHides: R.blankHides.name === "" && R.blankHides.label === null
+    && R.blankHides.drawn === false && R.blankHides.dxf === false,
+  defaultBack: R.defaultBack === true,
+  namelessAdd: R.namelessAdd.rows >= 1 && R.namelessAdd.quietBefore === true
+    && R.namelessAdd.name === "X7" && R.namelessAdd.drawn === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

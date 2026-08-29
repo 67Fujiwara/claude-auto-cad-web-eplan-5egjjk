@@ -386,19 +386,20 @@ UI.showProps = (focusTag = false) => {
         </select></div>` : ""}
       ${sym.timer ? `<div class="prop-row"><label>遅延時間 (秒)</label><input id="pDelay" class="mono" type="number" step="0.5" min="0" value="${dev.props.delay || 2}"/></div>` : ""}
       ${(() => {
-        /* 端子番号の上書き。接点の 13/14 を 53/54 に変える等。空欄 = 自動採番
-           (連動接点の 13/14 → 23/24 の自動繰り上げも空欄なら従来どおり)。
+        /* 端子番号の上書き。接点の 13/14 を 53/54 に変える等。欄には今の番号が
+           入っていて、空にすればその端子の番号は図面に出ない (自作記号の
+           仮番号 1,2,3… を消せる)。記号どおりに戻したいときは既定値を入れ直す。
            結線図の枠記号 (端子名を外郭内に描く) と端子台は対象外 */
         const pins2 = sym.pins || [];
         if (!pins2.length || pins2.length > 12 || sym.ioSheet || dev.sym === "terminal") return "";
         const rows = pins2.map((p2, i) => {
-          if (!p2.n || p2.inBody) return "";
+          if (p2.inBody) return "";
           const auto = autoPinName(dev, i);
-          const ov = (dev.props && dev.props.pinNames && dev.props.pinNames[i] !== undefined) ? dev.props.pinNames[i] : "";
-          return `<div class="prop-row"><label>端子 ${i + 1} <span class="rp-dim">(既定 ${escAttr(auto || "—")})</span></label>
-            <input class="mono pPinNm" data-pi="${i}" maxlength="8" value="${escAttr(ov)}" placeholder="${escAttr(auto)}"/></div>`;
+          const cur = effectivePinName(dev, i);
+          return `<div class="prop-row"><label>端子 ${i + 1} <span class="rp-dim">(既定 ${escAttr(auto || "なし")})</span></label>
+            <input class="mono pPinNm" data-pi="${i}" data-auto="${escAttr(auto)}" maxlength="8" value="${escAttr(cur)}" placeholder="番号なし (図面に出しません)"/></div>`;
         }).join("");
-        return rows ? `<div class="prop-row" style="margin-bottom:0"><label>端子番号 <span class="rp-dim">(空欄 = 自動採番)</span></label></div>` + rows : "";
+        return rows ? `<div class="prop-row" style="margin-bottom:0"><label>端子番号 <span class="rp-dim">(空欄 = 図面に出さない)</span></label></div>` + rows : "";
       })()}
       ${symStretchBase(sym) ? (() => {
         const st = symStretchBase(sym).stretch;
@@ -651,7 +652,10 @@ UI.showProps = (focusTag = false) => {
       dev.props = dev.props || {};
       const m2 = dev.props.pinNames || {};
       const v = el.value.trim();
-      if (v) m2[i] = v; else delete m2[i];
+      /* 既定と同じ値に戻したら上書きを外す (連動接点の 13/14 → 23/24 の
+         自動繰り上げが効くのは上書きが無いときだけ)。空欄は「出さない」
+         という指定なので、上書きとして残す */
+      if (v === (el.dataset.auto || "")) delete m2[i]; else m2[i] = v;
       if (Object.keys(m2).length) dev.props.pinNames = m2; else delete dev.props.pinNames;
       App.labelRev++;
       UI.refresh(false);

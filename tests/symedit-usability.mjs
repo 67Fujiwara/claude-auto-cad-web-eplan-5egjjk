@@ -10,7 +10,9 @@
                   (一部の線だけ回転できるように)
    ・escSelect  : 作画中でない Esc は選択ツールへ戻る (作画中は先に作画を中止)
    ・pinSnap    : 端子ツールは線・図の先端 (2.5mm 以内) に吸着する。
-                  先端から離れた場所は従来どおり 5mm グリッド (強制ではない) */
+                  先端から離れた場所は従来どおり 5mm グリッド (強制ではない)
+   ・pinNoNum   : 置いた端子に仮の連番 (1,2,3…) は入らない — 端子番号は
+                  入力したものだけが図面に出る */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -141,6 +143,7 @@ R.explode = await p.evaluate(() => {
   // 先端から遠い場所 (グリッド近く) → 従来どおり 5mm グリッド
   [ax, ay] = px(20.6, -19.7);
   await p.mouse.click(ax, ay);
+  R.pinNoNum = await p.evaluate(() => SymEdit.pins.map(q => q.n));
   R.pinSnap = await p.evaluate(() => ({
     pins: SymEdit.pins.map(q => [q.x, q.y]),
     cursor: (() => { const c = document.querySelector("#seCursor .cv"); return +c.getAttribute("x1"); })(),
@@ -161,6 +164,7 @@ const checks = {
   pinSnap: R.pinSnap.pins.length === 2 &&
     Math.abs(R.pinSnap.pins[0][0] - -18.7) < 0.01 && Math.abs(R.pinSnap.pins[0][1] - -12.3) < 0.01 &&
     R.pinSnap.pins[1][0] % 5 === 0 && R.pinSnap.pins[1][1] % 5 === 0,
+  pinNoNum: R.pinNoNum.length === 2 && R.pinNoNum.every(n => n === ""),
 };
 console.log(JSON.stringify(R, null, 1));
 let fail = 0;

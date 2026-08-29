@@ -822,7 +822,8 @@ function pinLabelVisible(page, dev, pinIdx) {
   const p = sym.pins[pinIdx];
   // inBody: 端子名を記号の body に描いてある (入出力結線図の枠記号)。
   // 二重に打つと外郭の縁で重なるので、自動ラベルは出さない
-  if (!p || !p.n || p.inBody || dev.sym === "terminal") return null;
+  if (!p || p.inBody || dev.sym === "terminal") return null;
+  // 名前の無い端子でも、プロパティで番号を入れれば印字する (入力が正)
   const name = effectivePinName(dev, pinIdx);
   if (!name) return null;
   const abs = pinAbs(dev, p);
@@ -2521,7 +2522,8 @@ function autoPinName(dev, idx) {
    上書きできる (props.pinNames[端子index])。空欄 = 自動採番 */
 function effectivePinName(dev, idx) {
   const ov = dev && dev.props && dev.props.pinNames;
-  if (ov && ov[idx] !== undefined && String(ov[idx]).trim() !== "") return String(ov[idx]).trim();
+  // 空文字の上書き = この端子の番号を印字しない (プロパティの入力欄を空にした状態)
+  if (ov && ov[idx] !== undefined) return String(ov[idx]).trim();
   return autoPinName(dev, idx);
 }
 
