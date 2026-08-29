@@ -33,6 +33,13 @@ const G_NC = `<path d="M0,0 V7 M0,7 H-5 M0,13 L-4.8,3.4 M0,20 V13"/>`;
    ・BN は検出箱へ直行  ・BK と BU の間に横向きのメーク接点 (10mm 間) */
 const G_DET3 = `<path d="M0,0 V10 H-5"/>` +
   `<path d="M0,20 H-3.5 M-10,20 H-6.5 M-6.5,20 L-2.6,16.1"/>`;
+/* 切替接点 (c接点) JIS C 0617-7 07-02-04 / IEC 60617。
+   共通 (可動接点) は下、固定接点は上に 2 つ: 不動作時に触れている b 側を左に
+   10mm 離して置き、a 側は共通と同軸に置く (刃を倒せば a 側に触れる姿になる)。
+   刃の傾きは他の接点と同じ (0,13)→(-4.8,5)。b 側の固定接点バーは刃と交わる
+   ところ (x=-3.6) を越えて -2.6 まで伸ばし、a 側の固定接点とは 2.6mm 空ける。
+   break-before-make — 刃は必ずどちらか一方だけに触れる */
+const G_CO = `<path d="M0,0 V7 M0,20 V13 M0,13 L-4.8,5 M-10,0 V7 H-2.6"/>`;
 // 可動刃の線上の x (機械リンクの破線を刃にぴったり終端させるために使う)
 const bladeXNO = (y) => +(-4.8 * (13 - y) / 8).toFixed(3);     // G_NO: (0,13)→(-4.8,5)
 const bladeXNC = (y) => +(-4.8 * (13 - y) / 9.6).toFixed(3);   // G_NC: (0,13)→(-4.8,3.4)
@@ -177,6 +184,15 @@ const SYMBOLS = [
     desc: "リレー/接触器の連動接点", pins: [{x:0,y:0,n:"11"},{x:0,y:20,n:"12"}],
     sim: "contact_nc", linked: true, bounds: [-7,-2, 9, 24],
     body: G_NC,
+  },
+  {
+    /* c接点 (切替接点)。端子番号は JIS/IEC の慣用に合わせて 11=共通・
+       12=b側・14=a側。連動接点の自動繰り上げ (2個目は 21/22/24) も効く */
+    id: "aux_co", jis: "07-02-04", cat: "logic", letter: "K", name: "補助接点 (c接点)", nameEn: "Aux changeover contact",
+    desc: "リレー/接触器の切替接点 (不動作時は b 側に接触)",
+    pins: [{x:0,y:0,n:"14"},{x:-10,y:0,n:"12"},{x:0,y:20,n:"11"}],
+    sim: "changeover", linked: true, bounds: [-12,-2, 14, 24],
+    body: G_CO,
   },
   {
     id: "aux_ton_no", jis: "07-05-01", cat: "logic", letter: "K", name: "限時動作a接点 (TON)", nameEn: "On-delay contact NO",

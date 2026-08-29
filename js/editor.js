@@ -499,11 +499,12 @@ function mirrorSVG(coilDev) {
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = symOf(c.sym);
-    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
-    const pinLabel = (n0 && n1) ? `${n0}·${n1}` : "";
+    const pinLabel = contactPinLabel(c);
     const M = v => v * mfr;
-    // ミニ接点グリフ (NC は横バーつき)
-    if (csym.sim === "contact_nc") {
+    // ミニ接点グリフ (NC は横バーつき / c接点は行き先が 2 つ)
+    if (csym.sim === "changeover") {
+      out += `<path d="M${x},${cy + M(1.5)} h${M(2)} l${M(2.6)},${M(-2.8)} h${M(0.8)} M${x + M(3.4)},${cy + M(1.5)} h${M(2)}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" fill="none"/>`;
+    } else if (csym.sim === "contact_nc") {
       out += `<path d="M${x},${cy + M(1.5)} h${M(2)} l${M(2.6)},${M(-2.8)} m${M(-2.6)},0 h${M(2.6)} m0,${M(2.8)} h${M(0.8)}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" fill="none"/>`;
     } else {
       out += `<path d="M${x},${cy + M(1.5)} h${M(2)} l${M(2.6)},${M(-2.8)} m${M(0.6)},${M(2.8)} h${M(0.8)}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" fill="none"/>`;

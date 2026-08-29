@@ -353,14 +353,19 @@ function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   let out = dxfPoly([[coilDev.x, coilDev.y + S(20)], [x, y0 - S(1.5)]], "WIRENUM", "DASHED");
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
-    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
     const csym = symOf(c.sym);
-    // ミニ接点グリフ (b接点は横バーつき) — DXF だけ種別が分からなくならないように
+    // ミニ接点グリフ (b接点は横バーつき / c接点は行き先が2つ) — DXF だけ種別が分からなくならないように
     out += dxfPoly([[x, cy + S(1.5)], [x + S(2), cy + S(1.5)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
-    out += dxfPoly([[x + S(4.6), cy + S(1.5)], [x + S(5.4), cy + S(1.5)]], "WIRENUM");
-    if (csym.sim === "contact_nc") out += dxfPoly([[x + S(2), cy + S(-1.3)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
+    if (csym.sim === "changeover") {
+      out += dxfPoly([[x + S(4.6), cy + S(-1.3)], [x + S(5.4), cy + S(-1.3)]], "WIRENUM");
+      out += dxfPoly([[x + S(3.4), cy + S(1.5)], [x + S(5.4), cy + S(1.5)]], "WIRENUM");
+    } else {
+      out += dxfPoly([[x + S(4.6), cy + S(1.5)], [x + S(5.4), cy + S(1.5)]], "WIRENUM");
+      if (csym.sim === "contact_nc") out += dxfPoly([[x + S(2), cy + S(-1.3)], [x + S(4.6), cy + S(-1.3)]], "WIRENUM");
+    }
     const cols = mirrorCols(contacts);
-    if (n0 && n1) out += dxfText(x + S(cols.pin), cy + S(2.3), S(TEXT_H.small), `${n0}\u00b7${n1}`, "WIRENUM");
+    const pinLabel = contactPinLabel(c);
+    if (pinLabel) out += dxfText(x + S(cols.pin), cy + S(2.3), S(TEXT_H.small), pinLabel, "WIRENUM");
     out += dxfText(x + S(cols.ref), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
   });
   if (contacts.length > MAXROWS) {

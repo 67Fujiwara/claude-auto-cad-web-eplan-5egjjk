@@ -2406,13 +2406,25 @@ function propagateLinkGroups(pagesData) {
   }
 }
 
+/** 接点ミラー表の端子番号欄。切替接点は 共通·b側·a側 の 3 つ (11·12·14) を並べる
+    — 表を見ただけでどの端子が渡り (共通) か分かるようにする */
+function contactPinLabel(c) {
+  const sym = symOf(c.sym);
+  const nm = i => effectivePinName(c, i);
+  if (sym.sim === "changeover" && (sym.pins || []).length >= 3) {
+    const parts = [nm(2), nm(1), nm(0)].filter(Boolean);
+    return parts.length >= 2 ? parts.join("\u00b7") : "";
+  }
+  const n0 = nm(0), n1 = nm(1);
+  return n0 && n1 ? `${n0}\u00b7${n1}` : "";
+}
 /** 接点ミラー表の列位置 (端子番号列 / 相互参照列)。文字幅から動的に決めて桁被りを防ぐ */
 function mirrorCols(contacts) {
   const h = TEXT_H.small;
   let wPin = 0;
   contacts.forEach(c => {
-    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
-    if (n0 && n1) wPin = Math.max(wPin, textWidthMM(`${n0}\u00b7${n1}`, h, false, true));
+    const t = contactPinLabel(c);
+    if (t) wPin = Math.max(wPin, textWidthMM(t, h, false, true));
   });
   const pin = 7;
   return { pin, ref: pin + Math.max(wPin + 1.2, 8) };
@@ -2494,11 +2506,8 @@ function mirrorLabelBoxes(coilDev) {
   const out = [];
   shown.forEach((c, i) => {
     const cy = y0 + i * rowH + 2.3 * f;
-    const n0 = effectivePinName(c, 0), n1 = effectivePinName(c, 1);
-    if (n0 && n1) {
-      const t = `${n0}\u00b7${n1}`;
-      out.push({ x: x + cols.pin * f, y: cy - h, w: textWidthMM(t, h, false, true), h });
-    }
+    const t = contactPinLabel(c);
+    if (t) out.push({ x: x + cols.pin * f, y: cy - h, w: textWidthMM(t, h, false, true), h });
     const r = "/" + devLocation(c);
     out.push({ x: x + cols.ref * f, y: cy - h, w: textWidthMM(r, h, false, true), h });
   });

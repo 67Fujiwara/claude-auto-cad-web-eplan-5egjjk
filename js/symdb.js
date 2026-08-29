@@ -821,8 +821,10 @@ const DB_SYMBOLS = [
   },
   {
     id: "changeover", db: true, group: "開閉・保護", jis: "07-02-04", cat: "db", letter: "S",
-    name: "切替接点 (c接点)", nameEn: "Changeover contact", desc: "1回路2接点。不動作時はNC側に接触 (共通は下)",
-    pins: [{x:0,y:0,n:"NC"},{x:10,y:0,n:"NO"},{x:5,y:20,n:"COM"}], sim: "none", bounds: [-3.5,-2, 17, 24],
+    name: "切替接点 (c接点・操作スイッチ用)", nameEn: "Changeover contact", desc: "1回路2接点。不動作時はNC側に接触 (共通は下)",
+    /* 端子の並びは a側 → b側 → 共通 (conductivePairs の切替接点と同じ順)。
+       座標は変えていないので、既にこの記号で描いた配線はそのまま */
+    pins: [{x:10,y:0,n:"NO"},{x:0,y:0,n:"NC"},{x:5,y:20,n:"COM"}], sim: "changeover", bounds: [-3.5,-2, 17, 24],
     body: `<path d="M0,0 V7 M-1.5,7 H3 M10,0 V7 M7,7 H11.5 M5,20 V13 M5,13 L1.5,7"/>`,
   },
   {
