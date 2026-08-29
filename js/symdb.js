@@ -1069,13 +1069,72 @@ let SYM_CAT_OVR = {};
     SYM_CAT_OVR = (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
   } catch (e) { SYM_CAT_OVR = {}; }
 })();
-function symCatOf(s) { return SYM_CAT_OVR[s.id] || s.cat || "db"; }
+function symCatOf(s) {
+  const c = SYM_CAT_OVR[s.id] || s.cat || "db";
+  return allCats()[c] ? c : (s.cat || "db");   // 消した棚に居た記号は元の棚へ戻す
+}
 function setSymCat(id, cat) {
   const base = SYMBOLS_BY_ID[id];
-  if (!base || !SYM_CATS[cat]) return;
+  if (!base || !allCats()[cat]) return;
   if (cat === (base.cat || "db")) delete SYM_CAT_OVR[id];
   else SYM_CAT_OVR[id] = cat;
   try { localStorage.setItem("electracad.symCats", JSON.stringify(SYM_CAT_OVR)); } catch (e) { }
+}
+
+/* ── パレットの棚 (分類) の追加 ──
+   標準の棚 (SYM_CATS) に、使う人が作った棚を足せる。id → { name, color }。
+   localStorage に持ち、記号の割り当ては既存の分類入れ替え (SYM_CAT_OVR) と同じ */
+let USER_CATS = {};
+(function userCatLoad() {
+  try {
+    const v = JSON.parse(localStorage.getItem("electracad.userCats") || "{}");
+    if (v && typeof v === "object" && !Array.isArray(v)) USER_CATS = v;
+  } catch (e) { USER_CATS = {}; }
+})();
+function userCatSave() {
+  try { localStorage.setItem("electracad.userCats", JSON.stringify(USER_CATS)); } catch (e) { }
+}
+/** 標準 + 自分で作った棚。データベースの棚は最後に置く (並びを崩さない) */
+function allCats() {
+  const out = {};
+  Object.entries(SYM_CATS).forEach(([k, v]) => { if (k !== "db") out[k] = v; });
+  Object.entries(USER_CATS).forEach(([k, v]) => { out[k] = v; });
+  if (SYM_CATS.db) out.db = SYM_CATS.db;
+  return out;
+}
+function isUserCat(id) { return !!USER_CATS[id]; }
+/** 棚の色の候補 (パレットの点の色) */
+const CAT_COLORS = ["#3ddc97", "#4da3ff", "#ffb454", "#c792ea", "#8b96ab", "#e5c07b", "#ff7b72", "#5ccfe6"];
+/** 棚を足す。名前が空・重複なら null。返り値は新しい棚の id */
+function addUserCat(name, color) {
+  const nm = String(name || "").trim();
+  if (!nm) return null;
+  if (Object.values(allCats()).some(c => c.name === nm)) return null;   // 同じ名前の棚は作らない
+  const id = "u_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  USER_CATS[id] = { name: nm, color: color || CAT_COLORS[Object.keys(USER_CATS).length % CAT_COLORS.length] };
+  userCatSave();
+  return id;
+}
+/** 棚の名前・色を変える (自分で作った棚だけ) */
+function renameUserCat(id, name, color) {
+  if (!USER_CATS[id]) return false;
+  const nm = String(name || "").trim();
+  if (!nm) return false;
+  if (Object.entries(allCats()).some(([k, c]) => k !== id && c.name === nm)) return false;
+  USER_CATS[id] = { name: nm, color: color || USER_CATS[id].color };
+  userCatSave();
+  return true;
+}
+/** 棚を消す。その棚に入れていた記号は元の分類へ戻る */
+function deleteUserCat(id) {
+  if (!USER_CATS[id]) return 0;
+  let moved = 0;
+  // この棚へ移していた記号は、元の分類へ戻す
+  Object.keys(SYM_CAT_OVR).forEach(sid => { if (SYM_CAT_OVR[sid] === id) { delete SYM_CAT_OVR[sid]; moved++; } });
+  delete USER_CATS[id];
+  userCatSave();
+  try { localStorage.setItem("electracad.symCats", JSON.stringify(SYM_CAT_OVR)); } catch (e) { }
+  return moved;
 }
 
 /* デバイスタグの表示モード (シンボル単位・localStorage)。

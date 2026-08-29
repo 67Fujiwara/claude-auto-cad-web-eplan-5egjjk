@@ -38,7 +38,7 @@ UI.buildPalette = (filter = "") => {
   const pinned = new Set(dbPinnedList());
   const hidden = new Set(symHiddenList());
   const all = allSymbols();
-  Object.entries(SYM_CATS).forEach(([catId, cat]) => {
+  Object.entries(allCats()).forEach(([catId, cat]) => {
     // 分類はデータベースで記号ごとに入れ替えられる (symCatOf)。
     // "データベース" 分類はパレットに追加 (ピン) されたものだけを、
     // それ以外の棚は「外す」で隠したものを除いて出す
@@ -359,7 +359,7 @@ UI.showProps = (focusTag = false) => {
   if (selDevs.length === 1 && only1) {
     const dev = selDevs[0];
     const sym = symOf(dev.sym);
-    const cat = SYM_CATS[symCatOf(sym)];
+    const cat = allCats()[symCatOf(sym)] || SYM_CATS.misc;
     const coils = [];
     App.project.pages.forEach(pg => pg.devices.forEach(d => {
       if (symOf(d.sym).mirror) coils.push(d);
@@ -1819,7 +1819,7 @@ UI.openSymDB = () => {
   let query = "", group = "";
   // ライブラリの全記号を載せる。分類 (パレットの棚) は記号ごとに入れ替えられる
   const all = allSymbols();
-  const groupOf = s => s.group || (SYM_CATS[s.cat] ? SYM_CATS[s.cat].name : "その他");
+  const groupOf = s => s.group || (allCats()[s.cat] ? allCats()[s.cat].name : "その他");
   const groups = [...new Set(all.map(groupOf))];
   const body = h(`<div>
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
@@ -1829,6 +1829,11 @@ UI.openSymDB = () => {
       </div>
       <div id="dbGroups" style="display:flex;gap:4px;flex-wrap:wrap"></div>
     </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+      <span class="rp-dim" style="font-size:11.5px">パレットの棚</span>
+      <div id="dbCats" style="display:flex;gap:4px;flex-wrap:wrap;flex:1;min-width:0"></div>
+      <button class="btn-solid primary" id="dbAddCat" style="flex:0 0 auto;padding:4px 10px;font-size:11.5px">＋ 棚を追加</button>
+    </div>
     <div id="dbGrid" class="wiz-cards" style="grid-template-columns:repeat(auto-fill,minmax(168px,1fr))"></div>
   </div>`);
 
@@ -1837,6 +1842,38 @@ UI.openSymDB = () => {
     gb.innerHTML = [""].concat(groups).map(g =>
       `<button class="btn-solid" data-g="${g}" style="flex:0 0 auto;padding:5px 11px;font-size:11.5px;${g === group ? "background:var(--accent-dim);border-color:var(--accent);color:var(--accent-2)" : ""}">${g || "すべて"}</button>`).join("");
     gb.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { group = b.dataset.g; renderGroups(); renderGrid(); }));
+  }
+  /* パレットの棚の一覧。自分で作った棚は名前・色を変えたり消したりできる
+     (標準の棚は消せない — 記号の行き場が無くなるため) */
+  function renderCats() {
+    const cb = body.querySelector("#dbCats");
+    cb.innerHTML = Object.entries(allCats()).map(([cid, c]) => {
+      const n = allSymbols().filter(s => symCatOf(s) === cid).length;
+      return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border:1px solid var(--line);border-radius:11px;font-size:11.5px">
+        <span style="width:8px;height:8px;border-radius:50%;background:${c.color}"></span>${escXML(c.name)}
+        <span class="rp-dim">${n}</span>
+        ${isUserCat(cid) ? `<button class="btn-solid" data-cedit="${cid}" title="名前・色を変える" style="padding:1px 5px;font-size:10.5px">…</button>
+        <button class="btn-solid" data-cdel="${cid}" title="この棚を消す (中の記号は元の棚に戻ります)" style="padding:1px 5px;font-size:10.5px">✕</button>` : ""}
+      </span>`;
+    }).join("");
+    cb.querySelectorAll("[data-cedit]").forEach(b => b.addEventListener("click", () => {
+      const cid = b.dataset.cedit, cur = allCats()[cid];
+      const nm = prompt("棚の名前", cur.name);
+      if (nm === null) return;
+      if (!renameUserCat(cid, nm, cur.color)) { alert("その名前は使えません (空・他の棚と同じ名前)"); return; }
+      UI.buildPalette(document.getElementById("symSearch").value);
+      renderCats(); renderGrid();
+      UI.setMsg(`棚の名前を「${nm.trim()}」に変えました`);
+    }));
+    cb.querySelectorAll("[data-cdel]").forEach(b => b.addEventListener("click", () => {
+      const cid = b.dataset.cdel, nm = allCats()[cid].name;
+      const n = allSymbols().filter(s => symCatOf(s) === cid).length;
+      if (!confirm(`棚「${nm}」を消します。${n ? `中の記号 ${n} 点は元の棚へ戻ります。` : ""}よろしいですか？`)) return;
+      deleteUserCat(cid);
+      UI.buildPalette(document.getElementById("symSearch").value);
+      renderCats(); renderGrid();
+      UI.setMsg(`棚「${nm}」を消しました${n ? ` (記号 ${n} 点は元の棚へ戻しました)` : ""}`);
+    }));
   }
   function renderGrid() {
     const grid = body.querySelector("#dbGrid");
@@ -1859,7 +1896,9 @@ UI.openSymDB = () => {
           (!s.jis && s.nonstd) ? "規格外 (JIS C 0617 に該当図記号なし)" : ""].filter(Boolean).join(" — ") || groupOf(s)}</div>
         <div style="display:flex;gap:4px;margin-top:4px;align-items:center;flex-wrap:wrap">
           <select data-cat="${s.id}" title="パレットの分類 (棚) を入れ替える" style="flex:1;min-width:0;font-size:11px;padding:3px 4px;background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--text)">
-            ${Object.entries(SYM_CATS).map(([cid, c]) => `<option value="${cid}"${cid === cat ? " selected" : ""}>${c.name}</option>`).join("")}
+            ${Object.entries(allCats()).map(([cid, c]) => `<option value="${cid}"${cid === cat ? " selected" : ""}>${c.name}</option>`).join("")}
+            <option value="__new__">＋ 新しい棚をつくる…</option>
+
           </select>
           ${pinBtn}
           <button class="btn-solid" data-edit="${s.id}" style="flex:0 0 auto;padding:4px 8px;font-size:11px">編集</button>
@@ -1893,10 +1932,16 @@ UI.openSymDB = () => {
       renderGrid();
     }));
     grid.querySelectorAll("[data-cat]").forEach(sel => sel.addEventListener("change", () => {
-      setSymCat(sel.dataset.cat, sel.value);
+      const id = sel.dataset.cat;
+      if (sel.value === "__new__") {           // その場で棚を作って、そこへ移す
+        const cid = UI.askNewCat();
+        if (!cid) { renderGrid(); return; }
+        setSymCat(id, cid);
+      } else setSymCat(id, sel.value);
       UI.buildPalette(document.getElementById("symSearch").value);
+      renderCats();
       renderGrid();
-      UI.setMsg(`「${SYMBOLS_BY_ID[sel.dataset.cat].name}」を分類「${SYM_CATS[sel.value].name}」へ移しました`);
+      UI.setMsg(`「${SYMBOLS_BY_ID[id].name}」を棚「${allCats()[symCatOf(SYMBOLS_BY_ID[id])].name}」へ移しました`);
     }));
     grid.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => {
       m.close();
@@ -1904,13 +1949,31 @@ UI.openSymDB = () => {
     }));
   }
   body.querySelector("#dbSearch").addEventListener("input", e => { query = e.target.value; renderGrid(); });
+  body.querySelector("#dbAddCat").addEventListener("click", () => {
+    if (!UI.askNewCat()) return;
+    UI.buildPalette(document.getElementById("symSearch").value);
+    renderCats();
+    renderGrid();
+  });
   renderGroups();
+  renderCats();
   renderGrid();
   const m = UI.openModal({
     title: "シンボルデータベース",
     sub: `ライブラリの全図記号 ${all.length} 種 — 分類の入れ替え・編集・パレットへの追加ができます`,
     body, wide: true,
   });
+};
+
+/** パレットの棚を 1 つ足す (名前と色を聞く)。返り値は新しい棚の id */
+UI.askNewCat = () => {
+  const name = prompt("新しい棚の名前 (例: 空圧機器 / 自社標準)", "");
+  if (name === null) return null;
+  const id = addUserCat(name, CAT_COLORS[Object.keys(allCats()).length % CAT_COLORS.length]);
+  if (!id) { alert("その名前は使えません (空・他の棚と同じ名前)"); return null; }
+  UI.buildPalette(document.getElementById("symSearch").value);
+  UI.setMsg(`棚「${name.trim()}」を作りました — データベースで記号をこの棚へ移せます`);
+  return id;
 };
 
 /** ホイール1ノッチあたりのズーム倍率をスライダで調節 */

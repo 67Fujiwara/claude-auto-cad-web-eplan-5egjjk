@@ -454,7 +454,7 @@ UI.openSymbolEditor = (symId = null) => {
     meta = {
       name: (src.name || "") + (asCopy ? " (複製)" : ""), nameEn: src.nameEn || "", letter: src.letter || "E",
       typ: src.typ || "", desc: src.desc || "",
-      group: src.group || (SYM_CATS[src.cat] ? SYM_CATS[src.cat].name : "自作"),
+      group: src.group || (allCats()[src.cat] ? allCats()[src.cat].name : "自作"),
       sim: src.sim || "none",
     };
     S.pins = (src.pins || []).map(p => ({ x: p.x, y: p.y, n: p.n || "", ...(p.grp ? { grp: p.grp } : {}) }));
