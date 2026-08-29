@@ -1668,6 +1668,16 @@ function rectsOverlap(a, b, ratio = 0) {
 }
 
 /** 注記テキストの概算 bbox */
+/** 自由文字の向き (度・時計回り)。0〜359 に丸めて返す */
+function textRot(t) { return ((((t && t.rot) || 0) % 360) + 360) % 360; }
+/** 図面座標 → 文字の基点まわりに逆回転した座標 (当たり判定・検図で共用) */
+function textLocalPt(t, x, y) {
+  const a = textRot(t);
+  if (!a) return [x, y];
+  const r = -a * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const dx = x - t.x, dy = y - t.y;
+  return [t.x + dx * cs - dy * sn, t.y + dx * sn + dy * cs];
+}
 function textBounds(t) {
   // noMin: 取り込んだ図面の文字は和文の最小呼びへ持ち上げない (見た目と一致させる)
   const h = t.noMin ? (t.size || TEXT_H.normal) * contentScale()
@@ -1675,7 +1685,19 @@ function textBounds(t) {
   const w = textWidthMM(t.text || "", h);
   const anchor = t.anchor || "middle";
   const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;
-  return { x, y: t.y - h, w, h: h * 1.25 };
+  const box = { x, y: t.y - h, w, h: h * 1.25 };
+  const a = textRot(t);
+  if (!a) return box;
+  /* 回した文字は、回転後の 4 隅を包む外接箱で見る (検図の重なり判定・
+     ラベルよけは軸に沿った箱で扱うため)。基点 (t.x,t.y) が回転の中心 */
+  const r = a * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+  const xs = [], ys = [];
+  [[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]]
+    .forEach(([px, py]) => {
+      const dx = px - t.x, dy = py - t.y;
+      xs.push(t.x + dx * cs - dy * sn); ys.push(t.y + dx * sn + dy * cs);
+    });
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
 
 /** 表示する改訂行 (新しい方から最大 maxRows 行) */

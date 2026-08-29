@@ -802,9 +802,22 @@ UI.showProps = (focusTag = false) => {
     pane.innerHTML = `
       <div class="prop-head"><div class="prop-head-txt"><div class="t1">テキスト</div><div class="t2">図面注記</div></div></div>
       <div class="prop-row"><label>内容</label><input id="pTxt" value="${(t.text || "").replace(/"/g, "&quot;")}"/></div>
-      <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2.5" value="${textHeight(t)}"/></div>`;
+      <div class="prop-grid2">
+        <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2.5" value="${textHeight(t)}"/></div>
+        <div class="prop-row"><label>角度 (°)</label><input id="pTrot" class="mono" type="number" step="15" value="${textRot(t)}"/></div>
+      </div>
+      <div class="prop-note">角度は時計回り。R キーでも 90° ずつ回せます (縦書きの注記は 90° か 270°)。</div>`;
     pane.querySelector("#pTxt").addEventListener("change", e => { commit(); t.text = e.target.value; UI.refresh(false); });
     pane.querySelector("#pTsz").addEventListener("change", e => { commit(); const n = parseFloat(e.target.value); if (!isNaN(n)) t.size = Math.max(2.5, n); UI.refresh(false); });
+    const trot = pane.querySelector("#pTrot");
+    if (trot) trot.addEventListener("change", e => {
+      commit();
+      const n = parseFloat(e.target.value);
+      if (!isNaN(n)) { const a = ((Math.round(n) % 360) + 360) % 360; if (a) t.rot = a; else delete t.rot; }
+      App.labelRev++;
+      UI.refresh(false);
+      UI.showProps();
+    });
   } else if (selDevs.length + selWires.length + selTexts.length + selZones.length > 1) {
     const total = selDevs.length + selWires.length + selTexts.length + selZones.length;
     pane.innerHTML = `
@@ -1611,6 +1624,8 @@ UI.dxfImportDialog = (ents, fileName) => {
            巨大化する)。noMin で和文の最小呼びへの引き上げも避ける */
         page.texts.push({ id: uid("t"), x: X(e.x1), y: Y(e.y1), text: e.text || "",
           size: Math.max(0.3, +((e.size || 3.5) * k).toFixed(2)), noMin: true,
+          // 傾きも引き継ぐ (DXF は反時計回り・画面は Y が下向きなので符号を反転)
+          rot: e.angle ? ((((-e.angle) % 360) + 360) % 360) : undefined,
           anchor: e.anchor || "start" });        // 寄せは DXF の指定どおり (ずれ防止)
         nText++;
       }

@@ -588,7 +588,8 @@ function pageToDXF(page) {
 
   // ── フリーテキスト ──
   page.texts.forEach(t => {
-    ents += dxfText(t.x, t.y, textHeight(t) * contentScale(), t.text, "TEXT", t.anchor || "middle", 0, { mono: false });
+    // DXF の回転は反時計回り。画面 (時計回り) と合わせるため符号を反転する
+    ents += dxfText(t.x, t.y, textHeight(t) * contentScale(), t.text, "TEXT", t.anchor || "middle", -textRot(t), { mono: false });
   });
 
   // ── DXF 全体 (R12) ──

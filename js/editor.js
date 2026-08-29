@@ -527,12 +527,16 @@ function textsSVG(page, opts = {}) {
   page.texts.forEach(t => {
     const h = textHeight(t) * fr;   // 用紙上の文字高 × 尺度
     const selected = !print && App.selection.has(t.id);
+    /* 回転 (t.rot 度・時計回り)。文字の基点 (x,y) を軸に回すので、
+       回した後も基点は動かない — 選択枠も同じ変換に入れる */
+    const rot = textRot(t);
+    const rt = rot ? ` transform="rotate(${rot} ${t.x} ${t.y})"` : "";
     if (selected) {
       const wApprox = t.text.length * h * 0.62 + 2 * fr;
-      out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"/>`;
+      out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"${rt}/>`;
     }
     // noMin: 取り込んだ図面の文字は元の寸法に忠実に (和文の最小呼びへ持ち上げない)
-    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif">${escXML(t.text)}</text>`;
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif"${rt}>${escXML(t.text)}</text>`;
   });
   return out;
 }
@@ -920,7 +924,9 @@ function hitTest(wx, wy) {
     const fr = contentScale();
     const th = textHeight(t) * fr;
     const w = t.text.length * th * 0.62 + 2 * fr, h = th + 2 * fr;
-    if (wx > t.x - w / 2 && wx < t.x + w / 2 && wy > t.y - h && wy < t.y + 1.5) cands.push({ type: "text", obj: t });
+    // 回した文字は、基点まわりに逆回転してから箱に入れる (斜めでも掴める)
+    const [lx, ly] = textLocalPt(t, wx, wy);
+    if (lx > t.x - w / 2 && lx < t.x + w / 2 && ly > t.y - h && ly < t.y + 1.5) cands.push({ type: "text", obj: t });
   }
   /* ワイヤは機器より先に拾う。機器の外形箱 (bounds) は線より広いので、
      機器と重なった導体が箱に食われて選べなくなる (囲み記号や端子を貫く線) */
@@ -1663,7 +1669,16 @@ function rotateSelection() {
   const selWires = page.wires.filter(w => App.selection.has(w.id));
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
   if (!devs.length && !selWires.length) {
-    UI.setMsg("回転するデバイスを選択してください");
+    // 文字だけを選んでいるときは、その文字を +90° 回す (図面の縦書き注記など)
+    if (selTexts.length) {
+      commit();
+      selTexts.forEach(t => { t.rot = ((textRot(t) + 90) % 360); if (!t.rot) delete t.rot; });
+      App.labelRev++;
+      UI.setMsg(`文字を回転しました (${textRot(selTexts[0])}°)`);
+      requestRender();
+      return;
+    }
+    UI.setMsg("回転するデバイス・文字を選択してください");
     return;
   }
 
@@ -1672,7 +1687,8 @@ function rotateSelection() {
   const issuesBefore = runDRC().length;
   const snapshot = JSON.stringify(App.project);
 
-  if (devs.length === 1 && selWires.length === 0) {
+  // 文字も一緒に選んでいるときはブロック回転へ回す (文字だけ取り残さない)
+  if (devs.length === 1 && selWires.length === 0 && selTexts.length === 0) {
     const dev = devs[0];
     const attached = collectAttachedEndpoints(page, [dev]);
     commit();
@@ -1714,7 +1730,12 @@ function rotateSelection() {
       d.rot = ((d.rot || 0) + 90) % 360;
     });
     selWires.forEach(w => { w.pts = w.pts.map(p => rot(p[0], p[1])); });
-    selTexts.forEach(t => { [t.x, t.y] = rot(t.x, t.y); });
+    // ブロック回転では、文字も位置と一緒に向きを回す (絵と文字がずれない)
+    selTexts.forEach(t => {
+      [t.x, t.y] = rot(t.x, t.y);
+      t.rot = (textRot(t) + 90) % 360;
+      if (!t.rot) delete t.rot;
+    });
     // 選択外の接続ワイヤ端点を新しいピン位置へ追従
     reattachAfterTransform(page, devs, attached);
     // 選択配線の固定側端点を元のピンへ戻す
