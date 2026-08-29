@@ -1179,6 +1179,17 @@ UI.newProject = () => {
     配線 (座標) は互換だが、印字される端子番号が変わるので端子台表の再出力を促す。
     once=true (ブラウザ自動保存からの復帰) では1回だけ知らせて毎回のナグを避ける。 */
 function noteSymbolMigration(opts = {}) {
+  /* 切替接点 (データベース) は端子の並びを a側 → b側 → 共通 に直した。座標は
+     変えていないので配線はそのままだが、端子番号を手で入れた図面だけは
+     端子1 と端子2 の中身が入れ替わるので知らせる (上書きは端子の順番で持つ) */
+  const coSwapped = App.project.pages.some(pg => pg.devices.some(d =>
+    d.sym === "changeover" && d.props && d.props.pinNames &&
+    (d.props.pinNames[0] !== undefined || d.props.pinNames[1] !== undefined)));
+  if (coSwapped) {
+    UI.setMsg("注意: 切替接点 (c接点) を通電計算の対象にし、端子の並びを a側 → b側 → 共通 に直しました — " +
+      "以前は導通しない記号だったので検図の結果が変わることがあります。" +
+      "プロパティで端子番号を手入力していた場合、端子1 (a側) と端子2 (b側) の入れ替わりも確認してください");
+  }
   if (!App.project.pages.some(pg => pg.devices.some(d => d.sym === "press_sw"))) return;
   const FLAG = "electracad.note.presssw";
   if (opts.once) {

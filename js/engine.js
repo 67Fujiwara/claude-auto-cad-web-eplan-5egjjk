@@ -2412,8 +2412,10 @@ function contactPinLabel(c) {
   const sym = symOf(c.sym);
   const nm = i => effectivePinName(c, i);
   if (sym.sim === "changeover" && (sym.pins || []).length >= 3) {
-    const parts = [nm(2), nm(1), nm(0)].filter(Boolean);
-    return parts.length >= 2 ? parts.join("\u00b7") : "";
+    /* 共通·b側·a側 の 3 欄。番号を消した端子があっても欄は残す (2 つに
+       減らすと、ミラー表では b接点と見分けが付かなくなる) */
+    const parts = [nm(2), nm(1), nm(0)].map(v => v || "-");
+    return parts.some(v => v !== "-") ? parts.join("\u00b7") : "";
   }
   const n0 = nm(0), n1 = nm(1);
   return n0 && n1 ? `${n0}\u00b7${n1}` : "";
@@ -2525,7 +2527,10 @@ function autoPinName(dev, idx) {
   const siblings = linkedContacts(f.dev).filter(c => /^[1-8][1-8]$/.test((symOf(c.sym).pins[0] || {}).n || ""));
   const pos = siblings.findIndex(c => c.id === dev.id);
   if (pos < 0) return base;
-  return String(pos + 1) + base[1];
+  /* 十の位は順位番号。JIS C 8201-1 / IEC 60947-1 の補助接点表示は 1〜8 までなので
+     9 個目以降は 8 で止める (9x は規格外)。この本数はコイルの接点数の検図でも
+     警告が出るので、必要なら端子番号はプロパティで手入力する */
+  return String(Math.min(pos + 1, 8)) + base[1];
 }
 /* 表示・出図・検図・接続リストが使う端子番号。プロパティで機器ごとに
    上書きできる (props.pinNames[端子index])。空欄 = 自動採番 */
@@ -2982,13 +2987,17 @@ function runDRC() {
   propagateLinkGroups(closedData);
   const openData = App.project.pages.map(p => drcCollect(p, "open"));
   propagateLinkGroups(openData);
-  // 切替接点は 11-12 と 11-14 が同時に閉じない。閉状態ネットで両投をつなぐと
-  // 「b側→0V / a側→+24V を選ぶ」常套回路が偽の短絡になるため、
-  // 短絡検査だけは投ごと (a側のみ閉 / b側のみ閉) の2パスで評価する。
-  // 注意: 2パスは全切替接点を一斉に同じ投へ倒す大域評価。複数の切替接点の
-  // 混合状態 (SW1=a側・SW2=b側) でのみ成立する短絡は対象外 (組合せ爆発の回避)
+  /* 切替接点は 11-12 と 11-14 が同時に閉じない。"closed" は両投を同時に閉じた
+     仮の状態なので、a側の +24V と b側の 0V が同じネットに見えてしまう
+     (「b側→0V / a側→+24V を選ぶ」という常套回路がそうなる)。
+     そこで電位が絡む判定は、投ごと (a側のみ閉 / b側のみ閉) の 2 パスで見る:
+       ・電位の誤り (センサの電源逆・短絡) … どちらの投でも成り立つときだけ出す
+         (短絡だけは片方の投で成立すれば実際に短絡するので、その場で出す)
+       ・電源への到達 … どちらかの投で届いていればよい
+     注意: 2パスは全切替接点を一斉に同じ投へ倒す大域評価。複数の切替接点の
+     混合状態 (SW1=a側・SW2=b側) でのみ成立する短絡は対象外 (組合せ爆発の回避) */
   const hasChangeover = App.project.pages.some(p => p.devices.some(d => symOf(d.sym).sim === "changeover"));
-  const shortData = hasChangeover
+  const throwData = hasChangeover
     ? ["closedA", "closedB"].map(m => {
         const d = App.project.pages.map(p => drcCollect(p, m));
         propagateLinkGroups(d);
@@ -3002,6 +3011,10 @@ function runDRC() {
     const open = openData[pageIdx];
     const srcClosed = { pNets: closed.pNets, nNets: closed.nNets };
     const srcOpen = { pNets: open.pNets, nNets: open.nNets };
+    /* 投ごとのネット (切替接点が無ければ closed 1 つ)。電位の判定はこれで行う */
+    const passes = throwData.map(ds => ds[pageIdx]);
+    const allThrows = fn => passes.every(fn);   // どの投でもそうなる (誤検図を出さない)
+    const anyThrow = fn => passes.some(fn);     // どれかの投でそうなる (到達性)
 
     // ワイヤ端点集合 / 区間集合
     const wireEndpoints = new Map(); // key → count
@@ -3094,11 +3107,12 @@ function runDRC() {
       const t = threeWirePins(symOf(dev.sym));
       if (!t) return;
       const tag = displayTag(dev) || symOf(dev.sym).name;
-      const nSup = closed.pinNet(dev, t.sup), nZero = closed.pinNet(dev, t.zero);
-      const nm = i => (symOf(dev.sym).pins[i] || {}).n || "";
-      if (nSup && srcClosed.nNets.has(nSup)) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
+      // 端子番号は図面に出ている表記 (連動接点の繰り上げ・手入力) と同じものを使う
+      const nm = i => effectivePinName(dev, i) || (symOf(dev.sym).pins[i] || {}).n || "";
+      const on = (i, kind) => allThrows(pd => { const n = pd.pinNet(dev, i); return !!n && pd[kind].has(n); });
+      if (on(t.sup, "nNets")) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
         msg: `${tag} の ${nm(t.sup)} (電源+) が 0V 側につながっています`, page: page.no, target: dev.id, loc: devLocation(dev) });
-      if (nZero && srcClosed.pNets.has(nZero)) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
+      if (on(t.zero, "pNets")) issues.push({ sev: "err", rule: "3線式センサの電源が逆",
         msg: `${tag} の ${nm(t.zero)} (0V) が +24V 側につながっています`, page: page.no, target: dev.id, loc: devLocation(dev) });
     });
 
@@ -3563,7 +3577,7 @@ function runDRC() {
     }
 
     // 電源短絡 (+24V と 0V が閉状態で同一ネット)。切替接点は投ごとの2パスで見る
-    shortHit: for (const sd of shortData) {
+    shortHit: for (const sd of throwData) {
       const s = sd[pageIdx];
       for (const p of s.pNets) {
         if (p && s.nNets.has(p)) {
@@ -3600,23 +3614,36 @@ function runDRC() {
       /* 未接続ピン。記号ぜんぶを黙らせる noDrc のほかに、ピン単位の除外も見る。
          PLC の入出力結線図のように「使わない点があるのが普通」の記号でも、
          電源・コモン・保護接地の結び忘れは必ず知らせたい */
+      const pinWired = pin => wireEndpoints.has(ptKey(pin.x, pin.y)) ||
+        wireSegs.some(([a, b]) => ptOnSeg(pin.x, pin.y, a[0], a[1], b[0], b[1])) ||
+        page.devices.some(d2 => d2 !== dev && devPins(d2).some(p2 => Math.abs(p2.x - pin.x) < .01 && Math.abs(p2.y - pin.y) < .01));
+      /* 切替接点は片方の投だけ使うのが普通 (1c で a側だけ使う等)。共通が
+         つながっていれば、使わない側 1 つの未接続は知らせない。
+         共通の結び忘れと、両方とも未接続 (置いただけ) は今までどおり出す */
+      const coIdle = (() => {
+        if (sym.sim !== "changeover" || (sym.pins || []).length < 3) return -1;
+        const ps = devPins(dev);
+        if (!pinWired(ps[2])) return -1;                        // 共通が未接続なら黙らない
+        const a = pinWired(ps[0]), b = pinWired(ps[1]);
+        return a && !b ? 1 : b && !a ? 0 : -1;                  // 使っていない側の index
+      })();
       if (!sym.noDrc) devPins(dev).forEach((pin, pi) => {
-        if ((sym.pins[pi] || {}).noDrc) return;
-        const onWire = wireEndpoints.has(ptKey(pin.x, pin.y)) ||
-          wireSegs.some(([a, b]) => ptOnSeg(pin.x, pin.y, a[0], a[1], b[0], b[1])) ||
-          page.devices.some(d2 => d2 !== dev && devPins(d2).some(p2 => Math.abs(p2.x - pin.x) < .01 && Math.abs(p2.y - pin.y) < .01));
+        if ((sym.pins[pi] || {}).noDrc || pi === coIdle) return;
+        const onWire = pinWired(pin);
         if (!onWire) {
           /* 同じ名前の端子が複数ある記号 (入出力結線図の COM など) では、
              どの端子かが分かるように区分 (列・行) を添える。飛び先も端子の位置に
              する — 用紙 1 枚を占める記号では、記号の原点では遠すぎる */
           const dup = sym.pins.filter(q => q.n && q.n === pin.name).length > 1;
           const zone = `${sheetCol(pin.x)}${sheetRow(pin.y)}`;
+          // 図面に印字されている端子番号で言う (連動接点は繰り上げ後・手入力は上書き後)
+          const shown = effectivePinName(dev, pi) || pin.name;
           /* 保護接地の結び忘れは注意ではなく誤り。感電保護 (JIS C 60364-4-41 /
              IEC 60204-1 8.2) は PE が確実につながっていることが前提なので、
              出図前に必ず消してもらう */
           const isPE = /^(PE|E)$/.test(pin.name || "");
           issues.push({ sev: isPE ? "err" : "warn",
-            msg: `${displayTag(dev) || sym.name} のピン ${pin.name || pin.idx + 1}${dup ? ` (${zone})` : ""} が未接続です` +
+            msg: `${displayTag(dev) || sym.name} のピン ${shown || pin.idx + 1}${dup ? ` (${zone})` : ""} が未接続です` +
               (isPE ? " — 保護接地は必ず接続してください" : ""),
             page: page.no, target: dev.id, loc: `${page.no}.${sheetCol(pin.x)}` });
         }
@@ -3666,8 +3693,10 @@ function runDRC() {
               return n && (n === a || n === b);
             });
           });
-          const ok = intoUnit ||
-            (srcClosed.pNets.has(a) && srcClosed.nNets.has(b)) || (srcClosed.pNets.has(b) && srcClosed.nNets.has(a));
+          const ok = intoUnit || anyThrow(pd => {
+            const a2 = pd.pinNet(dev, 0), b2 = pd.pinNet(dev, 1);
+            return (pd.pNets.has(a2) && pd.nNets.has(b2)) || (pd.pNets.has(b2) && pd.nNets.has(a2));
+          });
           if (!ok) issues.push({ sev: "err", msg: `${displayTag(dev)} が電源 (+24V/0V) に接続されていません`, page: page.no, target: dev.id, loc: devLocation(dev) });
         }
         // 無開閉直結 (接点を1つも介さず両極に直結 → 電源投入と同時に動作)

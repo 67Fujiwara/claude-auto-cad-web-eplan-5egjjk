@@ -820,12 +820,20 @@ const DB_SYMBOLS = [
     body: `<path d="M0,0 V7 M-3,7 H3 M0,20 V13 M0,13 L-4.8,5"/>`,
   },
   {
-    id: "changeover", db: true, group: "開閉・保護", jis: "07-02-04", cat: "db", letter: "S",
+    /* 操作スイッチ用の切替接点 (共通が中央)。標準の c接点は補助接点 aux_co
+       (07-02-04) の方で、こちらは実務でよく見る変形。同じ番号を別の図形に
+       付けないよう jis は名乗らず、stdNote で断る */
+    id: "changeover", db: true, group: "開閉・保護", cat: "db", letter: "S",
+    stdNote: "切替接点 (07-02-04) の変形 — 共通を中央に置いた操作スイッチ用の実務図。" +
+      "端子表示 NO/NC/COM も北米慣行 (JIS C 8201-1 の数字表示は 11/12/14)。図記号・端子表示とも規格原本との照合が必要",
     name: "切替接点 (c接点・操作スイッチ用)", nameEn: "Changeover contact", desc: "1回路2接点。不動作時はNC側に接触 (共通は下)",
     /* 端子の並びは a側 → b側 → 共通 (conductivePairs の切替接点と同じ順)。
        座標は変えていないので、既にこの記号で描いた配線はそのまま */
     pins: [{x:10,y:0,n:"NO"},{x:0,y:0,n:"NC"},{x:5,y:20,n:"COM"}], sim: "changeover", bounds: [-3.5,-2, 17, 24],
-    body: `<path d="M0,0 V7 M-1.5,7 H3 M10,0 V7 M7,7 H11.5 M5,20 V13 M5,13 L1.5,7"/>`,
+    /* a 側 (メーク) の固定接点は導線の端で表す (横バーを付けるとブレーク要素に
+       読める)。可動刃は b 側のバーを越えて描く — 突き当てで止めると接触して
+       いるのか届いていないのか読めない */
+    body: `<path d="M0,0 V7 M-1.5,7 H3 M10,0 V7 M5,20 V13 M5,13 L0.6,5.5"/>`,
   },
   {
     id: "arrester", jis: "05-04-01", db: true, group: "開閉・保護", cat: "db", letter: "F",
