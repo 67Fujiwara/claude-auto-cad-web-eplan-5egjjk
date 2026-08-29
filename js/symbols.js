@@ -394,6 +394,17 @@ const SYMBOLS = [
     body: `<circle cx="0" cy="0" r="${TERM_R}"/>`,
   },
   {
+    /* 破断記号: 配線に被せると、波線から下の配線が隠れて「以降省略」の
+       見た目になる (機械製図の破断線と同じ考え方)。電気的なつながりは
+       そのまま。幅は 20mm — 広い範囲はプロパティ「配線の破断」を使う */
+    id: "break_mark", nonstd: true, cat: "misc", letter: "W",
+    name: "破断記号 (配線の省略)", nameEn: "Break mark",
+    desc: "波線から下に重なった配線を隠して省略表示にする。つながりは変わらない (検図・接続リストはそのまま)",
+    pins: [], sim: "none", noDrc: true, bounds: [-10, -3, 20, 8],
+    wireMask: [{ x: -10, y: 0, w: 20, h: 1000 }],
+    body: `<path d="M-10,0 C-7,-3 -3,3 0,0 C3,-3 7,3 10,0" fill="none"/>`,
+  },
+  {
     id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
     desc: "ページ間の電位接続点 (タグ一致で接続)", pins: [{x:0,y:0,n:""}],
     sim: "link", bounds: [-9,-2, 18, 12],

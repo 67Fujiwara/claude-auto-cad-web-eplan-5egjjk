@@ -1156,26 +1156,64 @@ const _boxAbs = (dev, r) => {
 /* 導体を「抜く」円 (丸端子など)。記号が wireMask で持ち、置いた位置・回転・
    倍率を反映して図面座標で返す。抜くのは描画だけで、回路のつながりは
    そのまま — 端子を動かせば線はもとどおり描かれる (状態を持たない) */
+/** 図面座標 → 機器ローカル座標 (回転・倍率の逆変換)。矩形マスクの判定に使う */
+function devLocalPt(dev, wx, wy) {
+  const r = (dev.rot || 0) * Math.PI / 180, k = devScale(dev);
+  const c = Math.cos(r), sn = Math.sin(r);
+  const px = wx - dev.x, py = wy - dev.y;
+  return [(px * c + py * sn) / k, (-px * sn + py * c) / k];
+}
 function pageWireMasks(page) {
   const out = [];
   (page.devices || []).forEach(dev => {
-    const wm = symOf(dev.sym).wireMask;
-    if (!wm || !wm.length) return;
     const k = devScale(dev);
-    wm.forEach(c => {
-      const a = pinAbs(dev, { x: c.x, y: c.y });
-      out.push({ x: a.x, y: a.y, r: c.r * k, dev });
+    const wm = symOf(dev.sym).wireMask;
+    (wm || []).forEach(c => {
+      if (c.r > 0) {               // 円 (丸端子など)
+        const a = pinAbs(dev, { x: c.x, y: c.y });
+        out.push({ kind: "circle", x: a.x, y: a.y, r: c.r * k, dev });
+      } else if (c.w > 0 && c.h > 0) {
+        // 矩形 (破断など)。機器ローカルで判定するので回転・倍率に追従する
+        out.push({ kind: "rect", dev, x: c.x, y: c.y, w: c.w, h: c.h });
+      }
     });
+    /* プロパティ「配線の破断」: この記号に重なった配線を、指定の線から下
+       (記号ローカルの +y 方向) だけ隠す。青枠 (外接矩形) でなく破断線の
+       位置から切るので、波線などの描線に合わせられる */
+    if (dev.props && Number.isFinite(dev.props.cutY)) {
+      const sym = symOf(dev.sym);
+      const [bx, , bw] = sym.bounds;
+      out.push({ kind: "rect", dev, x: bx, y: dev.props.cutY, w: bw, h: 1000 });
+    }
   });
   return out;
 }
-/** 線分 (x1,y1)-(x2,y2) のうち、円の外に残る部分を返す */
+/** 線分 (x1,y1)-(x2,y2) のうち、マスク (円・矩形) の外に残る部分を返す */
 function segOutsideCircles(x1, y1, x2, y2, circles) {
   const dx = x2 - x1, dy = y2 - y1;
   const L2 = dx * dx + dy * dy;
   if (!L2) return [];
-  const cuts = [];                     // 円の内側になる [t0,t1] (0..1)
+  const cuts = [];                     // マスクの内側になる [t0,t1] (0..1)
   circles.forEach(c => {
+    if (c.kind === "rect") {
+      // 機器ローカルへ写すと軸平行の矩形になる (線分は写しても直線のまま)
+      const [lx1, ly1] = devLocalPt(c.dev, x1, y1);
+      const [lx2, ly2] = devLocalPt(c.dev, x2, y2);
+      const ldx = lx2 - lx1, ldy = ly2 - ly1;
+      let t0 = 0, t1 = 1;
+      const slab = (p0, d0, lo, hi) => {
+        if (Math.abs(d0) < 1e-9) return p0 >= lo && p0 <= hi;   // 平行: 中にあるか
+        let a2 = (lo - p0) / d0, b2 = (hi - p0) / d0;
+        if (a2 > b2) { const t = a2; a2 = b2; b2 = t; }
+        t0 = Math.max(t0, a2); t1 = Math.min(t1, b2);
+        return true;
+      };
+      if (!slab(lx1, ldx, c.x, c.x + c.w)) return;
+      if (!slab(ly1, ldy, c.y, c.y + c.h)) return;
+      t0 = Math.max(0, t0); t1 = Math.min(1, t1);
+      if (t1 > t0 + 1e-9) cuts.push([t0, t1]);
+      return;
+    }
     // |P(t) - C|^2 = r^2 を解く
     const fx = x1 - c.x, fy = y1 - c.y;
     const b = 2 * (fx * dx + fy * dy);

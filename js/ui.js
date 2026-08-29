@@ -440,6 +440,20 @@ UI.showProps = (focusTag = false) => {
           <select id="pKvCh">${chs.map((c2, i2) =>
             `<option value="${c2}"${c2 === base.expCh ? " selected" : ""}>拡張${i2 + 1}台目 (R${c2}00〜)</option>`).join("")}</select></div>`;
       })()}
+      ${(() => {
+        /* 配線の破断: この記号に重なった配線を、指定した線から下だけ隠す。
+           波線 (破断記号) を持つ自作記号などで、記号の下へ抜ける線を省略した
+           見た目にする。外接矩形 (青枠) でなく「破断線の位置」で切るので、
+           記号のどの高さで切るかを mm で選べる (既定は記号の中央) */
+        const [, by0, , bh0] = sym.bounds;
+        const cur = dev.props && Number.isFinite(dev.props.cutY) ? dev.props.cutY : null;
+        return `<div class="prop-row"><label>配線の破断 <span class="rp-dim">(この線から下の配線を隠す)</span></label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <label class="chk" style="flex:0 0 auto"><input type="checkbox" id="pCutOn"${cur !== null ? " checked" : ""}/><span>隠す</span></label>
+            <input id="pCutY" class="mono" type="number" step="0.5" value="${cur !== null ? cur : Math.round((by0 + bh0 / 2) * 2) / 2}" title="破断線の位置 (記号ローカルの y・mm)。既定は記号の中央" style="width:80px"${cur === null ? " disabled" : ""}/>
+            <span class="rp-dim" style="font-size:10.5px">mm (記号内の y)</span>
+          </div></div>`;
+      })()}
       ${sym.ioSheet && devFnDx(dev) ? `<div class="prop-row"><label>コメント欄の位置 <span class="rp-dim">(下線をドラッグで移動できます。現在 ${devFnDx(dev) >= 0 ? "+" : ""}${devFnDx(dev)}mm)</span></label>
         <button class="btn-solid" id="pFnPos" style="padding:3px 10px;font-size:11px">既定に戻す</button></div>` : ""}
       ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
@@ -614,6 +628,23 @@ UI.showProps = (focusTag = false) => {
       App.labelRev++;
     });
     bind("#pDelay", v => { const n = parseFloat(v); dev.props.delay = isNaN(n) ? 2 : n; });
+    const cutOn = pane.querySelector("#pCutOn"), cutY = pane.querySelector("#pCutY");
+    if (cutOn) cutOn.addEventListener("change", () => {
+      commit();
+      dev.props = dev.props || {};
+      if (cutOn.checked) {
+        dev.props.cutY = parseFloat(cutY.value) || 0;
+        cutY.disabled = false;
+      } else { delete dev.props.cutY; cutY.disabled = true; }
+      UI.refresh(false);
+    });
+    if (cutY) cutY.addEventListener("change", () => {
+      if (!cutOn.checked) return;
+      commit();
+      dev.props = dev.props || {};
+      dev.props.cutY = parseFloat(cutY.value) || 0;
+      UI.refresh(false);
+    });
     pane.querySelectorAll(".pPinNm").forEach(el => el.addEventListener("change", () => {
       commit();
       const i = +el.dataset.pi;
