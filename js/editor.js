@@ -812,6 +812,17 @@ function overlaySVG(page) {
   // 作図中ワイヤ
   if (Editor.wireDraft) {
     const d = Editor.wireDraft;
+    const last = d.pts[d.pts.length - 1];
+    // まっすぐ乗っているときは、その行・列に沿って細い補助線を出す
+    if (d.cur) {
+      const b2 = sheetInner();
+      const guide = g => `<path d="${g}" stroke="${SEL}" stroke-width="0.2" stroke-dasharray="1 2" fill="none" opacity="0.75"/>`;
+      if (d.lock === "h") out += guide(`M${b2.x},${last[1]} H${b2.x + b2.w}`);
+      if (d.lock === "v") out += guide(`M${last[0]},${b2.y} V${b2.y + b2.h}`);
+      // 端子・配線の行・列にそろえたときの目印 (どこにそろったかが見える)
+      if (d.ax != null && d.lock !== "v") out += guide(`M${d.ax},${b2.y} V${b2.y + b2.h}`);
+      if (d.ay != null && d.lock !== "h") out += guide(`M${b2.x},${d.ay} H${b2.x + b2.w}`);
+    }
     const pts = [...d.pts, ...(d.cur ? routeOrtho(d.pts[d.pts.length - 1], d.cur) : [])];
     if (pts.length >= 2) {
       out += `<path d="M${pts.map(p => p[0] + "," + p[1]).join(" L")}" stroke="${SEL}" stroke-width="0.55" fill="none" stroke-dasharray="2 1.4"/>`;
@@ -839,6 +850,55 @@ function devPinsOf(ghost) {
   return sym.pins.map(p => pinAbs({ x: ghost.x, y: ghost.y, rot: ghost.rot || 0 }, p));
 }
 
+/* 配線作図中の点の決め方。まっすぐ引くのが難しかったので、直前の頂点と
+   同じ行・同じ列に「乗せる」働きを入れた:
+     ・直前の頂点の軸から画面上 14px 以内なら、その軸へぴったり乗せる
+       (格子の 1 目盛より近いときだけ効くので、意図した段差は消えない)
+     ・Shift を押している間は必ずまっすぐ (長い方の向きだけに進む)
+     ・端子の上ではこれまでどおり端子が優先 (端子から外れないように)
+   プレビューとクリックで同じ関数を通すので、見えている線がそのまま引ける */
+function wireAxisTol() {
+  const s = (Editor.view && Editor.view.s) || 3;
+  return Math.min(GRID, 14 / s);           // 目盛 1 つ分を超えない
+}
+/** 近くにある端子・配線の頂点の行 (y) / 列 (x) を集める */
+function wireAlignAxes(page) {
+  const xs = [], ys = [];
+  page.devices.forEach(dev => devPins(dev).forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  condWires(page).forEach(w => w.pts.forEach(p => { xs.push(p[0]); ys.push(p[1]); }));
+  return { xs, ys };
+}
+function nearestAxis(list, v, tol) {
+  let best = null, bd = tol;
+  list.forEach(q => { const d = Math.abs(q - v); if (d < bd) { bd = d; best = q; } });
+  return best;
+}
+function wireDraftPoint(wx, wy, shift) {
+  const pin = findPinNear(wx, wy);
+  const d = Editor.wireDraft;
+  const last = d && d.pts.length ? d.pts[d.pts.length - 1] : null;
+  if (pin) return { x: pin.x, y: pin.y, pin, lock: null, ax: null, ay: null };
+  let x = snap(wx), y = snap(wy), lock = null;
+  const tol = wireAxisTol();
+  if (last) {
+    const dx = Math.abs(wx - last[0]), dy = Math.abs(wy - last[1]);
+    if (shift) {                            // 必ずまっすぐ (長い方の向きへ)
+      if (dx >= dy) { y = last[1]; lock = "h"; } else { x = last[0]; lock = "v"; }
+    } else if (dy <= dx && dy <= tol) { y = last[1]; lock = "h"; }
+    else if (dx < dy && dx <= tol) { x = last[0]; lock = "v"; }
+  }
+  /* 直前の頂点の軸に乗っていない向きは、近くの端子・配線の行・列にそろえる
+     (向かい先の端子と高さをそろえるのが楽になる)。こちらは機器の吸着と同じ
+     ALIGN_TOL (格子の半分) — 格子の点をクリックしたつもりが端子の行へ
+     持って行かれないよう、軸ロックより狭くしておく */
+  let ax = null, ay = null;
+  if (!shift) {
+    const { xs, ys } = wireAlignAxes(curPage());
+    if (lock !== "v") { const q = nearestAxis(xs, wx, ALIGN_TOL); if (q != null) { x = q; ax = q; } }
+    if (lock !== "h") { const q = nearestAxis(ys, wy, ALIGN_TOL); if (q != null) { y = q; ay = q; } }
+  }
+  return { x, y, pin: null, lock, ax, ay };
+}
 /** 直交ルーティング: a→b を L字で結ぶ (水平優先/垂直優先を自動判定) */
 function routeOrtho(a, b) {
   if (Math.abs(a[0] - b[0]) < 0.01 || Math.abs(a[1] - b[1]) < 0.01) return [b];
@@ -1062,8 +1122,8 @@ function onMouseDown(e) {
     return;
   }
   if (App.tool === "wire") {
-    const pin = findPinNear(w.x, w.y);
-    const px = pin ? pin.x : sx, py = pin ? pin.y : sy;
+    const q = wireDraftPoint(w.x, w.y, e.shiftKey);
+    const pin = q.pin, px = q.x, py = q.y;
     if (!Editor.wireDraft) {
       Editor.wireDraft = { pts: [[px, py]], cur: null };
     } else {
@@ -1183,9 +1243,11 @@ function onMouseMove(e) {
     return;
   }
   if (Editor.wireDraft) {
-    const pin = findPinNear(w.x, w.y);
-    Editor.hover.pin = pin || null;
-    Editor.wireDraft.cur = pin ? [pin.x, pin.y] : [snap(w.x), snap(w.y)];
+    const q = wireDraftPoint(w.x, w.y, e.shiftKey);
+    Editor.hover.pin = q.pin || null;
+    Editor.wireDraft.cur = [q.x, q.y];
+    Editor.wireDraft.lock = q.lock;          // 補助線を出すため覚えておく
+    Editor.wireDraft.ax = q.ax; Editor.wireDraft.ay = q.ay;
     requestRender();
     return;
   }

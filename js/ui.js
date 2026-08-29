@@ -1088,7 +1088,7 @@ UI.setTool = (tool) => {
   UI.syncToolButtons();
   const modeNames = {
     select: "選択モード",
-    wire: "配線モード — ピンをクリックで開始 / クリックで曲げ / ダブルクリックか Enter で確定 / Backspace で1点戻る / Esc でキャンセル",
+    wire: "配線モード — ピンをクリックで開始 / クリックで曲げ / Shift でまっすぐ固定 / ダブルクリックか Enter で確定 / Backspace で1点戻る / Esc でキャンセル",
     pan: "パンモード",
     text: "テキストモード — クリックで文字入力",
   };
