@@ -2694,11 +2694,20 @@ function autoNumberWires() {
     wires.forEach(w => {
       if (w.fixed && w.num) netNum.set(wireNet.get(w.id), w.num);
     });
+    /* 2.2) 線番を付けるのは「機器のピンにつながる線」だけ。どのピンにも
+       触れない線は配置図の外形・引出線などの作画であって回路ではないので、
+       連番を振らず、過去に付いた自動番号も消す (手動線番・電位名は残す) */
+    const netHasPin = new Set();
+    page.devices.forEach(dev => devPins(dev).forEach((pin, i) => {
+      const net = pinNet(dev, i);
+      if (net != null) netHasPin.add(net);
+    }));
+    const isCircuit = net => netHasPin.has(net) || netNum.has(net);
     // 2.5) すでに振られている自動番号はそのまま据え置く。
     //      (1本だけ手動で直したときに、他の線番まで繰り上がるのを防ぐ)
     wires.forEach(w => {
       const net = wireNet.get(w.id);
-      if (netNum.has(net)) return;
+      if (netNum.has(net) || !netHasPin.has(net)) return;
       const prev = w.num == null ? "" : String(w.num).trim();
       if (prev && !used.has(prev)) { netNum.set(net, prev); used.add(prev); }
     });
@@ -2706,6 +2715,11 @@ function autoNumberWires() {
     const bestOfNet = new Map();
     wires.forEach(w => {
       const net = wireNet.get(w.id);
+      if (!isCircuit(net)) {          // 回路でない線: 自動で付いた番号を消す
+        if (!w.fixed) w.num = null;
+        w.numShow = false;
+        return;
+      }
       if (!netNum.has(net)) netNum.set(net, nextNum());
       w.num = netNum.get(net);
       w.numShow = false;
@@ -2717,6 +2731,12 @@ function autoNumberWires() {
       if (!cur || maxSeg > cur.maxSeg) bestOfNet.set(net, { w, maxSeg });
     });
     bestOfNet.forEach(({ w }) => { w.numShow = true; }); // 全ネット必ず1箇所は表示
+    /* 作図線に残った線番の掃除。線種の変更やデータ取込の経路によっては
+       非導通の線に昔の番号が残ることがあり、破線の上に線番が印字される */
+    page.wires.forEach(w => {
+      if (isWireConductive(w)) return;
+      if (w.num != null || w.numShow || w.fixed) { w.num = null; w.numShow = false; w.fixed = false; }
+    });
   });
 }
 

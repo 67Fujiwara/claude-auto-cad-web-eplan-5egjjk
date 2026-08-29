@@ -36,18 +36,23 @@ const R = await p.evaluate(async () => {
   const pins = devPins(d);
   addWire(p1, [[60, pins[0].y], [pins[0].x, pins[0].y]], { raw: true });
   addWire(p1, [[pins[1].x, pins[1].y], [pins[1].x, pins[1].y + 30]], { raw: true });
+  // どのピンにも触れない線 (配置図の作画など) — 線番は付かない
   addWire(p1, [[60, 160], [140, 160]], { raw: true });
-  // 次葉にも 1 本
-  addWire(p2, [[60, 100], [140, 100]], { raw: true });
+  // 次葉にも機器つきで 1 本
+  const d2 = addDevice(p2, "pb_no", 100, 100, {});
+  const pins2 = devPins(d2);
+  addWire(p2, [[60, pins2[0].y], [pins2[0].x, pins2[0].y]], { raw: true });
   autoNumberWires();
   const base1 = parseInt(/(\d+)\s*$/.exec(pageDwgNo(p1))[1], 10) * 100;
   const base2 = parseInt(/(\d+)\s*$/.exec(pageDwgNo(p2))[1], 10) * 100;
   out.nums1 = p1.wires.map(w => w.num);
   out.nums2 = p2.wires.map(w => w.num);
   out.base = [base1, base2];
-  out.pagePrefix = p1.wires.every(w => +w.num > base1 && +w.num < base1 + 100)
+  const numbered1 = p1.wires.filter(w => w.num != null);
+  out.pagePrefix = numbered1.length === 2 && numbered1.every(w => +w.num > base1 && +w.num < base1 + 100)
     && p2.wires.every(w => +w.num > base2 && +w.num < base2 + 100);
   out.deviceBreak = p1.wires[0].num !== p1.wires[1].num;
+  out.bareSkip = p1.wires[2].num == null && p1.wires[2].numShow !== true;
 
   // ── 実際に配線ツールで引く → その場で番号が付く ──
   UI.setTool("wire");
@@ -60,7 +65,10 @@ const R = await p.evaluate(async () => {
     ["mousedown", "mouseup", "click"].forEach(t =>
       Editor.svg.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: cx, clientY: cy })));
   };
-  click(60, 200); click(140, 200);
+  // 機器のピンへ向けて引く → その場で番号が付く (ピンに触れない線は対象外)
+  const d3 = addDevice(p1, "pb_no", 100, 200, {});
+  const pins3 = devPins(d3);
+  click(60, pins3[0].y); click(pins3[0].x, pins3[0].y);
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   await new Promise(r => setTimeout(r, 200));
   const drawn = p1.wires[p1.wires.length - 1];
@@ -68,16 +76,18 @@ const R = await p.evaluate(async () => {
 
   // 既存の線へ突き当てる → 同じ番号 (ネットに合流)
   const before = p1.wires.length;
-  click(100, 160); click(100, 130);
+  click(80, pins3[0].y - 20); click(80, pins3[0].y);
   await new Promise(r => setTimeout(r, 200));
   const joined = p1.wires[p1.wires.length - 1];
-  out.joinNet = { grew: p1.wires.length === before + 1, num: joined.num, same: joined.num === p1.wires[2].num };
+  out.joinNet = { grew: p1.wires.length === before + 1, num: joined.num, same: joined.num === drawn.num };
   UI.setTool("select");
 
   // ── 手動線番の保護 ──
+  //    (ピンに触れない線でも、手で入れた線番はそのまま残り・表示される)
   setWireNumber(p1, p1.wires[2], "L99");
   autoNumberWires();
-  out.manualKeep = p1.wires[2].num === "L99" && p1.wires[2].fixed === true;
+  out.manualKeep = p1.wires[2].num === "L99" && p1.wires[2].fixed === true
+    && p1.wires[2].numShow === true;
 
   // ── 電位名 (電源・リンク・接地) ──
   const p3 = newPage("電位", App.project.pages.length + 1);
@@ -112,6 +122,7 @@ const checks = {
   pagePrefix: R.pagePrefix === true,
   deviceBreak: R.deviceBreak === true,
   drawAssign: !!R.drawAssign.num && R.drawAssign.shown === true,
+  bareSkip: R.bareSkip === true,
   joinNet: R.joinNet.grew && R.joinNet.same === true,
   manualKeep: R.manualKeep === true,
   potentials: R.potentials.link === "W205" && R.potentials.earth === "PE",

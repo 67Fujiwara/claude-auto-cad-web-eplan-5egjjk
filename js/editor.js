@@ -1415,6 +1415,9 @@ function placeGhost() {
   const dev = addDevice(curPage(), g.symId, g.x, g.y, { rot: g.rot });
   // 既存配線の上に置いた場合は配線を自動分割して割り込む (線の重なりを防ぐ)
   spliceDeviceIntoWires(curPage(), dev);
+  /* ピンが乗った配線は「機器につながる回路」になった瞬間なので、ここで
+     線番を振り直す (機器を跨いだ区間の破断もこのタイミングで反映される) */
+  autoNumberWires();
   App.selection.clear();
   App.selection.add(dev.id);
   /* 入出力結線図の枠は、置いた瞬間に P24V/N24V のレールと各行の分岐を引く
@@ -1441,6 +1444,8 @@ function deleteSelection() {
   App.project.pages.forEach(pg => pg.devices.forEach(d => {
     if (d.linkTo && !findDevice(d.linkTo)) d.linkTo = null;
   }));
+  // 機器が消えて回路でなくなった線から自動線番を外す (手動線番は保護)
+  autoNumberWires();
   App.selection.clear();
   UI.setMsg("削除しました");
   UI.showProps();
