@@ -634,7 +634,9 @@ function specSVG(page) {
   const top = b.y + 10 * f, bottom = b.y + b.h - 34 * f;   // 下端は表題欄を避ける
   const first = specSheetSVG(page, 1, false);
   const used = first.endY - top;
-  const k = used > 0 ? Math.max(1, Math.min(2.4, (bottom - top) / used)) : 1;
+  /* 広げすぎない: 行の高さは 14mm まで (9mm × 1.55)。中身の少ない様式まで
+     間延びさせると、紙の書式として見苦しくなる */
+  const k = used > 0 ? Math.max(1, Math.min(1.55, (bottom - top) / used)) : 1;
   return specSheetSVG(page, k, true).svg;
 }
 /** 仕様シートの本体。k = 用紙いっぱいに広げる倍率 / record = クリック枠を記録するか */
@@ -673,13 +675,13 @@ function specSheetSVG(page, k, record) {
   const RH = S(9);                              // 標準の行の高さ (広げ倍率つき)
   const NW = S(10);                             // 番号のますの幅
   let endY = b.y;
-  SPEC_SHEET.forEach((sec, si) => {
+  specSheetFor(page).forEach((sec, si) => {
     const x0 = b.x + sheetScale() * 4 + si * (colW + sheetScale() * 6);
     let y = b.y + sheetScale() * 10;
     out += `<text x="${x0}" y="${y}" font-size="${svgFontSizeFor(sec.title, TEXT_H.large * f, false, { noMin: true })}" fill="${INK}" font-family="sans-serif">${escXML(sec.title)}</text>`;
     y += S(7);
     sec.blocks.forEach(blk => {
-      if (blk.t) { out += head(x0, y, blk.t); y += S(2.6); }
+      if (blk.t) { out += head(x0, y, blk.t + (blk.note ? " " + blk.note : "")); y += S(2.6); }
       if (blk.kind === "optsMemo") {
         // 使用環境: 左に選択肢、右は記入欄 (2 行ぶんの高さでつなげる)
         const ow = colW * 0.42, mw = colW - NW - ow;
@@ -798,6 +800,44 @@ function specSheetSVG(page, k, record) {
           }
         });
         y += RH * (blk.opts.length + 1);
+      } else if (blk.kind === "opts") {
+        /* 番号つきの選択肢を 1 列に。multi=true は複数選べる (外部 I/F)。
+           memoAt の選択肢は記入した文字が括弧に入る (その他・温度レンジ) */
+        if (blk.head) {
+          out += box(x0, y, colW, RH) + txt(x0, y + RH / 2 + TH * 0.36 * f, colW, blk.head);
+          y += RH;
+        }
+        const ow = colW - NW;
+        const multi = specMultiSel(page.spec, blk.k);
+        blk.opts.forEach((opt, i) => {
+          const yy = y + i * RH;
+          const on = blk.multi ? multi.includes(i) : sel[blk.k] === i;
+          let label = opt;
+          if (i === blk.memoAt) {
+            const a = memo[blk.memoK], b2 = memo[blk.memo2K];
+            if (blk.fill) { if (a || b2) label = blk.fill(a, b2); }
+            else if (a) label = `${opt.replace(/\s*\(.*\)\s*$/, "")} (${a})`;
+          }
+          out += numCell(x0, yy, NW, RH, i + 1, on, blk.k, i);
+          out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, label);
+          if (i === blk.memoAt && blk.memoK && record) {
+            Editor.specBoxes.push({ x: x0 + NW, y: yy, w: ow, h: RH,
+              memo: blk.memoK, memo2: blk.memo2K, label: blk.memoLabel || blk.t || "記入" });
+          }
+        });
+        y += RH * blk.opts.length;
+      } else if (blk.kind === "fields") {
+        // ラベルと記入欄の行 (定常時の温度レンジなど)。欄はクリックで書ける
+        const lw = colW * 0.3, vw = colW - lw;
+        blk.rows.forEach((r, i) => {
+          const yy = y + i * RH;
+          out += box(x0, yy, lw, RH) + txt(x0, yy + RH / 2 + TH * 0.36 * f, lw, r.label);
+          out += box(x0 + lw, yy, vw, RH);
+          out += txt(x0 + lw, yy + RH / 2 + TH * 0.36 * f, vw, memo[r.memoK] || r.ph || "");
+          if (record) Editor.specBoxes.push({ x: x0 + lw, y: yy, w: vw, h: RH, memo: r.memoK, label: r.label });
+
+        });
+        y += RH * blk.rows.length;
       } else if (blk.kind === "tubeFig") {
         /* マークチューブの取付方向 (読上げ) の図。直前の 2 つの小さな表の
            右側の空きに、表と同じ高さの帯で置く */
@@ -1178,15 +1218,33 @@ function onMouseDown(e) {
           pg.spec.memo = pg.spec.memo || {};
           const v = prompt(box.label, pg.spec.memo[box.memo] || "");
           if (v === null) return;
+          let v2 = null;
+          if (box.memo2) {                     // 2 つ目の記入 (温度レンジの理由など)
+            v2 = prompt("理由 (〇〇実施の為)", pg.spec.memo[box.memo2] || "");
+            if (v2 === null) return;
+          }
           commit();
           const t = v.trim();
           if (t) pg.spec.memo[box.memo] = t; else delete pg.spec.memo[box.memo];
+          if (v2 !== null) {
+            const t2 = v2.trim();
+            if (t2) pg.spec.memo[box.memo2] = t2; else delete pg.spec.memo[box.memo2];
+          }
           requestRender();
           UI.showProps();
           UI.setMsg(t ? `${box.label}を書き込みました` : `${box.label}を空にしました`);
           return;
         }
         commit();
+        // 複数チェックの組 (外部 I/F) は押すたびに入り切りする
+        const grp = specGroups().find(g => g.k === box.k);
+        if (grp && grp.multi) {
+          const cur = specMultiSel(pg.spec, box.k);
+          pg.spec.sel[box.k] = cur.includes(box.i) ? cur.filter(v => v !== box.i) : [...cur, box.i].sort((a, b2) => a - b2);
+          requestRender();
+          UI.setMsg("仕様を選びました (複数チェックできます — もう一度押すと外れます)");
+          return;
+        }
         pg.spec.sel[box.k] = box.i;
         requestRender();
         UI.setMsg("仕様を選びました (クリックで ◯ が移ります)");

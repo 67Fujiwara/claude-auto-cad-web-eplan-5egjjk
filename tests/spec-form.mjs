@@ -6,7 +6,13 @@
    ・pwrOpts  : 電源接続方法が 2 択 (端子台 / コネクター接続 3112N 配線長 3M)
    ・pwrPick  : その番号をクリックすると ◯ が移る
    ・pwrMemo  : 御社指定方法の欄を図面の上でクリックすると書き込め、図面に出る
-   ・memoCells: 特記事項・指定色・チューブ長の欄もクリックで書ける */
+   ・memoCells: 特記事項・指定色・チューブ長の欄もクリックで書ける
+   ・sheet2   : 仕様は 2 枚目があり、1 枚目と別の様式 (供給電源電圧・
+                御社環境温度レンジ・制御盤冷却方法・外部 I/F) で描かれる
+   ・newProj  : 新しい図面には仕様が 2 枚入る
+   ・multi    : 外部 I/F は複数チェックでき、もう一度押すと外れる
+   ・tempFill : 非定常時に温度と理由を書くと「0℃ー45℃ (洗浄 実施の為)」と出る
+   ・fieldCell: 定常時の記入欄はクリックして書ける */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -92,6 +98,80 @@ R.memoCells = await p.evaluate(() => {
   return { keys: [...new Set(keys)].sort() };
 });
 
+/* ── 2 枚目の仕様 ── */
+R.newProj = await p.evaluate(() => {
+  App.project = newProject("仕様2");
+  UI.renumberPages();
+  return { specs: App.project.pages.filter(pg => pg.kind === "spec").length,
+    names: App.project.pages.map(pg => pg.name) };
+});
+const setup2 = await p.evaluate(async () => {
+  const specs = App.project.pages.filter(pg => pg.kind === "spec");
+  const sp = specs[1] || specs[0];        // 2 枚目が無くても落ちないようにする
+  App.pageIdx = App.project.pages.indexOf(sp);
+  applySheet(sp);
+  UI.refresh(); zoomFit();
+  await new Promise(r => setTimeout(r, 250));
+  const bb = Editor.svg.getBoundingClientRect();
+  return { bb: [bb.left, bb.top], view: [Editor.view.tx, Editor.view.ty, Editor.view.s] };
+});
+const S2 = (x, y) => ({ x: setup2.bb[0] + setup2.view[0] + x * setup2.view[2], y: setup2.bb[1] + setup2.view[1] + y * setup2.view[2] });
+const clickBox2 = async (find) => {
+  const c = await p.evaluate((f) => {
+    const o = (Editor.specBoxes || []).find(new Function("o", `return ${f}`));
+    return o ? { x: o.x + o.w / 2, y: o.y + o.h / 2 } : null;
+  }, find);
+  if (!c) return false;
+  const s = S2(c.x, c.y);
+  await p.mouse.click(s.x, s.y);
+  await p.waitForTimeout(150);
+  return true;
+};
+
+R.sheet2 = await p.evaluate(() => {
+  const pg = curPage();
+  const svg = kindSVG(pg);
+  const want = ["電源・環境仕様", "供給電源電圧", "AC100V", "AC200V", "御社環境温度レンジ",
+    "定常時", "非定常時", "制御盤冷却方法", "ファン", "盤クーラー", "エアーパージ",
+    "外部 I/F (複数チェック可)", "上流", "下流", "他装置"];
+  return { missing: want.filter(t => !svg.includes(t)),
+    // 1 枚目の見出しが出ていないこと (様式が入れ替わっている)
+    notSheet1: !svg.includes("制御盤筐体仕様") && !svg.includes("保護等級"),
+    sheetNo: SPEC_SHEETS.length };
+});
+
+// 外部 I/F を 2 つチェック → 1 つ外す
+await clickBox2('o.k === "extif" && o.i === 0');
+await clickBox2('o.k === "extif" && o.i === 2');
+R.multi = { on: await p.evaluate(() => [...specMultiSel(curPage().spec, "extif")]) };
+await clickBox2('o.k === "extif" && o.i === 0');
+R.multi.off = await p.evaluate(() => [...specMultiSel(curPage().spec, "extif")]);
+R.multi.drawn = await p.evaluate(() => {
+  const svg = kindSVG(curPage());
+  return (svg.match(/<ellipse /g) || []).length;
+});
+
+// 非定常時: 温度と理由を書く (プロンプトは 2 回)
+await p.evaluate(() => {
+  const answers = ["0℃ ー 45℃", "洗浄"];
+  let i = 0;
+  window.prompt = () => answers[i++];
+});
+R.tempFill = { clicked: await clickBox2('o.memo === "temp_ab"') };
+R.tempFill.after = await p.evaluate(() => {
+  const pg = curPage();
+  return { a: pg.spec.memo.temp_ab, b: pg.spec.memo.temp_why,
+    drawn: kindSVG(pg).includes("0℃ ー 45℃ (洗浄 実施の為)") };
+});
+
+// 定常時の欄
+await p.evaluate(() => { window.prompt = () => "5℃ ー 40℃"; });
+R.fieldCell = { clicked: await clickBox2('o.memo === "temp_std"') };
+R.fieldCell.after = await p.evaluate(() => ({
+  memo: curPage().spec.memo.temp_std,
+  drawn: kindSVG(curPage()).includes("5℃ ー 40℃"),
+}));
+
 const checks = {
   noPageErrors: errs.length === 0,
   ipNone: R.form.ipOpts[7] === "指定無し" && R.ipNone.picked === true && R.ipNone.sel === 7,
@@ -102,6 +182,14 @@ const checks = {
   pwrMemo: R.pwrMemo.clicked === true && R.pwrMemo.after.memo === "盤上部より 3φ3W 直入れ"
     && R.pwrMemo.after.drawn === true,
   memoCells: JSON.stringify(R.memoCells.keys) === JSON.stringify(["env", "mat_fe", "pwr", "tube", "tube_dir"]),
+  newProj: R.newProj.specs === 2,
+  sheet2: R.sheet2.missing.length === 0 && R.sheet2.notSheet1 === true && R.sheet2.sheetNo === 2,
+  multi: JSON.stringify(R.multi.on) === JSON.stringify([0, 2])
+    && JSON.stringify(R.multi.off) === JSON.stringify([2]) && R.multi.drawn >= 1,
+  tempFill: R.tempFill.clicked === true && R.tempFill.after.a === "0℃ ー 45℃"
+    && R.tempFill.after.b === "洗浄" && R.tempFill.after.drawn === true,
+  fieldCell: R.fieldCell.clicked === true && R.fieldCell.after.memo === "5℃ ー 40℃"
+    && R.fieldCell.after.drawn === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

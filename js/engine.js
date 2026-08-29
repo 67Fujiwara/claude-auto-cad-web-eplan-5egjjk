@@ -1875,10 +1875,11 @@ function newProject(name = "無題プロジェクト") {
       paper: "A3", scale: "1:1", dwgNo: "", rev: "0",
       designer: "", checker: "", date: todayStr(), author: "ElectraCAD Studio",
     },
-    /* 図面集の頭 3 枚 (表紙・目次・仕様) を標準で付ける。
+    /* 図面集の頭 4 枚 (表紙・目次・仕様 2 枚) を標準で付ける。
        いずれも要らなければページのタブから消せる */
     pages: [newPage("表紙", 1, "cover"), newPage("目次", 2, "toc"),
-            newPage("仕様", 3, "spec"), newPage("メイン回路", 4)],
+            newPage("仕様", 3, "spec"), newPage("仕様 (2)", 4, "spec"),
+            newPage("メイン回路", 5)],
   };
 }
 function todayStr() {
@@ -1942,32 +1943,68 @@ const SPEC_SHEET = [
     { kind: "tubeFig", label: "(読上げ)" },
   ] },
 ];
+/* 2 枚目の仕様。1 枚目と同じ作法 (番号を押すと ◯ が移る・記入欄はクリックで書く)。
+   ・opts   … 番号つきの選択肢を 1 列に並べる。multi=true なら複数選べる
+   ・fields … ラベルと記入欄の行 (定常時の温度レンジなど) */
+const SPEC_SHEET2 = [
+  { title: "電源・環境仕様", blocks: [
+    { t: "供給電源電圧", kind: "opts", k: "sup_v", memoK: "sup_v", memoAt: 2,
+      opts: ["AC100V", "AC200V", "その他 (      )"] },
+    { t: "御社環境温度レンジ", kind: "fields", rows: [
+      { label: "定常時", memoK: "temp_std", ph: "〇〇℃ ー 〇〇℃" },
+    ] },
+    { kind: "opts", head: "非定常時", k: "temp_ab", memoK: "temp_ab", memo2K: "temp_why", memoAt: 1,
+      opts: ["定常時と同じ", "〇〇℃ー〇〇℃ (〇〇実施の為)"],
+      fill: (a, b2) => `${a || "〇〇℃ー〇〇℃"} (${b2 || "〇〇"} 実施の為)` },
+  ] },
+  { title: "冷却・外部接続", blocks: [
+    { t: "制御盤冷却方法", kind: "opts", k: "cool",
+      opts: ["ファン", "盤クーラー", "エアーパージ"] },
+    { t: "外部 I/F", kind: "opts", k: "extif", multi: true, note: "(複数チェック可)",
+      opts: ["上流", "下流", "他装置"] },
+  ] },
+];
+/** 仕様ページの様式 (1 枚目 / 2 枚目 …)。ページの並び順で決まる */
+const SPEC_SHEETS = [SPEC_SHEET, SPEC_SHEET2];
+function specSheetFor(page) {
+  const specs = App.project ? App.project.pages.filter(p => p.kind === "spec") : [];
+  const i = Math.max(0, specs.indexOf(page));
+  return SPEC_SHEETS[Math.min(i, SPEC_SHEETS.length - 1)];
+}
 /** 記入欄の一覧 (プロパティに出す)。k = memo の保存キー */
-function specMemoFields() {
+function specMemoFields(sheet) {
   const out = [];
-  const add = (k, label, where) => { if (k) out.push({ k, label, where }); };
-  SPEC_SHEET.forEach(sec => sec.blocks.forEach(b => {
+  const seen = new Set();
+  const add = (k, label, where) => { if (k && !seen.has(k)) { seen.add(k); out.push({ k, label, where }); } };
+  (sheet ? [sheet] : SPEC_SHEETS).forEach(sh => sh.forEach(sec => sec.blocks.forEach(b => {
     add(b.memoK, b.memoLabel || "指定内容", b.t || b.head || sec.title);
+    add(b.memo2K, "理由", b.t || b.head || sec.title);
+    (b.rows || []).forEach(r => add(r.memoK, r.label || "記入", b.t || sec.title));
     (b.groups || []).forEach(g => add(g.memoK, "指定色", b.t || sec.title));
-  }));
+  })));
   return out;
 }
-/** 選択肢を持つ組の一覧 (既定値・クリック判定で使う) */
+/** 選択肢を持つ組の一覧 (既定値・クリック判定で使う)。multi = 複数選べる組 */
 function specGroups() {
   const out = [];
-  SPEC_SHEET.forEach(sec => sec.blocks.forEach(b => {
-    if (b.k) out.push(b.k);
-    (b.groups || []).forEach(g => out.push(g.k));
-    (b.rows || []).forEach(r => { if (r.k) out.push(r.k); });
-  }));
+  SPEC_SHEETS.forEach(sh => sh.forEach(sec => sec.blocks.forEach(b => {
+    if (b.k) out.push({ k: b.k, multi: !!b.multi });
+    (b.groups || []).forEach(g => out.push({ k: g.k, multi: false }));
+    (b.rows || []).forEach(r => { if (r.k) out.push({ k: r.k, multi: false }); });
+  })));
   return out;
 }
 /** 既定の選択 (いちばん標準的な組み合わせ) */
 function defaultSpec() {
   const sel = {};
-  specGroups().forEach(k => { sel[k] = 0; });
+  specGroups().forEach(g => { sel[g.k] = g.multi ? [] : 0; });
   sel.ip = 5;                    // IP54 (盤の実務でいちばん多い)
   return { sel, memo: {} };
+}
+/** 複数選べる組の選択状態 (配列で持つ) */
+function specMultiSel(spec, k) {
+  const v = spec && spec.sel ? spec.sel[k] : null;
+  return Array.isArray(v) ? v : (typeof v === "number" ? [v] : []);
 }
 /** 目次の行 (表紙と目次そのものは載せない — 図面集の作法) */
 function tocRows() {

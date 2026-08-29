@@ -1,6 +1,6 @@
 /* 図面集の頭 3 枚 (表紙・目次・仕様) が標準で付くこと。
 
-   ・defaultPages : 新規プロジェクトが 表紙 / 目次 / 仕様 / 回路 の順で始まる
+   ・defaultPages : 新規プロジェクトが 表紙 / 目次 / 仕様 2 枚 / 回路 の順で始まる
    ・coverDraw    : 表紙は客先名と装置名の 2 行 + 下線。プロパティで書き換わる
    ・tocAuto      : 目次はページ名と図番の一覧。ページを足すと自動で増え、
                     表紙と目次そのものは載らない
@@ -215,7 +215,8 @@ R.rest = await p.evaluate(async () => {
 const checks = {
   noPageErrors: errs.length === 0,
   defaultPages: JSON.stringify(R.defaultPages) ===
-    JSON.stringify([["cover", "表紙"], ["toc", "目次"], ["spec", "仕様"], ["draw", "メイン回路"]]),
+    JSON.stringify([["cover", "表紙"], ["toc", "目次"], ["spec", "仕様"], ["spec", "仕様 (2)"],
+      ["draw", "メイン回路"]]),
   coverDraw: R.coverDraw.cust && R.coverDraw.title && R.coverDraw.underlines && R.coverProp === true,
   coverPh: /^例: [○◯△]/.test(R.coverPh) && !/株式会社\s*\S/.test(R.coverPh.replace("○○株式会社", "")),
   tocAuto: R.tocAuto.after.length === R.tocAuto.before.length + 1 && R.tocAuto.noCover && R.tocAuto.drawn,
@@ -231,7 +232,7 @@ const checks = {
   specMemo: R.rest.memoField === true && R.rest.memoDrawn === true,
   drcSkip: R.rest.drcSkip === true,
   noDraw: R.rest.noDraw === true,
-  addMenu: R.rest.addMenu === "cover,toc,toc,spec,draw,draw",
+  addMenu: R.rest.addMenu === "cover,toc,toc,spec,spec,draw,draw",
   saveLoad: R.rest.saveLoad.kind === "cover" && R.rest.saveLoad.cust === "○○食品 第2工場"
     && R.rest.saveLoad.ip === 0 && R.rest.saveLoad.memo === "冷蔵環境 (5℃)",
 };
