@@ -4120,3 +4120,147 @@ function downloadFile(filename, content, mime = "application/json") {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+
+/* ══════════════ 出図のまとめ (PDF / ZIP) ══════════════
+   外部ライブラリを使わずに、図面一式を 1 つのファイルにまとめる。
+   ・buildPDF … 各ページを紙の大きさどおりに並べた 1 本の PDF
+   ・buildZIP … 出力したファイルを 1 つの書庫に (無圧縮 store) */
+
+/** ページの SVG を紙の実寸で画像にする (dpi は 1 インチあたりの画素) */
+async function pageToImage(page, dpi = 200) {
+  const [pw, ph] = paperSize(pageSheetMeta(page).paper, pageSheetMeta(page).orient);
+  const svg = exportSheetSVG(page).replace(/^<\?xml[^>]*\?>\s*/, "");
+  const px = v => Math.max(1, Math.round(v / 25.4 * dpi));
+  const w = px(pw), h = px(ph);
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res; img.onerror = () => rej(new Error("SVG の画像化に失敗しました"));
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  });
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const cx = cv.getContext("2d");
+  cx.fillStyle = "#fff"; cx.fillRect(0, 0, w, h);       // 紙は白 (透過のまま貼らない)
+  cx.drawImage(img, 0, 0, w, h);
+  const url = cv.toDataURL("image/jpeg", 0.92);
+  return { w, h, pw, ph, data: url.slice(url.indexOf(",") + 1) };
+}
+
+/** 全ページを 1 本の PDF にまとめる (各ページを紙の実寸で貼る) */
+async function buildPDF(pages, opts = {}) {
+  const dpi = opts.dpi || 200;
+  const cur = curPage();
+  const imgs = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (opts.onProgress) opts.onProgress(i, pages.length);
+    imgs.push(await pageToImage(pages[i], dpi));
+  }
+  applySheet(cur);                       // 図枠を元のページへ戻す
+  /* PDF は 1pt = 1/72 インチ。用紙 (mm) を pt に直して MediaBox にする。
+     画像は DCTDecode (JPEG) をそのまま埋め込む — 再圧縮しないので速い */
+  const mm2pt = v => +(v * 72 / 25.4).toFixed(2);
+  const objs = [];                       // 1 始まりの本体 (文字列)
+  const add = str => { objs.push(str); return objs.length; };
+  const bin = [];                        // 画像の生データ (obj 番号 → バイト列)
+  const kidsIds = [];
+  const pagesId = objs.length + 1 + 0;   // 後で確定するので仮置き
+  // 先に 1 番を「ページの親」に予約する
+  objs.push("");                         // 1: /Pages (後で埋める)
+  pages.forEach((pg, i) => {
+    const im = imgs[i];
+    const raw = atob(im.data);
+    const bytes = new Uint8Array(raw.length);
+    for (let j = 0; j < raw.length; j++) bytes[j] = raw.charCodeAt(j);
+    const imgId = add(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} ` +
+      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n\u0000STREAM\u0000\nendstream`);
+    bin[imgId] = bytes;
+    const W = mm2pt(im.pw), H = mm2pt(im.ph);
+    const contId = add(`<< /Length ${`q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`.length} >>\nstream\nq ${W} 0 0 ${H} 0 0 cm /Im0 Do Q\nendstream`);
+    const pageId = add(`<< /Type /Page /Parent 1 0 R /MediaBox [0 0 ${W} ${H}] ` +
+      `/Resources << /XObject << /Im0 ${imgId} 0 R >> >> /Contents ${contId} 0 R >>`);
+    kidsIds.push(pageId);
+  });
+  objs[0] = `<< /Type /Pages /Kids [${kidsIds.map(id => `${id} 0 R`).join(" ")}] /Count ${kidsIds.length} >>`;
+  const catId = add(`<< /Type /Catalog /Pages 1 0 R >>`);
+  const infoId = add(`<< /Title (${pdfStr(App.project.name || "図面")}) /Producer (ElectraCAD Studio) >>`);
+
+  // ── バイト列として組み立てる (画像は生のまま) ──
+  const enc = new TextEncoder();
+  const parts = [];
+  let len = 0;
+  const push = u8 => { parts.push(u8); len += u8.length; };
+  const pushStr = s => push(enc.encode(s));
+  pushStr("%PDF-1.4\n%\u00e2\u00e3\u00cf\u00d3\n");
+  const offsets = [];
+  objs.forEach((body, i) => {
+    const id = i + 1;
+    offsets[id] = len;
+    pushStr(`${id} 0 obj\n`);
+    if (bin[id]) {                        // 画像: ヘッダ → 生データ → 後書き
+      const [head, tail] = body.split("\u0000STREAM\u0000");
+      pushStr(head);
+      push(bin[id]);
+      pushStr(tail);
+    } else pushStr(body);
+    pushStr("\nendobj\n");
+  });
+  const xref = len;
+  pushStr(`xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` +
+    objs.map((_, i) => String(offsets[i + 1]).padStart(10, "0") + " 00000 n \n").join(""));
+  pushStr(`trailer\n<< /Size ${objs.length + 1} /Root ${catId} 0 R /Info ${infoId} 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  const out = new Uint8Array(len);
+  let at = 0;
+  parts.forEach(u8 => { out.set(u8, at); at += u8.length; });
+  return new Blob([out], { type: "application/pdf" });
+}
+/** PDF の文字列リテラルへ入れられる形に逃がす */
+function pdfStr(s) { return String(s).replace(/[\\()]/g, "\\$&").replace(/[^\x20-\x7e]/g, "_"); }
+
+/* ── ZIP (無圧縮 store)。図面一式を 1 つの書庫にまとめる ── */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+/** files = [{ name, data: Uint8Array | string }] → ZIP の Blob */
+function buildZIP(files) {
+  const enc = new TextEncoder();
+  const items = files.map(f => ({
+    name: f.name,
+    bytes: typeof f.data === "string" ? enc.encode(f.data) : f.data,
+  }));
+  const parts = [];
+  let off = 0;
+  const central = [];
+  const u16 = v => new Uint8Array([v & 255, (v >> 8) & 255]);
+  const u32 = v => new Uint8Array([v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]);
+  const cat = (...arrs) => {
+    const n = arrs.reduce((a, b) => a + b.length, 0), o = new Uint8Array(n);
+    let at = 0; arrs.forEach(a => { o.set(a, at); at += a.length; });
+    return o;
+  };
+  items.forEach(it => {
+    const nameB = enc.encode(it.name);
+    const crc = crc32(it.bytes);
+    const local = cat(u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+      u32(crc), u32(it.bytes.length), u32(it.bytes.length), u16(nameB.length), u16(0), nameB);
+    parts.push(local, it.bytes);
+    central.push(cat(u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+      u32(crc), u32(it.bytes.length), u32(it.bytes.length), u16(nameB.length),
+      u16(0), u16(0), u16(0), u16(0), u32(0), u32(off), nameB));
+    off += local.length + it.bytes.length;
+  });
+  const cenAll = cat(...central);
+  const end = cat(u32(0x06054b50), u16(0), u16(0), u16(items.length), u16(items.length),
+    u32(cenAll.length), u32(off), u16(0));
+  return new Blob([...parts, cenAll, end], { type: "application/zip" });
+}

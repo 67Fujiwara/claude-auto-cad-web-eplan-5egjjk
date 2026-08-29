@@ -117,8 +117,19 @@ UI.finishDesign = () => {
       <span class="mono" style="font-size:11px">${errs.slice(0, 4).map(e => escXML(`${e.loc} ${e.msg}`)).join("<br>")}${errs.length > 4 ? `<br>ほか ${errs.length - 4} 件` : ""}</span></div>` : ""}
     <div class="prop-sect">出力するもの</div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlDxf" checked/><span>DXF (AutoCAD互換・ページごとに ${pages.length} ファイル)</span></label></div>
-    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdf" checked/><span>PDF (全ページを1ファイル。印刷ダイアログで「PDFに保存」を選びます)</span></label></div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdf" checked/><span>PDF (全ページを1ファイルにまとめて出力)</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlJson" checked/><span>図面データ (JSON・再編集用)</span></label></div>
+    <div class="prop-sect">まとめ方</div>
+    <div class="prop-row"><label>出力先</label><select id="rlPack">
+      ${FS_DIR_API ? `<option value="dir">フォルダにまとめる (保存先を選ぶ)</option>` : ""}
+      <option value="zip"${FS_DIR_API ? "" : " selected"}>ZIP 1 ファイルにまとめる</option>
+      <option value="each">ファイルごとに保存 (従来)</option>
+    </select></div>
+    <div class="prop-row"><label>PDF の細かさ</label><select id="rlDpi">
+      <option value="150">150 dpi (軽い)</option>
+      <option value="200" selected>200 dpi (標準)</option>
+      <option value="300">300 dpi (細かい・重い)</option>
+    </select></div>
     <div class="prop-sect">出図の記録</div>
     <div class="prop-grid2">
       <div class="prop-row"><label>版数</label><input id="rlRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
@@ -144,42 +155,54 @@ UI.finishDesign = () => {
     if (errs.length && !confirm(`検図エラーが ${errs.length} 件あります。このまま設計完了にしますか？`)) return;
     const q = s => body.querySelector(s);
     const wantDxf = q("#rlDxf").checked, wantPdf = q("#rlPdf").checked, wantJson = q("#rlJson").checked;
+    const pack = q("#rlPack").value, dpi = +q("#rlDpi").value || 200;
     meta.rev = q("#rlRev").value.trim() || meta.rev || "0";
     if (q("#rlBy").value.trim()) meta.designer = q("#rlBy").value.trim();
     m.close();
     await UI.runRelease({
-      dxf: wantDxf, pdf: wantPdf, json: wantJson,
+      dxf: wantDxf, pdf: wantPdf, json: wantJson, pack, dpi,
       note: q("#rlNote").value.trim(), rev: meta.rev, by: meta.designer || "",
       errs: errs.length, warns: warns.length, devs, wires, seq,
     });
   });
 };
 
-/** 出図の実行 (ファイル出力 → 履歴に保存) */
+/** フォルダを選んで書き込めるか (File System Access API) */
+const FS_DIR_API = typeof window !== "undefined" && !!window.showDirectoryPicker;
+
+/** 出図の実行 (ファイルを作る → まとめて保存 → 履歴に保存) */
 UI.runRelease = async (opt) => {
   const now = new Date();
   const id = "rel_" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 6);
-  const base = (App.project.name || "無題").replace(/[\\/:*?"<>|]/g, "_") + "_rev" + (opt.rev || "0");
-  const files = [];
+  const safe = t => String(t).replace(/[\\/:*?"<>|]/g, "_");
+  const base = safe(App.project.name || "無題") + "_rev" + (opt.rev || "0");
+  const folder = `${base}_${relStamp(now).replace(/[^0-9]/g, "").slice(0, 12)}`;
   const pages = App.project.pages;
+  const out = [];            // { name, data: string | Uint8Array | Blob }
 
   if (opt.json) {
     syncProjectSymbols();
-    downloadFile(`${base}.ecad.json`, JSON.stringify(App.project, null, 1));
-    files.push(`${base}.ecad.json`);
+    out.push({ name: `${base}.ecad.json`, data: JSON.stringify(App.project, null, 1) });
   }
   if (opt.dxf) {
-    pages.forEach((pg, i) => {
-      const fn = `${base}_p${pg.no}_${pg.name}.dxf`.replace(/[\\/:*?"<>|]/g, "_");
-      setTimeout(() => {
-        downloadFile(fn, pageToDXF(pg), "application/dxf");
-        applySheet(curPage());
-      }, (i + (opt.json ? 1 : 0)) * 350);
-      files.push(fn);
-    });
+    pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: pageToDXF(pg) }));
+    applySheet(curPage());
+  }
+  if (opt.pdf) {
+    UI.setMsg("PDF を作っています… (ページ数が多いと少しかかります)");
+    try {
+      const blob = await buildPDF(pages, { dpi: opt.dpi || 200,
+        onProgress: (i, n) => UI.setMsg(`PDF を作っています… ${i + 1}/${n} ページ`) });
+      out.push({ name: `${base}.pdf`, data: blob });
+    } catch (e) {
+      UI.setMsg("PDF の作成に失敗しました — 他の形式だけ出力します");
+    }
   }
 
-  // 履歴を先に保存してから印刷 (印刷ダイアログでブロックされても記録は残す)
+  const files = out.map(f => f.name);
+  const where = await saveReleaseFiles(out, folder, opt.pack || (FS_DIR_API ? "dir" : "zip"));
+
+  // 履歴に記録 (図面本体の保存は時間がかかるので最後に行う)
   const entry = {
     id, at: now.toISOString(), stamp: relStamp(now),
     project: App.project.name, rev: opt.rev || "0", by: opt.by || "",
@@ -188,20 +211,58 @@ UI.runRelease = async (opt) => {
     drcErr: opt.errs, drcWarn: opt.warns,
     dwgNos: pages.map(p => pageDwgNo(p)),
     pageNames: pages.map(p => p.name),
-    files,
+    files, folder: where.name || "",
   };
   const list = relList();
   list.unshift(entry);
-  while (list.length > 50) { const old = list.pop(); relDelSnapshot(old.id); }
+  while (list.length > 50) { const old2 = list.pop(); relDelSnapshot(old2.id); }
   relSaveList(list);
   UI.updateReleaseBadge();
-  if (opt.pdf) setTimeout(() => UI.printAll(), (files.length + 1) * 350);
-  UI.setMsg(`設計完了しました — ${files.length} ファイル出力${opt.pdf ? " + PDF (印刷ダイアログ)" : ""}。履歴に保存しました`);
-  // 図面本体の保存は時間がかかることがあるので最後に行う
+  UI.setMsg(`設計完了しました — ${files.length} ファイルを${where.how}。履歴に保存しました`);
   const saved = await relPutSnapshot(id, App.project);
   relSaveList(relList().map(r => (r.id === id ? { ...r, saved } : r)));
   if (!saved) UI.setMsg("設計完了しました (図面本体は保存できませんでした。履歴からの再出力はできません)");
 };
+
+/** 出図したファイルの保存先。フォルダ / ZIP / 個別 の 3 通り */
+async function saveReleaseFiles(out, folder, pack) {
+  if (!out.length) return { how: "出力しました", name: "" };
+  const toBytes = async d => (d instanceof Blob ? new Uint8Array(await d.arrayBuffer())
+    : typeof d === "string" ? new TextEncoder().encode(d) : d);
+  if (pack === "dir" && FS_DIR_API) {
+    try {
+      const root = await window.showDirectoryPicker({ mode: "readwrite" });
+      const dir = await root.getDirectoryHandle(folder, { create: true });
+      for (const f of out) {
+        const fh = await dir.getFileHandle(f.name, { create: true });
+        const w = await fh.createWritable();
+        await w.write(f.data instanceof Blob ? f.data : await toBytes(f.data));
+        await w.close();
+      }
+      return { how: `フォルダ「${folder}」にまとめました`, name: folder };
+    } catch (e) {
+      if (e && e.name === "AbortError") return { how: "保存をやめました (ファイルは出力していません)", name: "" };
+      // 権限が無い等はまとめて ZIP に落とす
+    }
+  }
+  if (pack === "each") {
+    out.forEach((f, i) => setTimeout(async () => {
+      const d = f.data instanceof Blob ? f.data : new Blob([await toBytes(f.data)]);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(d); a.download = f.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    }, i * 350));
+    return { how: "ファイルごとに保存しました", name: "" };
+  }
+  // ZIP: フォルダと同じ構成 (書庫の中に 1 つフォルダを作る) で 1 ファイルに
+  const items = [];
+  for (const f of out) items.push({ name: `${folder}/${f.name}`, data: await toBytes(f.data) });
+  const zip = buildZIP(items);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(zip); a.download = `${folder}.zip`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+  return { how: `ZIP「${folder}.zip」にまとめました`, name: folder };
+}
 
 /* ── 設計完了履歴の画面 ─────────────────────── */
 UI.openReleaseHistory = () => {

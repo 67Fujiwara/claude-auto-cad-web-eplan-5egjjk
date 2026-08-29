@@ -5,10 +5,13 @@
    ・tocAuto      : 目次はページ名と図番の一覧。ページを足すと自動で増え、
                     表紙と目次そのものは載らない
    ・coverPh      : 客先名の例示に実在の会社名を出さない (○○株式会社 △△工場)
+   ・tocFull      : 目次は 1 枚 30 件で用紙いっぱい。31 件目からは次の目次へ送り、
+                    目次が 1 枚しか無いときは「ほか n 件」と知らせる
    ・specDefault  : 仕様は既定の選択 (IP54 など) で ◯ が付いている
    ・specFormat   : 紙の仕様書と同じ表組み (使用環境・保護等級・材質・電源接続方法 /
                     単線の表・マークチューブの表と図) で描かれる
    ・specPrint    : 表紙・目次・仕様の中身は出図 (印刷・PDF・SVG) にも載る
+   ・specWide     : 仕様は用紙いっぱいに広がる (下半分が空かない)
    ・specClick    : 図面の選択肢をクリックすると ◯ が移る (チェックするだけ)
    ・specMemo     : 「その他」用の記入欄はプロパティにあり、図面に出る
    ・drcSkip      : 表紙・目次・仕様は検図の対象外 (図枠の未接続などを出さない)
@@ -72,6 +75,43 @@ const R = await p.evaluate(async () => {
     drawn: svg().includes("メイン回路") && svg().includes("名称") && svg().includes("項"),
   };
 
+  /* ── 目次は 1 枚 30 件 ── */
+  {
+    const keep = [...App.project.pages];        // 元の構成 (後で戻す)
+    for (let i = 0; i < 40; i++) App.project.pages.push(newPage("追加 " + (i + 1), 0));
+    UI.renumberPages();
+    const toc = App.project.pages.find(pg => pg.kind === "toc");
+    App.pageIdx = App.project.pages.indexOf(toc); UI.refresh();
+    await new Promise(r => setTimeout(r, 200));
+    const html = kindSVG(toc);        // 目次の中身だけ (図枠は含めない)
+    const all = tocRows();
+    out.tocFull = {
+      rows: all.length,
+      shown30: html.includes(all[29].name) && html.includes(all[29].no),   // 30 件目まで載る
+      not31: !html.includes(all[30].no),                                   // 31 件目は次の目次へ
+      note: /ほか \d+ 件/.test(html),
+      // 用紙いっぱい: 表の下端が図枠の 70% より下まで届いている
+      deep: (() => {
+        const b = sheetInner();
+        const ys = [...html.matchAll(/M[\d.]+,([\d.]+) H/g)].map(m => +m[1]);
+        return ys.length ? Math.max(...ys) > b.y + b.h * 0.7 : false;
+      })(),
+    };
+    // 目次をもう 1 枚足すと続きが載る
+    UI.addSpecialPage("toc");
+    UI.renumberPages();
+    const tocs = App.project.pages.filter(pg => pg.kind === "toc");
+    App.pageIdx = App.project.pages.indexOf(tocs[1]); UI.refresh();
+    await new Promise(r => setTimeout(r, 200));
+    const html2 = kindSVG(tocs[1]);
+    const all2 = tocRows();
+    out.tocFull.second = html2.includes(all2[30].no) && !html2.includes(all2[0].no);
+    // 元の構成へ戻す (目次を足したので、配列ごと差し替える)
+    App.project.pages = keep;
+    UI.renumberPages();
+    App.pageIdx = 0;
+  }
+
   // ── 仕様 ──
   const spec = App.project.pages.find(pg => pg.kind === "spec");
   App.pageIdx = App.project.pages.indexOf(spec);
@@ -91,6 +131,15 @@ const R = await p.evaluate(async () => {
     tubeFig: (html.match(/>1234</g) || []).length,       // 4 方向のマークチューブ
     rects: (html.match(/<rect /g) || []).length,          // 表のます
   };
+  /* 用紙いっぱいに広げて描く (紙の様式のままだと下半分が空く)。
+     仕様の中身だけを見る — 図枠の線は含めない */
+  {
+    const b = sheetInner();
+    const inner = kindSVG(spec);
+    const ys = [...inner.matchAll(/<rect [^>]*y="([\d.]+)"[^>]*height="([\d.]+)"/g)]
+      .map(m => +m[1] + +m[2]);
+    out.specWide = { bottom: ys.length ? +Math.max(...ys).toFixed(1) : 0, want: +(b.y + b.h * 0.7).toFixed(1) };
+  }
   // 出図 (印刷・PDF・SVG) にも同じ中身が載る
   const ex = exportSheetSVG(spec);
   out.specPrint = ex.includes("制御盤配線仕様") && ex.includes("マークチューブ・記名板") && /<rect /.test(ex);
@@ -170,11 +219,14 @@ const checks = {
   coverDraw: R.coverDraw.cust && R.coverDraw.title && R.coverDraw.underlines && R.coverProp === true,
   coverPh: /^例: [○◯△]/.test(R.coverPh) && !/株式会社\s*\S/.test(R.coverPh.replace("○○株式会社", "")),
   tocAuto: R.tocAuto.after.length === R.tocAuto.before.length + 1 && R.tocAuto.noCover && R.tocAuto.drawn,
+  tocFull: R.tocFull.shown30 === true && R.tocFull.not31 === true && R.tocFull.note === true
+    && R.tocFull.deep === true && R.tocFull.second === true,
   specDefault: R.specDefault.ip === 5 && R.specDefault.env === 0 && R.specDefault.circles >= 10,
   specFormat: R.specFormat.heads.length === 0 && R.specFormat.wire.length === 0
     && R.specFormat.mat.length === 0 && R.specFormat.tubeFig === 4
     && R.specFormat.rects >= 40,
   specPrint: R.specPrint === true,
+  specWide: R.specWide.bottom > R.specWide.want,
   specClick: R.specClick.ip === 0,
   specMemo: R.rest.memoField === true && R.rest.memoDrawn === true,
   drcSkip: R.rest.drcSkip === true,

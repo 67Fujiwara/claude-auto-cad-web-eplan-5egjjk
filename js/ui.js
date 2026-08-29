@@ -999,7 +999,9 @@ const MENUS = {
     { sep: true },
     { label: "DXF取り込み (図面に作図)…", key: "", fn: () => UI.importDXF() },
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
-    { label: "PDF出力 (全ページ印刷)…", key: "", fn: () => UI.printAll() },
+    
+    { label: "PDF出力 (全ページを1ファイル)", key: "", fn: () => UI.exportPDF() },
+    { label: "PDF出力 (印刷ダイアログ)…", key: "", fn: () => UI.printAll() },
     { label: "印刷 (現在ページ)…", key: "Ctrl+P", fn: () => UI.print() },
     { sep: true },
     { label: "設計完了 (DXF + PDF を出力)…", key: "", fn: () => UI.finishDesign() },
@@ -1174,7 +1176,8 @@ UI.addSpecialPage = (kind) => {
   UI.setMsg(`${nm}のページを ${at + 1} ページ目に追加しました`);
 };
 UI.newProject = () => {
-  if (!confirm("現在のプロジェクトを破棄して新規作成しますか？\n(ブラウザ保存済みデータも上書きされます)")) return;
+  if (!confirm(`「${App.project.name}」を閉じて新しい図面を作ります。\n` +
+    "保存していない変更は失われます (ブラウザの自動保存も新しい図面で上書きされます)。\nよろしいですか？")) return;
   if (App.sim.running) UI.toggleSim(); // 確定後にのみ停止 (キャンセルは完全な無操作)
   App.project = newProject();
   App.fileHandle = null;
@@ -1310,6 +1313,23 @@ UI.print = () => {
 };
 
 /** 全ページを1つの印刷ジョブに (印刷ダイアログで「PDFに保存」を選ぶとPDF出力) */
+/** 全ページを 1 本の PDF にまとめて保存する (印刷ダイアログを通さない) */
+UI.exportPDF = async () => {
+  const pages = App.project.pages;
+  UI.setMsg("PDF を作っています…");
+  try {
+    const blob = await buildPDF(pages, { dpi: 200,
+      onProgress: (i, n) => UI.setMsg(`PDF を作っています… ${i + 1}/${n} ページ`) });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (App.project.name || "図面").replace(/[\\/:*?"<>|]/g, "_") + ".pdf";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+    UI.setMsg(`PDF を出力しました (全 ${pages.length} ページ・1 ファイル)`);
+  } catch (e) {
+    UI.setMsg("PDF の作成に失敗しました — 「PDF出力 (印刷ダイアログ)」をお試しください");
+  }
+};
 UI.printAll = () => {
   const pages = App.project.pages.map((pg, i) =>
     `<div class="sheet sheet${i}">${exportSheetSVG(pg)}</div>`).join("");
@@ -2562,6 +2582,7 @@ function boot() {
   document.getElementById("btnDRC").addEventListener("click", UI.runDRC);
   document.getElementById("btnBOM").addEventListener("click", UI.showBOM);
   document.getElementById("btnSim").addEventListener("click", UI.toggleSim);
+  document.getElementById("btnNew").addEventListener("click", () => UI.newProject());
   document.getElementById("btnSave").addEventListener("click", () => UI.saveOver());
   UI.updateSaveButton();
   document.getElementById("btnAIWizard").addEventListener("click", UI.openWizard);

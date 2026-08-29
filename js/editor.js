@@ -593,28 +593,60 @@ function coverSVG(page) {
 /** 目次 — ページ名と図番。行が多ければ 2 段組にする (実務の目次の作法) */
 function tocSVG(page) {
   const b = sheetInner();
+  const f = sheetScale();
   const rows = tocRows();
-  // 行が少ないうちは 1 列で十分 (2 列に割ると右へ 1 行だけ飛んで読みにくい)
-  const per = rows.length <= 14 ? rows.length : Math.ceil(rows.length / 2);
-  const cols = [{ w: 78, align: "middle" }, { w: 22, align: "middle" }];
+  /* 1 枚に 30 件。用紙いっぱいに広げて割り付ける (2 列 × 15 行)。
+     31 件目からは次の目次ページへ送る — 以前は 28 件で打ち切っていて、
+     それより後のページが目次に載らなかった */
+  const PER_COL = 15, N_COL = 2, CAP = PER_COL * N_COL;
+  const y0 = b.y + 16 * f;
+  const GAP = 10 * f;
+  const CW = (b.w - 8 * f - GAP) / N_COL;                    // 列の幅 (用紙いっぱい)
+  const RH = (b.h - (y0 - b.y) - 34 * f) / (PER_COL + 1);    // 行の高さ (表題欄を避ける)
+  const TH = Math.min(5 * f, RH * 0.42);                     // 行に見合う文字の大きさ
+  const cols = [{ w: CW * 0.78, align: "middle" }, { w: CW * 0.22, align: "middle" }];
   const head = ["名称", "項"];
-  let out = `<text x="${b.x + 4}" y="${b.y + 10}" font-size="${svgFontSizeFor("目次", 5)}" fill="${INK}" font-family="sans-serif">目次</text>`;
-  const y0 = b.y + 18;
-  const left = rows.slice(0, per), right = rows.slice(per);
-  out += tableSVG(b.x + 8, y0, cols, [head, ...left.map(r => [r.name, r.no])]);
-  if (right.length) out += tableSVG(b.x + 8 + 100 + 16, y0, cols, [head, ...right.map(r => [r.name, r.no])]);
+  // 目次が複数枚あるときは順に受け持つ (大きな図面集は 2 枚目以降へ続く)
+  const tocPages = App.project.pages.filter(pg => pg.kind === "toc");
+  const idx = Math.max(0, tocPages.indexOf(page));
+  const mine = rows.slice(idx * CAP, idx * CAP + CAP);
+  const rest = rows.length - (idx * CAP + mine.length);
+  const title = idx ? `目次 (${idx + 1})` : "目次";
+  let out = `<text x="${b.x + 4 * f}" y="${b.y + 10 * f}" font-size="${svgFontSizeFor(title, 5 * f)}" fill="${INK}" font-family="sans-serif">${escXML(title)}</text>`;
+  for (let c = 0; c < N_COL; c++) {
+    const part = mine.slice(c * PER_COL, (c + 1) * PER_COL);
+    if (!part.length) break;
+    out += tableSVG(b.x + 4 * f + c * (CW + GAP), y0, cols,
+      [head, ...part.map(r => [r.name, r.no])], { rh: RH, th: TH });
+  }
+  if (rest > 0 && idx === tocPages.length - 1) {
+    out += `<text x="${b.x + 4 * f}" y="${y0 + (PER_COL + 1.6) * RH}" font-size="${svgFontSizeFor("x", TEXT_H.normal * f)}" fill="${INK}" font-family="sans-serif">` +
+      `${escXML(`ほか ${rest} 件 — 「挿入 → 目次を追加」でもう 1 枚足すと続きが載ります`)}</text>`;
+  }
   return out;
 }
 /* 仕様 — 紙の仕様書と同じ表組みのチェックシート。番号を押すと ◯ が移り、
    記入欄 (特記事項・指定色など) はプロパティで書く。画面・印刷で同じ絵。 */
 function specSVG(page) {
+  /* 1 回目で下端までの高さを測り、2 回目に用紙いっぱいへ広げて描く
+     (紙の様式のままだと A3 では下半分が空いてしまうため) */
+  const b = sheetInner(), f = sheetScale();
+  const top = b.y + 10 * f, bottom = b.y + b.h - 34 * f;   // 下端は表題欄を避ける
+  const first = specSheetSVG(page, 1, false);
+  const used = first.endY - top;
+  const k = used > 0 ? Math.max(1, Math.min(2.4, (bottom - top) / used)) : 1;
+  return specSheetSVG(page, k, true).svg;
+}
+/** 仕様シートの本体。k = 用紙いっぱいに広げる倍率 / record = クリック枠を記録するか */
+function specSheetSVG(page, k, record) {
   const b = sheetInner();
-  const f = sheetScale();                       // 用紙上の寸法は尺度に乗せる
+  const f = sheetScale() * k;                   // 用紙上の寸法は尺度 × 広げ倍率
   const sel = (page.spec && page.spec.sel) || {};
   const memo = (page.spec && page.spec.memo) || {};
-  Editor.specBoxes = [];                        // 選択肢の枠 (図面座標)。クリック判定に使う
+  if (record) Editor.specBoxes = [];            // 選択肢の枠 (図面座標)。クリック判定に使う
   const S = v => v * f;
-  const TH = TEXT_H.normal;                     // 表の中の文字 (紙の様式と同じ大きさ)
+  // 文字は行の高さほどには大きくしない (JIS の呼びの範囲で読みやすい大きさに留める)
+  const TH = Math.min(TEXT_H.normal * (1 + (k - 1) * 0.5), 5) / k;
   const line = (x1, y1, x2, y2) => `<path d="M${x1},${y1} L${x2},${y2}" stroke="${INK}" stroke-width="${LINE_W.thin * f}" fill="none"/>`;
   const box = (x, y, w, h) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
   /** 枠の中に収まる大きさで文字を置く (はみ出す長い項目は少し縮める) */
@@ -626,10 +658,10 @@ function specSVG(page) {
     return `<text x="${tx}" y="${y}" font-size="${svgFontSizeFor(String(t), size, false, { noMin: true })}" text-anchor="${al}" fill="${INK}" font-family="sans-serif">${escXML(String(t))}</text>`;
   };
   /** 番号のます。選ばれていれば番号を ◯ で囲む。押せる場所は specBoxes に積む */
-  const numCell = (x, y, w, h, n, on, k, i) => {
+  const numCell = (x, y, w, h, n, on, key, i) => {
     let o = box(x, y, w, h) + txt(x, y + h / 2 + TH * 0.36 * f, w, n);
-    if (on) o += `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w * 0.34}" ry="${h * 0.33}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
-    if (k) Editor.specBoxes.push({ x, y, w, h, k, i });
+    if (on) o += `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${Math.min(w, h) * 0.34}" ry="${Math.min(w, h) * 0.33}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
+    if (key && record) Editor.specBoxes.push({ x, y, w, h, k: key, i });
     return o;
   };
   /** 見出し (表の上の小見出し。紙の様式どおり下線を引く) */
@@ -637,12 +669,13 @@ function specSVG(page) {
     line(x, y + 1.2 * f, x + textWidthMM(t, TEXT_H.normal * f, false, false) + 1 * f, y + 1.2 * f);
 
   let out = "";
-  const colW = (b.w - S(14)) / 2;
-  const RH = S(9);                              // 標準の行の高さ
+  const colW = (b.w - sheetScale() * 14) / 2;   // 列の幅は用紙の幅で決まる
+  const RH = S(9);                              // 標準の行の高さ (広げ倍率つき)
   const NW = S(10);                             // 番号のますの幅
+  let endY = b.y;
   SPEC_SHEET.forEach((sec, si) => {
-    const x0 = b.x + S(4) + si * (colW + S(6));
-    let y = b.y + S(10);
+    const x0 = b.x + sheetScale() * 4 + si * (colW + sheetScale() * 6);
+    let y = b.y + sheetScale() * 10;
     out += `<text x="${x0}" y="${y}" font-size="${svgFontSizeFor(sec.title, TEXT_H.large * f, false, { noMin: true })}" fill="${INK}" font-family="sans-serif">${escXML(sec.title)}</text>`;
     y += S(7);
     sec.blocks.forEach(blk => {
@@ -754,9 +787,10 @@ function specSVG(page) {
         out += tubeFigSVG(fx + fw / 2, fy + RH * 3.4, f);
       }
       y += S(5);
+      endY = Math.max(endY, y);
     });
   });
-  return out;
+  return { svg: out, endY };
 }
 /** マークチューブの取付方向を示す図 (十字の分岐に 4 本のチューブ)。読上げ = 左から読める向き */
 function tubeFigSVG(cx, cy, f) {
@@ -773,7 +807,8 @@ function tubeFigSVG(cx, cy, f) {
     // マークチューブ (番号を書いた札)
     const mx = cx + dx * S(14), my = cy + dy * S(14);
     const w = dx ? tubeL : tubeW, h = dx ? tubeW : tubeL;
-    o += `<rect x="${mx - w / 2}" y="${my - h / 2}" width="${w}" height="${h}" fill="#fff" ${st}/>`;
+    // 白抜きの札 (fill は 1 回だけ — 属性が重なると SVG が壊れて画像化できない)
+    o += `<rect x="${mx - w / 2}" y="${my - h / 2}" width="${w}" height="${h}" fill="#fff" stroke="${INK}" stroke-width="${sw}"/>`;
     const fs = svgFontSizeFor("1234", TEXT_H.normal * f, true, { noMin: true });
     o += `<text x="${mx}" y="${my + TEXT_H.normal * 0.36 * f}" font-size="${fs}" text-anchor="middle" fill="${INK}" font-family="monospace"` +
       (dx ? "" : ` transform="rotate(-90 ${mx} ${my})"`) + `>1234</text>`;
