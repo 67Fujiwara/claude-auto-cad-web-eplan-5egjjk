@@ -1916,13 +1916,16 @@ const SPEC_SHEET = [
     { t: "使用環境", kind: "optsMemo", k: "env", memoK: "env", memoLabel: "特記事項",
       opts: ["一般環境 (10℃〜40℃)", "特殊環境 (指定環境)"] },
     { t: "保護等級", kind: "grid2", k: "ip",
-      opts: ["IP40", "IP41", "IP42", "IP43", "IP44", "IP54", "その他", ""] },
+      opts: ["IP40", "IP41", "IP42", "IP43", "IP44", "IP54", "その他", "指定無し"] },
+    /* memoAt = 記入がその選択肢の括弧に入る (指定色は 2 番の括弧)。
+       選んだ行に書き込むと、標準色の行にまで指定色が出てしまう */
     { t: "材質", kind: "pair", heads: ["鉄", "ステンレス"], groups: [
-      { k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色 (      )"], memoK: "mat_fe" },
+      { k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色 (      )"], memoK: "mat_fe", memoAt: 1 },
       { k: "mat_sus", opts: ["無処理 (購入標準)", "鏡面", "ヘアライン"] },
     ] },
-    { t: "電源接続方法", kind: "compare", heads: ["当社標準", "御社指定方法"],
-      text: "主幹用遮断器一次側へ引き込み (端子台)", memoK: "pwr" },
+    { t: "電源接続方法", kind: "compare", heads: ["当社標準", "御社指定方法"], k: "pwr_std",
+      opts: ["主幹用遮断器一次側へ引き込み (端子台)", "コネクター接続 (アメリカン電機:3112N) 配線長 3M"],
+      memoK: "pwr", memoLabel: "御社指定方法" },
   ] },
   { title: "制御盤配線仕様", blocks: [
     { t: "単線", kind: "wire", heads: ["回路", "用途", "線色", "定格"], rows: [

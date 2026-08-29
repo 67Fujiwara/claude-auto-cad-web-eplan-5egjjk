@@ -692,6 +692,7 @@ function specSheetSVG(page, k, record) {
         out += box(x0 + NW + ow, y, mw, mh);
         out += txt(x0 + NW + ow, y + RH / 2 + TH * 0.36 * f, mw, blk.memoLabel, "start");
         if (memo[blk.memoK]) out += txt(x0 + NW + ow, y + mh - RH * 0.35, mw, memo[blk.memoK], "start");
+        if (record) Editor.specBoxes.push({ x: x0 + NW + ow, y, w: mw, h: mh, memo: blk.memoK, label: blk.memoLabel || "特記事項" });
         y += mh;
       } else if (blk.kind === "grid2") {
         // 保護等級: 1〜4 を左、5〜8 を右に折り返す
@@ -716,25 +717,41 @@ function specSheetSVG(page, k, record) {
         for (let r = 0; r < rows; r++) {
           blk.groups.forEach((g, c) => {
             const opt = g.opts[r], xx = x0 + c * (NW + ow), yy = y + RH + r * RH;
-            // 指定色などの記入があれば、括弧の中を書き入れた文字に差し替える
-            const label = (opt && g.memoK && memo[g.memoK] && sel[g.k] === r)
+            /* 指定色などの記入は「その選択肢」の括弧にだけ入れる (memoAt)。
+               選んだ行に入れると、標準色を選んだときに標準色の欄へ
+               指定色が入ってしまう */
+            const label = (opt && g.memoK && memo[g.memoK] && r === g.memoAt)
               ? `${opt.replace(/\s*\(.*\)\s*$/, "")} (${memo[g.memoK]})` : opt;
             out += numCell(xx, yy, NW, RH, opt ? r + 1 : "", opt ? sel[g.k] === r : false, opt ? g.k : null, r);
             out += box(xx + NW, yy, ow, RH) + txt(xx + NW, yy + RH / 2 + TH * 0.36 * f, ow, label);
+            // 記入する選択肢 (指定色など) の欄は、クリックすると書き込める
+            if (opt && g.memoK && r === g.memoAt && record) {
+              Editor.specBoxes.push({ x: xx + NW, y: yy, w: ow, h: RH, memo: g.memoK, label: "指定色" });
+            }
           });
         }
         y += RH * (rows + 1);
       } else if (blk.kind === "compare") {
-        // 電源接続方法: 当社標準 / 御社指定方法。書き込みが無い欄には斜線を引く
-        const cw = colW / 2;
-        blk.heads.forEach((h2, c) => {
-          out += box(x0 + c * cw, y, cw, RH) + txt(x0 + c * cw, y + RH / 2 + TH * 0.36 * f, cw, h2);
+        /* 電源接続方法: 左は当社標準の選択肢 (端子台 / コネクター接続)、
+           右は御社指定方法の記入欄。記入が無い欄には斜線を引く。
+           右の欄は図面の上で直接クリックして書ける */
+        // 当社標準の欄は文言が長いので広めに取る (右は記入欄なので狭くてよい)
+        const cw = colW * 0.6, cw2 = colW - cw, ow = cw - NW;
+        [[x0, cw], [x0 + cw, cw2]].forEach(([hx, hw], c) => {
+          out += box(hx, y, hw, RH) + txt(hx, y + RH / 2 + TH * 0.36 * f, hw, blk.heads[c]);
         });
-        out += box(x0, y + RH, cw, RH) + txt(x0, y + RH + RH / 2 + TH * 0.36 * f, cw, blk.text);
-        out += box(x0 + cw, y + RH, cw, RH);
-        if (memo[blk.memoK]) out += txt(x0 + cw, y + RH + RH / 2 + TH * 0.36 * f, cw, memo[blk.memoK]);
-        else out += line(x0 + cw, y + 2 * RH, x0 + 2 * cw, y + RH);   // 記入なし = 斜線
-        y += RH * 2;
+        blk.opts.forEach((opt, i) => {
+          const yy = y + RH + i * RH;
+          out += numCell(x0, yy, NW, RH, i + 1, sel[blk.k] === i, blk.k, i);
+          out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, opt);
+        });
+        const mh = RH * blk.opts.length;
+        out += box(x0 + cw, y + RH, cw2, mh);
+        if (memo[blk.memoK]) out += txt(x0 + cw, y + RH + mh / 2 + TH * 0.36 * f, cw2, memo[blk.memoK]);
+        else out += line(x0 + cw, y + RH + mh, x0 + cw + cw2, y + RH);   // 記入なし = 斜線
+        if (record) Editor.specBoxes.push({ x: x0 + cw, y: y + RH, w: cw2, h: mh, memo: blk.memoK, label: blk.memoLabel || "指定内容" });
+
+        y += RH + mh;
       } else if (blk.kind === "wire") {
         // 単線: 回路 / 用途 / 線色 (1〜3) / 定格
         const wC = colW * 0.16, wU = colW * 0.18, wR = colW * 0.30;
@@ -776,6 +793,9 @@ function specSheetSVG(page, k, record) {
           const shown = (i === 1 && memo[blk.memoK]) ? `その他 (${memo[blk.memoK]})` : opt;
           out += numCell(x0, yy, NW, RH, i + 1, sel[blk.k] === i, blk.k, i);
           out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, shown);
+          if (i === 1 && blk.memoK && record) {
+            Editor.specBoxes.push({ x: x0 + NW, y: yy, w: ow, h: RH, memo: blk.memoK, label: blk.head || "その他" });
+          }
         });
         y += RH * (blk.opts.length + 1);
       } else if (blk.kind === "tubeFig") {
@@ -1151,9 +1171,22 @@ function onMouseDown(e) {
       const box = (Editor.specBoxes || []).find(o =>
         w.x >= o.x && w.x <= o.x + o.w && w.y >= o.y && w.y <= o.y + o.h);
       if (box) {
-        commit();
         const pg = curPage();
         pg.spec = pg.spec || defaultSpec();
+        if (box.memo) {
+          // 記入欄 (特記事項・指定色・御社指定方法など) はその場で書き込む
+          pg.spec.memo = pg.spec.memo || {};
+          const v = prompt(box.label, pg.spec.memo[box.memo] || "");
+          if (v === null) return;
+          commit();
+          const t = v.trim();
+          if (t) pg.spec.memo[box.memo] = t; else delete pg.spec.memo[box.memo];
+          requestRender();
+          UI.showProps();
+          UI.setMsg(t ? `${box.label}を書き込みました` : `${box.label}を空にしました`);
+          return;
+        }
+        commit();
         pg.spec.sel[box.k] = box.i;
         requestRender();
         UI.setMsg("仕様を選びました (クリックで ◯ が移ります)");

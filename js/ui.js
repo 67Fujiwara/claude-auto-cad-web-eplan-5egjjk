@@ -334,7 +334,7 @@ UI.showProps = (focusTag = false) => {
         <div class="prop-note" style="margin-top:8px">ページを足したり並べ替えたりすると、目次は自動で作り直されます (表紙と目次そのものは載せません)。</div>` : ""}
       ${page.kind === "spec" ? `
         <div class="prop-sect">選び方</div>
-        <div class="prop-note" style="margin-top:0">図面の選択肢をクリックすると ◯ が移ります。下は「その他・指定」を選んだときの記入欄です。</div>
+        <div class="prop-note" style="margin-top:0">図面の選択肢をクリックすると ◯ が移ります。記入欄 (特記事項・指定色・御社指定方法など) は図面の上をクリックしても書けます。</div>
         ${specMemoFields().map(m =>
           `<div class="prop-row"><label>${escAttr(m.label)} <span class="rp-dim">(${escAttr(m.where)})</span></label>
             <input class="spMemo" data-k="${m.k}" value="${escAttr(memo[m.k] || "")}" placeholder="記入すると図面に出ます"/></div>`).join("")}` : ""}
