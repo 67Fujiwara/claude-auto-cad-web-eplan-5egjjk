@@ -601,45 +601,180 @@ function tocSVG(page) {
   if (right.length) out += tableSVG(b.x + 8 + 100 + 16, y0, cols, [head, ...right.map(r => [r.name, r.no])]);
   return out;
 }
-/** 仕様 — 選ぶだけのチェックシート。選んだ項目に ◯ を打つ */
+/* 仕様 — 紙の仕様書と同じ表組みのチェックシート。番号を押すと ◯ が移り、
+   記入欄 (特記事項・指定色など) はプロパティで書く。画面・印刷で同じ絵。 */
 function specSVG(page) {
   const b = sheetInner();
+  const f = sheetScale();                       // 用紙上の寸法は尺度に乗せる
   const sel = (page.spec && page.spec.sel) || {};
   const memo = (page.spec && page.spec.memo) || {};
+  Editor.specBoxes = [];                        // 選択肢の枠 (図面座標)。クリック判定に使う
+  const S = v => v * f;
+  const TH = TEXT_H.normal;                     // 表の中の文字 (紙の様式と同じ大きさ)
+  const line = (x1, y1, x2, y2) => `<path d="M${x1},${y1} L${x2},${y2}" stroke="${INK}" stroke-width="${LINE_W.thin * f}" fill="none"/>`;
+  const box = (x, y, w, h) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
+  /** 枠の中に収まる大きさで文字を置く (はみ出す長い項目は少し縮める) */
+  const txt = (x, y, w, t, al = "middle", h = TH) => {
+    if (t === "" || t == null) return "";
+    let size = h * f;
+    while (size > 1.6 * f && textWidthMM(String(t), size, false, false) > w - 1.6 * f) size -= 0.15 * f;
+    const tx = al === "start" ? x + 1.2 * f : al === "end" ? x + w - 1.2 * f : x + w / 2;
+    return `<text x="${tx}" y="${y}" font-size="${svgFontSizeFor(String(t), size, false, { noMin: true })}" text-anchor="${al}" fill="${INK}" font-family="sans-serif">${escXML(String(t))}</text>`;
+  };
+  /** 番号のます。選ばれていれば番号を ◯ で囲む。押せる場所は specBoxes に積む */
+  const numCell = (x, y, w, h, n, on, k, i) => {
+    let o = box(x, y, w, h) + txt(x, y + h / 2 + TH * 0.36 * f, w, n);
+    if (on) o += `<ellipse cx="${x + w / 2}" cy="${y + h / 2}" rx="${w * 0.34}" ry="${h * 0.33}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
+    if (k) Editor.specBoxes.push({ x, y, w, h, k, i });
+    return o;
+  };
+  /** 見出し (表の上の小見出し。紙の様式どおり下線を引く) */
+  const head = (x, y, t) => `<text x="${x}" y="${y}" font-size="${svgFontSizeFor(t, TEXT_H.normal * f, false, { noMin: true })}" fill="${INK}" font-family="sans-serif">${escXML(t)}</text>` +
+    line(x, y + 1.2 * f, x + textWidthMM(t, TEXT_H.normal * f, false, false) + 1 * f, y + 1.2 * f);
+
   let out = "";
-  Editor.specBoxes = [];        // 選択肢の枠 (図面座標)。クリック判定に使う
-  const colW = (b.w - 16) / 2;
-  SPEC_FORM.forEach((sec, si) => {
-    const x = b.x + 6 + si * (colW + 4);
-    let y = b.y + 12;
-    out += `<text x="${x}" y="${y}" font-size="${svgFontSizeFor(sec.title, 5)}" fill="${INK}" font-family="sans-serif">${escXML(sec.title)}</text>`;
-    y += 8;
-    sec.groups.forEach(g => {
-      out += `<text x="${x}" y="${y}" font-size="${svgFontSizeFor(g.name, TEXT_H.normal)}" fill="${INK}" font-family="sans-serif">${escXML(g.name)}</text>`;
-      y += 3;
-      const rh = 7.5, ow = colW - 6;
-      g.opts.forEach((opt, oi) => {
-        const on = sel[g.k] === oi;
-        const cy = y + rh / 2;
-        // 選択マーク: 選んだ番号を ◯ で囲む (図面の様式と同じ)
-        Editor.specBoxes.push({ x, y, w: ow, h: rh, k: g.k, i: oi });
-        out += `<rect x="${x}" y="${y}" width="${ow}" height="${rh}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin}" class="spec-opt" data-k="${g.k}" data-i="${oi}"/>`;
-        out += `<text x="${x + 6}" y="${cy + 1.2}" font-size="${svgFontSizeFor(String(oi + 1), TEXT_H.small)}" text-anchor="middle" fill="${INK}" font-family="sans-serif">${oi + 1}</text>`;
-        if (on) out += `<circle cx="${x + 6}" cy="${cy}" r="2.6" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin}"/>`;
-        out += `<text x="${x + 11}" y="${cy + 1.2}" font-size="${svgFontSizeFor(opt, TEXT_H.small)}" fill="${INK}" font-family="sans-serif">${escXML(opt)}</text>`;
-        if (g.fixed && oi === 0) {
-          out += `<text x="${x + ow - 2}" y="${cy + 1.2}" font-size="${svgFontSizeFor(g.fixed, TEXT_H.small)}" text-anchor="end" fill="${INK}" font-family="sans-serif">${escXML(g.fixed)}</text>`;
+  const colW = (b.w - S(14)) / 2;
+  const RH = S(9);                              // 標準の行の高さ
+  const NW = S(10);                             // 番号のますの幅
+  SPEC_SHEET.forEach((sec, si) => {
+    const x0 = b.x + S(4) + si * (colW + S(6));
+    let y = b.y + S(10);
+    out += `<text x="${x0}" y="${y}" font-size="${svgFontSizeFor(sec.title, TEXT_H.large * f, false, { noMin: true })}" fill="${INK}" font-family="sans-serif">${escXML(sec.title)}</text>`;
+    y += S(7);
+    sec.blocks.forEach(blk => {
+      if (blk.t) { out += head(x0, y, blk.t); y += S(2.6); }
+      if (blk.kind === "optsMemo") {
+        // 使用環境: 左に選択肢、右は記入欄 (2 行ぶんの高さでつなげる)
+        const ow = colW * 0.42, mw = colW - NW - ow;
+        blk.opts.forEach((opt, i) => {
+          const yy = y + i * RH;
+          out += numCell(x0, yy, NW, RH, i + 1, sel[blk.k] === i, blk.k, i);
+          out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, opt);
+        });
+        const mh = RH * blk.opts.length;
+        out += box(x0 + NW + ow, y, mw, mh);
+        out += txt(x0 + NW + ow, y + RH / 2 + TH * 0.36 * f, mw, blk.memoLabel, "start");
+        if (memo[blk.memoK]) out += txt(x0 + NW + ow, y + mh - RH * 0.35, mw, memo[blk.memoK], "start");
+        y += mh;
+      } else if (blk.kind === "grid2") {
+        // 保護等級: 1〜4 を左、5〜8 を右に折り返す
+        const half = Math.ceil(blk.opts.length / 2), ow = (colW - NW * 2) / 2;
+        for (let r = 0; r < half; r++) {
+          [0, 1].forEach(c => {
+            const i = c * half + r, opt = blk.opts[i];
+            const xx = x0 + c * (NW + ow), yy = y + r * RH;
+            out += numCell(xx, yy, NW, RH, i + 1, sel[blk.k] === i, opt ? blk.k : null, i);
+            out += box(xx + NW, yy, ow, RH) + txt(xx + NW, yy + RH / 2 + TH * 0.36 * f, ow, opt);
+          });
         }
-        y += rh;
-      });
-      if (g.memo && memo[g.k]) {
-        out += `<text x="${x + 2}" y="${y + 4}" font-size="${svgFontSizeFor(memo[g.k], TEXT_H.small)}" fill="${INK}" font-family="sans-serif">${escXML(g.memo)}: ${escXML(memo[g.k])}</text>`;
-        y += 6;
+        y += half * RH;
+      } else if (blk.kind === "pair") {
+        // 材質: 左右で別の選択肢。見出し行を上に置く
+        const ow = (colW - NW * 2) / 2;
+        blk.heads.forEach((h2, c) => {
+          const xx = x0 + c * (NW + ow);
+          out += box(xx, y, NW + ow, RH) + txt(xx, y + RH / 2 + TH * 0.36 * f, NW + ow, h2);
+        });
+        const rows = Math.max(...blk.groups.map(g => g.opts.length));
+        for (let r = 0; r < rows; r++) {
+          blk.groups.forEach((g, c) => {
+            const opt = g.opts[r], xx = x0 + c * (NW + ow), yy = y + RH + r * RH;
+            // 指定色などの記入があれば、括弧の中を書き入れた文字に差し替える
+            const label = (opt && g.memoK && memo[g.memoK] && sel[g.k] === r)
+              ? `${opt.replace(/\s*\(.*\)\s*$/, "")} (${memo[g.memoK]})` : opt;
+            out += numCell(xx, yy, NW, RH, opt ? r + 1 : "", opt ? sel[g.k] === r : false, opt ? g.k : null, r);
+            out += box(xx + NW, yy, ow, RH) + txt(xx + NW, yy + RH / 2 + TH * 0.36 * f, ow, label);
+          });
+        }
+        y += RH * (rows + 1);
+      } else if (blk.kind === "compare") {
+        // 電源接続方法: 当社標準 / 御社指定方法。書き込みが無い欄には斜線を引く
+        const cw = colW / 2;
+        blk.heads.forEach((h2, c) => {
+          out += box(x0 + c * cw, y, cw, RH) + txt(x0 + c * cw, y + RH / 2 + TH * 0.36 * f, cw, h2);
+        });
+        out += box(x0, y + RH, cw, RH) + txt(x0, y + RH + RH / 2 + TH * 0.36 * f, cw, blk.text);
+        out += box(x0 + cw, y + RH, cw, RH);
+        if (memo[blk.memoK]) out += txt(x0 + cw, y + RH + RH / 2 + TH * 0.36 * f, cw, memo[blk.memoK]);
+        else out += line(x0 + cw, y + 2 * RH, x0 + 2 * cw, y + RH);   // 記入なし = 斜線
+        y += RH * 2;
+      } else if (blk.kind === "wire") {
+        // 単線: 回路 / 用途 / 線色 (1〜3) / 定格
+        const wC = colW * 0.16, wU = colW * 0.18, wR = colW * 0.30;
+        const wN = colW * 0.05, wL = colW * 0.07;                     // 線色 1 組ぶん
+        const cx = [x0, x0 + wC, x0 + wC + wU];
+        const rateX = x0 + colW - wR;
+        out += box(x0, y, wC, RH) + txt(x0, y + RH / 2 + TH * 0.36 * f, wC, blk.heads[0]);
+        out += box(cx[1], y, wU, RH) + txt(cx[1], y + RH / 2 + TH * 0.36 * f, wU, blk.heads[1]);
+        out += box(cx[2], y, rateX - cx[2], RH) + txt(cx[2], y + RH / 2 + TH * 0.36 * f, rateX - cx[2], blk.heads[2]);
+        out += box(rateX, y, wR, RH) + txt(rateX, y + RH / 2 + TH * 0.36 * f, wR, blk.heads[3]);
+        let yy = y + RH;
+        blk.rows.forEach(r => {
+          const tall = Math.max(...r.opts.map(o2 => o2.length));       // 3相は色が 3 段
+          const rh = tall > 1 ? RH * 1.9 : RH;
+          out += box(x0, yy, wC, rh) + txt(x0, yy + rh / 2 + TH * 0.36 * f, wC, r.c);
+          out += box(cx[1], yy, wU, rh) + txt(cx[1], yy + rh / 2 + TH * 0.36 * f, wU, r.use);
+          r.opts.forEach((cols2, i) => {
+            const xx = cx[2] + i * (wN + wL);
+            // 選ぶものが無い行 (計装) は番号を出さない — 紙の様式どおり空欄
+            out += numCell(xx, yy, wN, rh, r.k ? i + 1 : "", r.k ? sel[r.k] === i : false, r.k && cols2.length ? r.k : null, i);
+            out += box(xx + wN, yy, wL, rh);
+            // 3相は 1 本ずつ色を積む (黒/黒/黒・赤/白/黒)
+            cols2.forEach((cl, ci) => {
+              const ch = rh / Math.max(1, cols2.length);
+              if (ci) out += line(xx + wN, yy + ci * ch, xx + wN + wL, yy + ci * ch);
+              out += txt(xx + wN, yy + ci * ch + ch / 2 + TH * 0.36 * f, wL, cl);
+            });
+          });
+          out += box(rateX, yy, wR, rh) + txt(rateX, yy + rh / 2 + TH * 0.36 * f, wR, r.rate);
+          yy += rh;
+        });
+        y = yy;
+      } else if (blk.kind === "small") {
+        // チューブ長・取付方向: 見出し 1 行 + 2 択
+        const tw = colW * 0.52, ow = tw - NW;
+        out += box(x0, y, tw, RH) + txt(x0, y + RH / 2 + TH * 0.36 * f, tw, blk.head);
+        blk.opts.forEach((opt, i) => {
+          const yy = y + RH + i * RH;
+          const shown = (i === 1 && memo[blk.memoK]) ? `その他 (${memo[blk.memoK]})` : opt;
+          out += numCell(x0, yy, NW, RH, i + 1, sel[blk.k] === i, blk.k, i);
+          out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, shown);
+        });
+        y += RH * (blk.opts.length + 1);
+      } else if (blk.kind === "tubeFig") {
+        /* マークチューブの取付方向 (読上げ) の図。直前の 2 つの小さな表の
+           右側の空きに、表と同じ高さの帯で置く */
+        const fx = x0 + colW * 0.56, fw = colW * 0.44;
+        const fy = y - RH * 6;                     // チューブ長・取付方向の表の上端
+        out += txt(fx, fy + S(1), fw, blk.label, "start", TEXT_H.normal);
+        out += tubeFigSVG(fx + fw / 2, fy + RH * 3.4, f);
       }
-      y += 3;
+      y += S(5);
     });
   });
   return out;
+}
+/** マークチューブの取付方向を示す図 (十字の分岐に 4 本のチューブ)。読上げ = 左から読める向き */
+function tubeFigSVG(cx, cy, f) {
+  const S = v => v * f;
+  const sw = LINE_W.thin * f;
+  const st = `stroke="${INK}" stroke-width="${sw}" fill="none"`;
+  let o = "";
+  // 中心の分岐 (ダクトの分かれ目) と 4 方向の導体
+  o += `<circle cx="${cx}" cy="${cy}" r="${S(1.6)}" ${st}/>`;
+  const arm = S(24), tubeL = S(16), tubeW = S(7);
+  [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+    const x1 = cx + dx * S(4), y1 = cy + dy * S(4);
+    o += `<path d="M${x1},${y1} L${cx + dx * arm},${cy + dy * arm}" stroke="${INK}" stroke-width="${LINE_W.thick * f}" fill="none"/>`;
+    // マークチューブ (番号を書いた札)
+    const mx = cx + dx * S(14), my = cy + dy * S(14);
+    const w = dx ? tubeL : tubeW, h = dx ? tubeW : tubeL;
+    o += `<rect x="${mx - w / 2}" y="${my - h / 2}" width="${w}" height="${h}" fill="#fff" ${st}/>`;
+    const fs = svgFontSizeFor("1234", TEXT_H.normal * f, true, { noMin: true });
+    o += `<text x="${mx}" y="${my + TEXT_H.normal * 0.36 * f}" font-size="${fs}" text-anchor="middle" fill="${INK}" font-family="monospace"` +
+      (dx ? "" : ` transform="rotate(-90 ${mx} ${my})"`) + `>1234</text>`;
+  });
+  return o;
 }
 /** 頭 3 枚の中身 (図枠の内側に描く) */
 function kindSVG(page) {
@@ -1764,6 +1899,8 @@ function exportSheetSVG(page = null) {
   applySheet(page);          // ページごとの用紙・尺度で図枠を張る
   const body =
     `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page, { print: true })}</g>` +
+    // 表紙・目次・仕様の中身。画面と同じものを出す (入れ忘れると出図が白紙になる)
+    `<g>${kindSVG(page)}</g>` +
     `<g>${wiresSVG(page, { print: true })}</g><g>${devicesSVG(page, { print: true })}</g><g>${textsSVG(page, { print: true })}</g>`;
   // viewBox は用紙そのもの (余白を足すと印刷時に尺度がずれるため)
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SHEET.w} ${SHEET.h}" width="${SHEET.w / sheetScale()}mm" height="${SHEET.h / sheetScale()}mm" font-family="sans-serif">${body}</svg>`;

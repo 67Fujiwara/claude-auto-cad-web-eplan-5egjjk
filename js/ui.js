@@ -327,17 +327,17 @@ UI.showProps = (focusTag = false) => {
         <div class="rp-dim">図面集の頭に置くページ (回路は描きません)</div></div></div>
       ${page.kind === "cover" ? `
         <div class="prop-sect">表紙の文字</div>
-        <div class="prop-row"><label>客先名 (1 行目)</label><input id="cvCust" value="${escAttr(cov.customer || "")}" placeholder="例: スターゼン株式会社 松尾工場"/></div>
-        <div class="prop-row"><label>装置名 (2 行目)</label><input id="cvTitle" value="${escAttr(cov.title !== undefined ? cov.title : App.project.name)}" placeholder="例: 挽肉異物検査 AI 画像検査装置 電気図面"/></div>
+        <div class="prop-row"><label>客先名 (1 行目)</label><input id="cvCust" value="${escAttr(cov.customer || "")}" placeholder="例: ○○株式会社 △△工場"/></div>
+        <div class="prop-row"><label>装置名 (2 行目)</label><input id="cvTitle" value="${escAttr(cov.title !== undefined ? cov.title : App.project.name)}" placeholder="例: ○○装置 電気図面"/></div>
         <div class="prop-note">空欄にすると図名 (プロジェクト名) を使います。</div>` : ""}
       ${page.kind === "toc" ? `
         <div class="prop-note" style="margin-top:8px">ページを足したり並べ替えたりすると、目次は自動で作り直されます (表紙と目次そのものは載せません)。</div>` : ""}
       ${page.kind === "spec" ? `
         <div class="prop-sect">選び方</div>
         <div class="prop-note" style="margin-top:0">図面の選択肢をクリックすると ◯ が移ります。下は「その他・指定」を選んだときの記入欄です。</div>
-        ${SPEC_FORM.flatMap(sec => sec.groups.filter(g => g.memo).map(g =>
-          `<div class="prop-row"><label>${escAttr(g.memo)} <span class="rp-dim">(${escAttr(g.name)})</span></label>
-            <input class="spMemo" data-k="${g.k}" value="${escAttr(memo[g.k] || "")}" placeholder="記入すると図面に出ます"/></div>`)).join("")}` : ""}
+        ${specMemoFields().map(m =>
+          `<div class="prop-row"><label>${escAttr(m.label)} <span class="rp-dim">(${escAttr(m.where)})</span></label>
+            <input class="spMemo" data-k="${m.k}" value="${escAttr(memo[m.k] || "")}" placeholder="記入すると図面に出ます"/></div>`).join("")}` : ""}
     `;
     const bindPg = (id, fn) => {
       const el = pane.querySelector(id);

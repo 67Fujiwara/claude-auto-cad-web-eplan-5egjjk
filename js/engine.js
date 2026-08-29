@@ -1879,29 +1879,68 @@ function isDrawingPage(page) { return !page || !page.kind; }
    ・仕様 … 制御盤の仕様書。選ぶだけ (チェック) で決まる — 数値の
             入力欄は「その他」を選んだときだけ書き込む */
 
-/** 仕様シートの様式。行 = { k: 保存キー, label, opts:[選択肢], note?: 記入欄 } */
-const SPEC_FORM = [
-  { title: "制御盤筐体仕様", groups: [
-    { name: "使用環境", k: "env", opts: ["一般環境 (10℃〜40℃)", "特殊環境 (指定環境)"], memo: "特記事項" },
-    { name: "保護等級", k: "ip", opts: ["IP40", "IP41", "IP42", "IP43", "IP44", "IP54", "その他"] },
-    { name: "材質 (鉄)", k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色"], memo: "指定色" },
-    { name: "材質 (ステンレス)", k: "mat_sus", opts: ["無処理 (購入標準)", "鏡面", "ヘアライン"] },
-    { name: "電源接続方法", k: "pwr", opts: ["当社標準: 主幹用遮断器一次側へ引き込み (端子台)", "御社指定方法"], memo: "指定方法" },
+/* 仕様シートの様式。紙の仕様書 (制御盤筐体仕様 / 制御盤配線仕様) をそのまま
+   写した表組み。番号を押すと ◯ が移る — 記入は「その他・指定」の欄だけ。
+   ブロックの種類:
+     optsMemo … 選択肢の表 + 右に記入欄 (使用環境 + 特記事項)
+     grid2    … 番号を 2 列に折り返す表 (保護等級 1〜4 / 5〜8)
+     pair     … 見出し 2 列。左右が別々の選択肢 (材質: 鉄 / ステンレス)
+     compare  … 当社標準 / 御社指定方法 の対比表 (記入が無い欄には斜線)
+     wire     … 単線の表 (回路・用途・線色 1〜3・定格)
+     small    … 小さな 2 択の表 (チューブ長・取付方向)
+     tubeFig  … マークチューブの取付方向を示す図 (読上げ) */
+const SPEC_SHEET = [
+  { title: "制御盤筐体仕様", blocks: [
+    { t: "使用環境", kind: "optsMemo", k: "env", memoK: "env", memoLabel: "特記事項",
+      opts: ["一般環境 (10℃〜40℃)", "特殊環境 (指定環境)"] },
+    { t: "保護等級", kind: "grid2", k: "ip",
+      opts: ["IP40", "IP41", "IP42", "IP43", "IP44", "IP54", "その他", ""] },
+    { t: "材質", kind: "pair", heads: ["鉄", "ステンレス"], groups: [
+      { k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色 (      )"], memoK: "mat_fe" },
+      { k: "mat_sus", opts: ["無処理 (購入標準)", "鏡面", "ヘアライン"] },
+    ] },
+    { t: "電源接続方法", kind: "compare", heads: ["当社標準", "御社指定方法"],
+      text: "主幹用遮断器一次側へ引き込み (端子台)", memoK: "pwr" },
   ] },
-  { title: "制御盤配線仕様", groups: [
-    { name: "AC200V 3相", k: "w_ac200_3", opts: ["黒/黒/黒", "赤/白/黒"], fixed: "300V 以上" },
-    { name: "AC200V 単相", k: "w_ac200_1", opts: ["黒", "黄"], fixed: "300V 以上" },
-    { name: "AC100V 制御回路", k: "w_ac100", opts: ["黒", "赤", "黄"], fixed: "300V 以上" },
-    { name: "DC24V 全般", k: "w_dc24", opts: ["青", "その他"], fixed: "30V 以上" },
-    { name: "計装", k: "w_inst", opts: ["シールド付"], fixed: "30V 以上シールド付" },
-    { name: "マークチューブ長", k: "tube", opts: ["標準 (20mm)", "その他 (** mm)"], memo: "長さ" },
-    { name: "取付方向", k: "tube_dir", opts: ["標準 (読上げ)", "その他 (図示)"], memo: "指定" },
+  { title: "制御盤配線仕様", blocks: [
+    { t: "単線", kind: "wire", heads: ["回路", "用途", "線色", "定格"], rows: [
+      { c: "AC200V", use: "3相", k: "w_ac200_3", opts: [["黒", "黒", "黒"], ["赤", "白", "黒"], []], rate: "300V 以上" },
+      { c: "AC200V", use: "単相", k: "w_ac200_1", opts: [["黒"], ["黄"], []], rate: "300V 以上" },
+      { c: "AC100V", use: "制御回路", k: "w_ac100", opts: [["黒"], ["赤"], ["黄"]], rate: "300V 以上" },
+      { c: "DC24V", use: "全般", k: "w_dc24", opts: [["青"], [], []], rate: "30V 以上" },
+      { c: "計装", use: "- - -", opts: [[], [], []], rate: "30V 以上シールド付" },
+    ] },
+    { t: "マークチューブ・記名板", kind: "small", head: "チューブ長", k: "tube", memoK: "tube",
+      opts: ["標準 (20mm)", "その他 (** mm)"] },
+    { kind: "small", head: "取付方向", k: "tube_dir", memoK: "tube_dir",
+      opts: ["標準 (読上げ)", "その他 (図示)"] },
+    { kind: "tubeFig", label: "(読上げ)" },
   ] },
 ];
+/** 記入欄の一覧 (プロパティに出す)。k = memo の保存キー */
+function specMemoFields() {
+  const out = [];
+  const add = (k, label, where) => { if (k) out.push({ k, label, where }); };
+  SPEC_SHEET.forEach(sec => sec.blocks.forEach(b => {
+    add(b.memoK, b.memoLabel || "指定内容", b.t || b.head || sec.title);
+    (b.groups || []).forEach(g => add(g.memoK, "指定色", b.t || sec.title));
+  }));
+  return out;
+}
+/** 選択肢を持つ組の一覧 (既定値・クリック判定で使う) */
+function specGroups() {
+  const out = [];
+  SPEC_SHEET.forEach(sec => sec.blocks.forEach(b => {
+    if (b.k) out.push(b.k);
+    (b.groups || []).forEach(g => out.push(g.k));
+    (b.rows || []).forEach(r => { if (r.k) out.push(r.k); });
+  }));
+  return out;
+}
 /** 既定の選択 (いちばん標準的な組み合わせ) */
 function defaultSpec() {
   const sel = {};
-  SPEC_FORM.forEach(sec => sec.groups.forEach(g => { sel[g.k] = 0; }));
+  specGroups().forEach(k => { sel[k] = 0; });
   sel.ip = 5;                    // IP54 (盤の実務でいちばん多い)
   return { sel, memo: {} };
 }

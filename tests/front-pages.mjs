@@ -4,7 +4,11 @@
    ・coverDraw    : 表紙は客先名と装置名の 2 行 + 下線。プロパティで書き換わる
    ・tocAuto      : 目次はページ名と図番の一覧。ページを足すと自動で増え、
                     表紙と目次そのものは載らない
+   ・coverPh      : 客先名の例示に実在の会社名を出さない (○○株式会社 △△工場)
    ・specDefault  : 仕様は既定の選択 (IP54 など) で ◯ が付いている
+   ・specFormat   : 紙の仕様書と同じ表組み (使用環境・保護等級・材質・電源接続方法 /
+                    単線の表・マークチューブの表と図) で描かれる
+   ・specPrint    : 表紙・目次・仕様の中身は出図 (印刷・PDF・SVG) にも載る
    ・specClick    : 図面の選択肢をクリックすると ◯ が移る (チェックするだけ)
    ・specMemo     : 「その他」用の記入欄はプロパティにあり、図面に出る
    ・drcSkip      : 表紙・目次・仕様は検図の対象外 (図枠の未接続などを出さない)
@@ -32,18 +36,20 @@ const R = await p.evaluate(async () => {
 
   // ── 表紙 ──
   const cover = App.project.pages[0];
-  cover.cover = { customer: "スターゼン株式会社 松尾工場", title: "挽肉異物検査 AI 画像検査装置 電気図面" };
+  cover.cover = { customer: "○○株式会社 △△工場", title: "○○装置 電気図面" };
   App.pageIdx = 0; UI.refresh();
   await new Promise(r => setTimeout(r, 200));
   const svg = () => Editor.layers.sheet.innerHTML;
   out.coverDraw = {
-    cust: svg().includes("スターゼン株式会社 松尾工場"),
-    title: svg().includes("挽肉異物検査 AI 画像検査装置 電気図面"),
+    cust: svg().includes("○○株式会社 △△工場"),
+    title: svg().includes("○○装置 電気図面"),
     underlines: (svg().match(/stroke-width="0.25"/g) || []).length >= 2,
   };
   // プロパティ欄が出て、書き換えると図面に反映される
   UI.showProps();
   await new Promise(r => setTimeout(r, 150));
+  // 例示に実在の客先名を出さない (画面に残ると別の客先へ出図したときに事故になる)
+  out.coverPh = (document.querySelector("#cvCust") || {}).placeholder || "";
   const cvc = document.querySelector("#cvCust");
   out.coverProp = !!cvc;
   if (cvc) {
@@ -71,8 +77,23 @@ const R = await p.evaluate(async () => {
   App.pageIdx = App.project.pages.indexOf(spec);
   UI.refresh();
   await new Promise(r => setTimeout(r, 200));
+  // 選んだ番号は ◯ (楕円) で囲む。既定は全 10 組ぶん付いている
   out.specDefault = { ip: spec.spec.sel.ip, env: spec.spec.sel.env,
-    circles: (svg().match(/<circle /g) || []).length };
+    circles: (svg().match(/<ellipse /g) || []).length };
+  /* 紙の仕様書と同じ表組みで描けているか (見出し・単線の表・チューブの図) */
+  const html = svg();
+  out.specFormat = {
+    heads: ["制御盤筐体仕様", "制御盤配線仕様", "使用環境", "保護等級", "材質", "電源接続方法",
+      "単線", "マークチューブ・記名板", "特記事項", "当社標準", "御社指定方法"].filter(t => !html.includes(t)),
+    wire: ["回路", "用途", "線色", "定格", "AC200V", "AC100V", "DC24V", "計装", "3相", "制御回路",
+      "300V 以上", "30V 以上シールド付"].filter(t => !html.includes(t)),
+    mat: ["鉄", "ステンレス", "無処理 (購入標準)", "ヘアライン", "IP54"].filter(t => !html.includes(t)),
+    tubeFig: (html.match(/>1234</g) || []).length,       // 4 方向のマークチューブ
+    rects: (html.match(/<rect /g) || []).length,          // 表のます
+  };
+  // 出図 (印刷・PDF・SVG) にも同じ中身が載る
+  const ex = exportSheetSVG(spec);
+  out.specPrint = ex.includes("制御盤配線仕様") && ex.includes("マークチューブ・記名板") && /<rect /.test(ex);
   return out;
 });
 
@@ -147,8 +168,13 @@ const checks = {
   defaultPages: JSON.stringify(R.defaultPages) ===
     JSON.stringify([["cover", "表紙"], ["toc", "目次"], ["spec", "仕様"], ["draw", "メイン回路"]]),
   coverDraw: R.coverDraw.cust && R.coverDraw.title && R.coverDraw.underlines && R.coverProp === true,
+  coverPh: /^例: [○◯△]/.test(R.coverPh) && !/株式会社\s*\S/.test(R.coverPh.replace("○○株式会社", "")),
   tocAuto: R.tocAuto.after.length === R.tocAuto.before.length + 1 && R.tocAuto.noCover && R.tocAuto.drawn,
   specDefault: R.specDefault.ip === 5 && R.specDefault.env === 0 && R.specDefault.circles >= 10,
+  specFormat: R.specFormat.heads.length === 0 && R.specFormat.wire.length === 0
+    && R.specFormat.mat.length === 0 && R.specFormat.tubeFig === 4
+    && R.specFormat.rects >= 40,
+  specPrint: R.specPrint === true,
   specClick: R.specClick.ip === 0,
   specMemo: R.rest.memoField === true && R.rest.memoDrawn === true,
   drcSkip: R.rest.drcSkip === true,
