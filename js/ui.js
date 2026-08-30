@@ -988,6 +988,11 @@ UI.showBOM = () => {
 const MENUS = {
   file: [
     { label: "新規プロジェクト", key: "", fn: () => UI.newProject() },
+    { label: "一時保存 (作業中の図面へ)", key: "", fn: async () => {
+      const id = await UI.wipSave();
+      if (id) UI.setMsg("一時保存しました — 「作業中」から他の案件へ切り替えられます");
+    } },
+    { label: "作業中の図面…", key: "", fn: () => UI.openWip() },
     { label: "開く (JSON)…", key: "", fn: () => UI.openFile() },
     { sep: true },
     { label: "上書き保存", key: "Ctrl+S", fn: () => UI.saveOver() },
@@ -1175,12 +1180,16 @@ UI.addSpecialPage = (kind) => {
   zoomFit();
   UI.setMsg(`${nm}のページを ${at + 1} ページ目に追加しました`);
 };
-UI.newProject = () => {
+UI.newProject = async () => {
+  // 作業中に入れてある図面は、新しく作る前に取っておく (取りこぼさない)
+  if (wipCurrent()) await UI.wipSave();
   if (!confirm(`「${App.project.name}」を閉じて新しい図面を作ります。\n` +
     "保存していない変更は失われます (ブラウザの自動保存も新しい図面で上書きされます)。\nよろしいですか？")) return;
   if (App.sim.running) UI.toggleSim(); // 確定後にのみ停止 (キャンセルは完全な無操作)
   App.project = newProject();
   App.fileHandle = null;
+  wipSetCurrent("");           // 新しい図面はまだどの枠にも入っていない
+
   App.pageIdx = Math.max(0, App.project.pages.findIndex(isDrawingPage));
   App.selection.clear();
   App.undoStack.length = 0;
@@ -2619,6 +2628,7 @@ function boot() {
 
   loadImportedSymbols();
   restoreFileHandle();
+  UI.updateWipChip();          // ヘッダに今の案件名を出す
   window.addEventListener("beforeunload", e => {
     if (!App.dirty) return;
     e.preventDefault();
@@ -2646,6 +2656,7 @@ function boot() {
   document.getElementById("btnBOM").addEventListener("click", UI.showBOM);
   document.getElementById("btnSim").addEventListener("click", UI.toggleSim);
   document.getElementById("btnNew").addEventListener("click", () => UI.newProject());
+  document.getElementById("btnWip").addEventListener("click", () => UI.openWip());
   document.getElementById("btnSave").addEventListener("click", () => UI.saveOver());
   UI.updateSaveButton();
   document.getElementById("btnAIWizard").addEventListener("click", UI.openWizard);

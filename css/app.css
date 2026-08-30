@@ -99,6 +99,9 @@ input, select, textarea { font-family: inherit; }
   box-shadow: 0 2px 12px rgba(77,163,255,.35);
 }
 .tb-chip.accent:hover { filter: brightness(1.12); box-shadow: 0 3px 16px rgba(77,163,255,.5); }
+/* 作業中の図面を開いているときは、ヘッダのチップに案件名を出して目立たせる */
+.tb-chip.active { border-color: var(--accent); color: var(--accent-2); background: var(--accent-dim); }
+.tb-chip .wip-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ══════════════ リボン ══════════════ */
 #ribbon {
