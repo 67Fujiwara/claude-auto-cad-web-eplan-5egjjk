@@ -717,7 +717,9 @@ UI.showProps = (focusTag = false) => {
       <div class="prop-row"><label class="chk"><input type="checkbox" id="pAux" ${isWireConductive(w) ? "" : "checked"}/>
         作図線にする (電気的に接続しない)</label></div>
       ${isWireConductive(w) ? `
-      <div class="prop-row"><label>配線番号 ${w.fixed ? "(手動・自動採番から保護)" : ""}</label><input id="pNum" class="mono" value="${w.num || ""}"/></div>
+      <div class="prop-row"><label>配線番号 ${w.numOff ? "(空欄 = 図面に出しません)" : w.fixed ? "(手動・自動採番から保護)" : ""}</label>
+        <input id="pNum" class="mono" value="${w.num || ""}" placeholder="空欄にすると線番を出しません"/></div>
+      ${w.numOff ? `<div class="prop-row"><button class="btn-solid" id="pNumAuto" style="padding:5px 10px;font-size:11.5px">自動採番に戻す</button></div>` : ""}
       <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`
       : `<div class="prop-note">作図線です。接続ドット・線番は付かず、ネット解析・
          シミュレーション・検図 (DRC)・端子表・接続リストの対象外です。<br>
@@ -757,8 +759,17 @@ UI.showProps = (focusTag = false) => {
       const v = e.target.value.trim();
       const n = setWireNumber(page, w, v);   // ネット全体に反映 (1ネット1線番)
       UI.refresh(false);
+      UI.showProps();
       UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
-                  : "線番を自動採番に戻しました");
+                  : `線番を消しました (この配線 ${n} 本には線番を出しません — 自動採番も付けません)`);
+    });
+    const numAuto = pane.querySelector("#pNumAuto");
+    if (numAuto) numAuto.addEventListener("click", () => {
+      commit();
+      setWireNumber(page, w, "", { auto: true });
+      UI.refresh(false);
+      UI.showProps();
+      UI.setMsg("線番を自動採番に戻しました (図番×100+連番)");
     });
     pane.querySelector("#pSpec").addEventListener("change", e => {
       commit();
@@ -1404,7 +1415,8 @@ UI.editWireNumbers = () => {
     <div class="prop-note" style="margin-top:0">
       ページ ${page.no}「${escAttr(page.name)}」の線番 ${rows.length} 本${otherPagesNote}。<br>
       「手動」に✓の付いた線番だけが自動採番から保護されます。<br>
-      線番を書き換えると自動で✓が付き、空欄にすると自動採番に戻ります。<br>
+      線番を書き換えると自動で✓が付き、空欄にするとその配線には線番を出しません
+      (「手動」の✓を外すと自動採番に戻ります)。<br>
       電線仕様は書き換えた行だけをネット全体に適用します (無変更の行はワイヤ個別の仕様を残します)。
     </div>
     <div class="wnum-head"><span>線番</span><span>手動</span><span>位置</span><span>電線仕様</span><span>接続先</span></div>
@@ -1451,7 +1463,7 @@ UI.editWireNumbers = () => {
   foot.querySelector("#wnAuto").addEventListener("click", () => {
     if (!confirm("このページの線番をすべて自動採番に戻しますか？")) return;
     commit();
-    rows.forEach(([, e]) => e.wires.forEach(w => { w.num = null; w.fixed = false; w.numShow = false; }));
+    rows.forEach(([, e]) => e.wires.forEach(w => { w.num = null; w.fixed = false; w.numShow = false; delete w.numOff; }));
     autoNumberWires();
     m.close(); UI.refresh(false);
     UI.setMsg("線番を自動採番に戻しました");
@@ -1473,10 +1485,13 @@ UI.editWireNumbers = () => {
       const v = vals[i], fixed = fixes[i];
       const spec = body.querySelector(`#ws${i}`).value.trim();
       const specChanged = spec !== (e.spec0 || "");
+      // 「手動」に✓が付いたまま空欄 = その配線には線番を出さない
+      const off = body.querySelector(`#wf${i}`).checked && !v;
       e.wires.forEach(w => {
         // 自動の行は元の自動番号を残しておく (autoNumberWires が据え置く)
-        w.num = fixed ? v : (e.num0 || null);
-        w.fixed = fixed;                   // 手動線番だけを自動採番から保護
+        w.num = fixed ? v : (off ? null : (e.num0 || null));
+        w.fixed = fixed || off;            // 手動線番・非表示の指定を自動採番から保護
+        if (off) w.numOff = true; else delete w.numOff;
         w.numShow = false;                 // 表示位置は autoNumberWires が最長区間で決める
         // 電線仕様は書き換えた行だけネット全体へ。無変更ならワイヤ個別の仕様を保つ
         if (specChanged) { if (spec) w.spec = spec; else delete w.spec; }

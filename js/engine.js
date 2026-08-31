@@ -1950,18 +1950,16 @@ const SPEC_SHEET2 = [
   { title: "電源・環境仕様", blocks: [
     { t: "供給電源電圧", kind: "opts", k: "sup_v", memoK: "sup_v", memoAt: 2,
       opts: ["AC100V", "AC200V", "その他 (      )"] },
-    { t: "御社環境温度レンジ", kind: "fields", rows: [
-      { label: "定常時", memoK: "temp_std", ph: "〇〇℃ ー 〇〇℃" },
-    ] },
-    { kind: "opts", head: "非定常時", k: "temp_ab", memoK: "temp_ab", memo2K: "temp_why", memoAt: 1,
-      opts: ["定常時と同じ", "〇〇℃ー〇〇℃ (〇〇実施の為)"],
-      fill: (a, b2) => `${a || "〇〇℃ー〇〇℃"} (${b2 || "〇〇"} 実施の為)` },
   ] },
   { title: "冷却・外部接続", blocks: [
     { t: "制御盤冷却方法", kind: "opts", k: "cool",
       opts: ["ファン", "盤クーラー", "エアーパージ"] },
     { t: "外部 I/F", kind: "opts", k: "extif", multi: true, note: "(複数チェック可)",
       opts: ["上流", "下流", "他装置"] },
+    // チェックした I/F ごとに、内容を箇条書きで書き足せる欄
+    { kind: "bullets", of: "extif", head: "詳細 (チェックした I/F ごとに記入)" },
+    // チェックした I/F ごとに、内容を箇条書きで書き足せる欄
+
   ] },
 ];
 /** 仕様ページの様式 (1 枚目 / 2 枚目 …)。ページの並び順で決まる */
@@ -2820,11 +2818,16 @@ function autoNumberWires() {
       if (net != null) netHasPin.add(net);
     }));
     const isCircuit = net => netHasPin.has(net) || netNum.has(net);
+    /* 2.4) 「線番を出さない」と決めた配線 (プロパティで空欄にしたもの) は
+       採番の対象から外す。ネットごと黙らせる — 同じネットの他の線に
+       番号が出ると、消したつもりの線番が別の場所に出てしまう */
+    const quiet = new Set();
+    wires.forEach(w => { if (w.numOff) quiet.add(wireNet.get(w.id)); });
     // 2.5) すでに振られている自動番号はそのまま据え置く。
     //      (1本だけ手動で直したときに、他の線番まで繰り上がるのを防ぐ)
     wires.forEach(w => {
       const net = wireNet.get(w.id);
-      if (netNum.has(net) || !netHasPin.has(net)) return;
+      if (netNum.has(net) || !netHasPin.has(net) || quiet.has(net)) return;
       const prev = w.num == null ? "" : String(w.num).trim();
       if (prev && !used.has(prev)) { netNum.set(net, prev); used.add(prev); }
     });
@@ -2832,6 +2835,11 @@ function autoNumberWires() {
     const bestOfNet = new Map();
     wires.forEach(w => {
       const net = wireNet.get(w.id);
+      if (quiet.has(net)) {           // 線番を出さない指定のネット
+        w.num = null;
+        w.numShow = false;
+        return;
+      }
       if (!isCircuit(net)) {          // 回路でない線: 自動で付いた番号を消す
         if (!w.fixed) w.num = null;
         w.numShow = false;
@@ -2859,15 +2867,17 @@ function autoNumberWires() {
 
 /** ワイヤ1本の線番編集をネット全体へ反映する (1ネットに2つの線番が印字されるのを防ぐ)。
     num が空なら自動採番に戻す。表示位置は autoNumberWires が最長区間で決める。 */
-function setWireNumber(page, wire, num) {
+function setWireNumber(page, wire, num, opts = {}) {
   const v = (num == null ? "" : String(num)).trim();
   const { wireNet } = computeNets(page, "open");
   const net = wireNet.get(wire.id);
   const targets = net ? condWires(page).filter(w => wireNet.get(w.id) === net) : [wire];
   targets.forEach(w => {
     w.num = v || null;
-    w.fixed = !!v;              // 手動線番は自動採番から保護
     w.numShow = false;
+    if (v) { w.fixed = true; delete w.numOff; }          // 手動線番は自動採番から保護
+    else if (opts.auto) { w.fixed = false; delete w.numOff; }  // 自動採番へ戻す
+    else { w.fixed = true; w.numOff = true; }            // 空欄 = この配線には線番を出さない
   });
   autoNumberWires();
   return targets.length;

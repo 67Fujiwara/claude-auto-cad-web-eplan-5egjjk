@@ -826,6 +826,29 @@ function specSheetSVG(page, k, record) {
           }
         });
         y += RH * blk.opts.length;
+      } else if (blk.kind === "bullets") {
+        /* 箇条書きの記入欄。上のチェック (複数選択) で選んだ項目だけ行が出る。
+           行をクリックするとその項目の内容を書き込める */
+        const grp = specSheetFor(page).flatMap(s2 => s2.blocks).find(x => x.k === blk.of);
+        const picked = specMultiSel(page.spec, blk.of);
+        out += box(x0, y, colW, RH) + txt(x0, y + RH / 2 + TH * 0.36 * f, colW, blk.head);
+        y += RH;
+        if (!picked.length) {
+          out += box(x0, y, colW, RH);
+          out += txt(x0, y + RH / 2 + TH * 0.36 * f, colW, "(上でチェックすると、その項目の記入欄が出ます)");
+          y += RH;
+        } else {
+          picked.forEach((i, r) => {
+            const yy = y + r * RH;
+            const name = (grp && grp.opts[i]) || String(i + 1);
+            const key = `${blk.of}_${i}`;
+            out += box(x0, yy, colW, RH);
+            out += txt(x0, yy + RH / 2 + TH * 0.36 * f, colW,
+              `・${name}: ${memo[key] || "(クリックして記入)"}`, "start");
+            if (record) Editor.specBoxes.push({ x: x0, y: yy, w: colW, h: RH, memo: key, label: `${name} の詳細` });
+          });
+          y += RH * picked.length;
+        }
       } else if (blk.kind === "fields") {
         // ラベルと記入欄の行 (定常時の温度レンジなど)。欄はクリックで書ける
         const lw = colW * 0.3, vw = colW - lw;

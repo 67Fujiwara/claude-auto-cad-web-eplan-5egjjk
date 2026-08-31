@@ -8,11 +8,11 @@
    ・pwrMemo  : 御社指定方法の欄を図面の上でクリックすると書き込め、図面に出る
    ・memoCells: 特記事項・指定色・チューブ長の欄もクリックで書ける
    ・sheet2   : 仕様は 2 枚目があり、1 枚目と別の様式 (供給電源電圧・
-                御社環境温度レンジ・制御盤冷却方法・外部 I/F) で描かれる
+                制御盤冷却方法・外部 I/F) で描かれる。温度レンジの欄は無い
    ・newProj  : 新しい図面には仕様が 2 枚入る
    ・multi    : 外部 I/F は複数チェックでき、もう一度押すと外れる
-   ・tempFill : 非定常時に温度と理由を書くと「0℃ー45℃ (洗浄 実施の為)」と出る
-   ・fieldCell: 定常時の記入欄はクリックして書ける */
+   ・ifDetail : チェックした I/F ごとに詳細の箇条書き欄が出て、クリックで書ける。
+                外すとその行も消える */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -131,10 +131,12 @@ const clickBox2 = async (find) => {
 R.sheet2 = await p.evaluate(() => {
   const pg = curPage();
   const svg = kindSVG(pg);
-  const want = ["電源・環境仕様", "供給電源電圧", "AC100V", "AC200V", "御社環境温度レンジ",
-    "定常時", "非定常時", "制御盤冷却方法", "ファン", "盤クーラー", "エアーパージ",
-    "外部 I/F (複数チェック可)", "上流", "下流", "他装置"];
+  const want = ["電源・環境仕様", "供給電源電圧", "AC100V", "AC200V",
+    "制御盤冷却方法", "ファン", "盤クーラー", "エアーパージ",
+    "外部 I/F (複数チェック可)", "上流", "下流", "他装置", "詳細 (チェックした I/F ごとに記入)"];
   return { missing: want.filter(t => !svg.includes(t)),
+    // 温度レンジの欄は無くした
+    noTemp: !svg.includes("御社環境温度レンジ") && !svg.includes("非定常時"),
     // 1 枚目の見出しが出ていないこと (様式が入れ替わっている)
     notSheet1: !svg.includes("制御盤筐体仕様") && !svg.includes("保護等級"),
     sheetNo: SPEC_SHEETS.length };
@@ -151,26 +153,24 @@ R.multi.drawn = await p.evaluate(() => {
   return (svg.match(/<ellipse /g) || []).length;
 });
 
-// 非定常時: 温度と理由を書く (プロンプトは 2 回)
-await p.evaluate(() => {
-  const answers = ["0℃ ー 45℃", "洗浄"];
-  let i = 0;
-  window.prompt = () => answers[i++];
+/* 外部 I/F の詳細 (箇条書き)。チェックした項目ぶんだけ行が出る */
+R.ifDetail = await p.evaluate(() => {
+  const svg = kindSVG(curPage());
+  return { rows: (svg.match(/・(上流|下流|他装置):/g) || []).length,
+    picked: [...specMultiSel(curPage().spec, "extif")] };
 });
-R.tempFill = { clicked: await clickBox2('o.memo === "temp_ab"') };
-R.tempFill.after = await p.evaluate(() => {
-  const pg = curPage();
-  return { a: pg.spec.memo.temp_ab, b: pg.spec.memo.temp_why,
-    drawn: kindSVG(pg).includes("0℃ ー 45℃ (洗浄 実施の為)") };
-});
-
-// 定常時の欄
-await p.evaluate(() => { window.prompt = () => "5℃ ー 40℃"; });
-R.fieldCell = { clicked: await clickBox2('o.memo === "temp_std"') };
-R.fieldCell.after = await p.evaluate(() => ({
-  memo: curPage().spec.memo.temp_std,
-  drawn: kindSVG(curPage()).includes("5℃ ー 40℃"),
+await p.evaluate(() => { window.prompt = () => "検査装置と Ethernet 接続"; });
+R.ifDetail.clicked = await clickBox2('o.memo === "extif_2"');
+R.ifDetail.after = await p.evaluate(() => ({
+  memo: curPage().spec.memo.extif_2,
+  drawn: kindSVG(curPage()).includes("・他装置: 検査装置と Ethernet 接続"),
 }));
+// チェックを外すと、その行も消える
+await clickBox2('o.k === "extif" && o.i === 2');
+R.ifDetail.afterUncheck = await p.evaluate(() => {
+  const svg = kindSVG(curPage());
+  return { has: svg.includes("・他装置:"), rows: (svg.match(/・(上流|下流|他装置):/g) || []).length };
+});
 
 const checks = {
   noPageErrors: errs.length === 0,
@@ -183,13 +183,13 @@ const checks = {
     && R.pwrMemo.after.drawn === true,
   memoCells: JSON.stringify(R.memoCells.keys) === JSON.stringify(["env", "mat_fe", "pwr", "tube", "tube_dir"]),
   newProj: R.newProj.specs === 2,
-  sheet2: R.sheet2.missing.length === 0 && R.sheet2.notSheet1 === true && R.sheet2.sheetNo === 2,
+  sheet2: R.sheet2.missing.length === 0 && R.sheet2.notSheet1 === true
+    && R.sheet2.noTemp === true && R.sheet2.sheetNo === 2,
+  ifDetail: R.ifDetail.rows === 1 && R.ifDetail.clicked === true
+    && R.ifDetail.after.memo === "検査装置と Ethernet 接続" && R.ifDetail.after.drawn === true
+    && R.ifDetail.afterUncheck.has === false,
   multi: JSON.stringify(R.multi.on) === JSON.stringify([0, 2])
     && JSON.stringify(R.multi.off) === JSON.stringify([2]) && R.multi.drawn >= 1,
-  tempFill: R.tempFill.clicked === true && R.tempFill.after.a === "0℃ ー 45℃"
-    && R.tempFill.after.b === "洗浄" && R.tempFill.after.drawn === true,
-  fieldCell: R.fieldCell.clicked === true && R.fieldCell.after.memo === "5℃ ー 40℃"
-    && R.fieldCell.after.drawn === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

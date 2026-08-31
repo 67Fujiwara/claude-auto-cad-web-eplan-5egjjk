@@ -8,6 +8,8 @@
    ・joinNet    : 既存の線へ突き当てると同じ番号になる (新番号を増やさない)
    ・manualKeep : 手で入れた線番は自動採番から保護される
    ・potentials : 電源 (+24V/0V)・電位リンク・接地 (PE) は連番でなく電位名のまま
+   ・numOff     : 線番を空欄にすると、その配線には線番を出さない
+                  (自動採番も付けない)。「自動採番に戻す」で元どおり
    ・stable     : もう一度実行しても番号が変わらない (据え置き)
    ・unique     : 全ページを通して同じ番号が 2 つ印字されない */
 import { chromium } from "playwright-core";
@@ -89,6 +91,30 @@ const R = await p.evaluate(async () => {
   out.manualKeep = p1.wires[2].num === "L99" && p1.wires[2].fixed === true
     && p1.wires[2].numShow === true;
 
+  /* ── 空欄 = 線番を出さない ── */
+  {
+    const w2 = p1.wires.find(q => q.num && !q.fixed) || p1.wires[1];
+    const had = w2.num;
+    setWireNumber(p1, w2, "");           // 空欄にする
+    autoNumberWires();
+    UI.refresh();
+    await new Promise(r => setTimeout(r, 150));
+    const shownNow = Editor.layers.wires.innerHTML;
+    out.numOff = {
+      had, num: w2.num, off: !!w2.numOff,
+      // 同じネットの他の配線にも出ていないこと
+      netQuiet: (() => {
+        const { wireNet } = computeNets(p1, "open");
+        const net = wireNet.get(w2.id);
+        return condWires(p1).filter(q => wireNet.get(q.id) === net).every(q => !q.num);
+      })(),
+      drawn: had ? shownNow.includes(`>${had}</text>`) : false,
+    };
+    setWireNumber(p1, w2, "", { auto: true });   // 自動採番に戻す
+    autoNumberWires();
+    out.numOff.back = !!w2.num && !w2.numOff;
+  }
+
   // ── 電位名 (電源・リンク・接地) ──
   const p3 = newPage("電位", App.project.pages.length + 1);
   App.project.pages.push(p3); UI.renumberPages();
@@ -125,6 +151,8 @@ const checks = {
   bareSkip: R.bareSkip === true,
   joinNet: R.joinNet.grew && R.joinNet.same === true,
   manualKeep: R.manualKeep === true,
+  numOff: !!R.numOff.had && R.numOff.num === null && R.numOff.off === true
+    && R.numOff.netQuiet === true && R.numOff.drawn === false && R.numOff.back === true,
   potentials: R.potentials.link === "W205" && R.potentials.earth === "PE",
   stable: R.stable === true,
   unique: R.unique === true,
