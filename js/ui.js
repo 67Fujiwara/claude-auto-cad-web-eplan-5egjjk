@@ -1250,6 +1250,7 @@ UI.openFile = async () => {
       commit();
       App.project = p;
       mergeProjectSymbols();
+  normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
       saveImportedSymbols();
       App.fileHandle = handle;
       App.pendingHandle = null;
@@ -1285,6 +1286,7 @@ UI.openFile = async () => {
         commit();
         App.project = p;
         mergeProjectSymbols();
+  normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
         saveImportedSymbols();
         App.fileHandle = null; // input[type=file] 経由は上書き先を持てない
         App.pageIdx = 0;
@@ -1805,7 +1807,7 @@ UI.openWireNumInput = (clientX, clientY, wire) => {
       const n = setWireNumber(curPage(), wire, v);   // ネット全体に反映 (1ネット1線番)
       UI.refresh(false);
       UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
-                  : "線番を自動採番に戻しました");
+                  : `線番を消しました (この配線 ${n} 本には線番を出しません — プロパティの「自動採番に戻す」で戻せます)`);
     }
   };
   inp.addEventListener("keydown", e => {
@@ -2629,6 +2631,7 @@ UI.refresh = (rebuildTabs = true) => {
 function boot() {
   App.project = loadLocal() || demoProject();
   mergeProjectSymbols();
+  normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
   UI.renumberPages();   // ページ番号と図番を現在の設定に同期
   applySheet(); // 保存された用紙・尺度で作図領域を張る
   noteSymbolMigration({ once: true }); // 自動保存からの復帰でも端子番号変更を1回だけ知らせる

@@ -2856,12 +2856,52 @@ function autoNumberWires() {
       if (!cur || maxSeg > cur.maxSeg) bestOfNet.set(net, { w, maxSeg });
     });
     bestOfNet.forEach(({ w }) => { w.numShow = true; }); // 全ネット必ず1箇所は表示
+    /* 仕上げ: 線番を持っているのにどこにも出ていないネットを拾う。
+       手で入れた線番が機器につながらない線に付いている場合や、古い版で
+       保存した図面から来た numShow の取りこぼしがあっても、必ず 1 箇所に出す
+       (「入力したのに表示されない」を作らない) */
+    ensureNumShown(wires, wireNet);
     /* 作図線に残った線番の掃除。線種の変更やデータ取込の経路によっては
        非導通の線に昔の番号が残ることがあり、破線の上に線番が印字される */
     page.wires.forEach(w => {
       if (isWireConductive(w)) return;
       if (w.num != null || w.numShow || w.fixed) { w.num = null; w.numShow = false; w.fixed = false; }
     });
+  });
+}
+
+/* 図面を開いたときの手当て: 線番を持っているのにどこにも出ていないネットを
+   直す。古い版で保存した図面や、途中の操作で表示フラグが落ちた図面でも
+   「入力したのに出ない」を残さない (番号そのものは変えない) */
+function normalizeWireNumbers() {
+  (App.project ? App.project.pages : []).forEach(page => {
+    if (!isDrawingPage(page)) return;
+    const wires = condWires(page).filter(w => w.num);
+    if (!wires.length) return;
+    const { wireNet } = computeNets(page, "open");
+    ensureNumShown(wires, wireNet);
+  });
+}
+/** 線番を持つネットは、必ずどれか 1 本 (いちばん長い区間の線) に表示させる */
+function ensureNumShown(wires, wireNet) {
+  const byNet = new Map();
+  wires.forEach(w => {
+    if (!w.num) return;
+    const net = wireNet.get(w.id);
+    if (!byNet.has(net)) byNet.set(net, []);
+    byNet.get(net).push(w);
+  });
+  byNet.forEach(list => {
+    if (list.some(w => w.numShow)) return;
+    let best = list[0], bestLen = -1;
+    list.forEach(w => {
+      let m = 0;
+      for (let i = 0; i < w.pts.length - 1; i++) {
+        m = Math.max(m, Math.abs(w.pts[i + 1][0] - w.pts[i][0]) + Math.abs(w.pts[i + 1][1] - w.pts[i][1]));
+      }
+      if (m > bestLen) { bestLen = m; best = w; }
+    });
+    best.numShow = true;
   });
 }
 

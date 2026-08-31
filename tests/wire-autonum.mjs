@@ -8,6 +8,9 @@
    ・joinNet    : 既存の線へ突き当てると同じ番号になる (新番号を増やさない)
    ・manualKeep : 手で入れた線番は自動採番から保護される
    ・potentials : 電源 (+24V/0V)・電位リンク・接地 (PE) は連番でなく電位名のまま
+   ・alwaysShow : 線番を持っているのにどこにも出ていないネットは、次の採番で
+                  必ず 1 箇所に出す (「入力したのに表示されない」を作らない)。
+                  古い図面を開いたときも開いた時点で直る
    ・numOff     : 線番を空欄にすると、その配線には線番を出さない
                   (自動採番も付けない)。「自動採番に戻す」で元どおり
    ・stable     : もう一度実行しても番号が変わらない (据え置き)
@@ -91,6 +94,36 @@ const R = await p.evaluate(async () => {
   out.manualKeep = p1.wires[2].num === "L99" && p1.wires[2].fixed === true
     && p1.wires[2].numShow === true;
 
+  /* ── 線番があるのに表示フラグが落ちている状態を直す ── */
+  {
+    const pg = curPage();
+    const w3 = condWires(pg).find(q => q.num) || pg.wires[0];
+    w3.num = "Z9";                       // 番号はあるが
+    condWires(pg).forEach(q => { q.numShow = false; });   // どこにも出ていない
+    UI.refresh();
+    await new Promise(r => setTimeout(r, 120));
+    const before = Editor.layers.wires.innerHTML.includes(">Z9<");
+    autoNumberWires();                   // 次の採番で拾われる
+    UI.refresh();
+    await new Promise(r => setTimeout(r, 120));
+    out.alwaysShow = { before, after: Editor.layers.wires.innerHTML.includes(">Z9<"), num: w3.num };
+    // 図面を開き直したとき (保存データが古い版) も直る。
+    // 元の図面は後の検査で使うので、複製で試して必ず戻す
+    const orig = App.project;
+    const snap = JSON.parse(JSON.stringify(App.project));
+    snap.pages.forEach(p2 => (p2.wires || []).forEach(q => { q.numShow = false; }));
+    App.project = snap;
+    normalizeWireNumbers();
+    App.labelRev++;
+    UI.refresh();
+    await new Promise(r => setTimeout(r, 120));
+    out.alwaysShow.onLoad = Editor.layers.wires.innerHTML.includes(">Z9<");
+    App.project = orig;
+    App.labelRev++;
+    UI.refresh();
+    await new Promise(r => setTimeout(r, 120));
+  }
+
   /* ── 空欄 = 線番を出さない ── */
   {
     const w2 = p1.wires.find(q => q.num && !q.fixed) || p1.wires[1];
@@ -151,6 +184,8 @@ const checks = {
   bareSkip: R.bareSkip === true,
   joinNet: R.joinNet.grew && R.joinNet.same === true,
   manualKeep: R.manualKeep === true,
+  alwaysShow: R.alwaysShow.before === false && R.alwaysShow.after === true
+    && R.alwaysShow.onLoad === true,
   numOff: !!R.numOff.had && R.numOff.num === null && R.numOff.off === true
     && R.numOff.netQuiet === true && R.numOff.drawn === false && R.numOff.back === true,
   potentials: R.potentials.link === "W205" && R.potentials.earth === "PE",
