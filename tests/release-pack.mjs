@@ -5,7 +5,14 @@
    ・pdfValid  : PDF の体裁 (%PDF ヘッダ・xref の位置・%%EOF) が正しい
    ・zipPack   : ZIP に図面一式が入る (書庫の中はフォルダ 1 階層)
    ・zipRead   : ZIP の中身が壊れていない (CRC と大きさが合う)
-   ・menu      : ファイルメニューに「PDF出力 (全ページを1ファイル)」がある */
+   ・menu      : ファイルメニューに「PDF出力 (全ページを1ファイル)」がある
+   ・relForm   : 設計完了の画面に PDF の 2 パターン (社内保存用 / 顧客提出用) がある
+   ・relPages  : 顧客提出用のページ = 全ページ − 仕様のページ (社内保存用は全ページ)
+   ・relToc    : 顧客提出用の目次には仕様の行が無い (社内保存用には有る)
+   ・relNo     : 用紙右下の「n / N」はその版の通し。図番は両方で同じ
+   ・relKeep   : 出図しても元の図面のページ番号・ページ数は変わらない
+   ・relOut    : 設計完了で PDF が 2 本 (社内保存用 / 顧客提出用) 出る。
+                 顧客提出用の中身は仕様のページぶん少ない */
 import { chromium } from "playwright-core";
 import { writeFileSync, rmSync } from "fs";
 import { execFileSync } from "child_process";
@@ -77,6 +84,63 @@ try {
 } catch (e) { zipInfo = String(e).slice(0, 160); }
 rmSync(zpath, { force: true });
 
+/* ── 設計完了の PDF 2 パターン ── */
+const R2 = await p.evaluate(async () => {
+  const o = {};
+  App.project = newProject("2パターン出図"); UI.renumberPages();
+  const pages = App.project.pages;
+  const specNos = pages.filter(pg => pg.kind === "spec").map(pg => pageDwgNo(pg));
+  o.count = { all: pages.length, spec: specNos.length, specNos,
+    int: releasePages("internal").length, cus: releasePages("customer").length,
+    cusSpec: releasePages("customer").filter(pg => pg.kind === "spec").length };
+
+  // 版ごとの目次・表題欄
+  const look = kind => withReleaseProject(kind, list => {
+    const toc = list.find(pg => pg.kind === "toc");
+    const draw = list.find(isDrawingPage);
+    applySheet(draw);
+    const tb = sheetSVG(draw);
+    return {
+      total: list.length,
+      tocSpec: specNos.filter(n => toc && kindSVG(toc).includes(`>${n}<`)).length,
+      tocDraw: !!toc && kindSVG(toc).includes(`>${pageDwgNo(draw)}<`),
+      no: draw.no, dwgNo: pageDwgNo(draw),
+      tbNo: tb.includes(`>${draw.no} / ${list.length}<`),
+    };
+  });
+  o.int = await look("internal");
+  o.cus = await look("customer");
+  // 元の図面は書き換わっていないこと
+  o.keep = { n: App.project.pages.length, nos: App.project.pages.map(pg => pg.no).join(","),
+    idx: App.pageIdx };
+
+  // 実際に設計完了を走らせて、出てくるファイルを見る (保存は横取りする)
+  const grabbed = [];
+  const keepSave = window.saveReleaseFiles;
+  window.saveReleaseFiles = async (out2) => {
+    for (const f of out2) {
+      const bytes = f.data instanceof Blob ? new Uint8Array(await f.data.arrayBuffer()) : null;
+      const txt = bytes ? new TextDecoder("latin1").decode(bytes) : "";
+      grabbed.push({ name: f.name, pages: (txt.match(/\/Type \/Page[^s]/g) || []).length,
+        pdf: txt.startsWith("%PDF-") });
+    }
+    return { how: "テスト", name: "" };
+  };
+  await UI.runRelease({ dxf: false, json: false, pdfIn: true, pdfCus: true, dpi: 72, pack: "zip", rev: "0" });
+  window.saveReleaseFiles = keepSave;
+  o.out = grabbed;
+  return o;
+});
+
+const relForm = await p.evaluate(() => {
+  UI.finishDesign();
+  const labs = [...document.querySelectorAll(".modal .prop-row label.chk")].map(e => e.textContent.trim());
+  const ids = [...document.querySelectorAll(".modal input[type=checkbox]")].map(e => e.id);
+  UI.closeModal && UI.closeModal();
+  document.querySelectorAll(".modal-x, .mod-close").forEach(x => x.click());
+  return { labs, ids };
+});
+
 const menuHas = await p.evaluate(() => {
   document.querySelector('#menubar .menu[data-menu="file"]').click();
   const items = [...document.querySelectorAll(".dropdown .dd-item")].map(e => e.textContent);
@@ -92,9 +156,23 @@ const checks = {
   zipPack: R.zipPack.type === "application/zip" && R.zipPack.local === 2 && R.zipPack.central === 2 && R.zipPack.end === 1,
   zipRead: zipOK === true,
   menu: menuHas.includes("PDF出力 (全ページを1ファイル)"),
+  relForm: relForm.ids.includes("rlPdfIn") && relForm.ids.includes("rlPdfCus")
+    && relForm.labs.some(t => /社内保存用/.test(t)) && relForm.labs.some(t => /顧客提出用/.test(t)),
+  relPages: R2.count.spec >= 2 && R2.count.int === R2.count.all
+    && R2.count.cus === R2.count.all - R2.count.spec && R2.count.cusSpec === 0,
+  relToc: R2.int.tocSpec === R2.count.spec && R2.cus.tocSpec === 0
+    && R2.int.tocDraw === true && R2.cus.tocDraw === true,
+  relNo: R2.int.tbNo === true && R2.cus.tbNo === true
+    && R2.cus.no === R2.int.no - R2.count.spec && R2.cus.total === R2.int.total - R2.count.spec
+    && R2.cus.dwgNo === R2.int.dwgNo,
+  relKeep: R2.keep.n === R2.count.all
+    && R2.keep.nos === Array.from({ length: R2.count.all }, (_, i) => i + 1).join(","),
+  relOut: R2.out.length === 2 && R2.out.every(f => f.pdf === true)
+    && /社内保存用\.pdf$/.test(R2.out[0].name) && /顧客提出用\.pdf$/.test(R2.out[1].name)
+    && R2.out[0].pages === R2.count.all && R2.out[1].pages === R2.count.all - R2.count.spec,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R: { ...R, zipBytes: R.zipBytes.length }, zipInfo, menuHas: menuHas.slice(0, 200), errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, R: { ...R, zipBytes: R.zipBytes.length }, R2, relForm, zipInfo, menuHas: menuHas.slice(0, 200), errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("release-pack OK");

@@ -4216,6 +4216,37 @@ function downloadFile(filename, content, mime = "application/json") {
    ・buildPDF … 各ページを紙の大きさどおりに並べた 1 本の PDF
    ・buildZIP … 出力したファイルを 1 つの書庫に (無圧縮 store) */
 
+/* ── 出図の版 (社内保存用 / 顧客提出用) ────────────────
+   同じ図面から 2 通りの PDF を作る。
+   ・社内保存用 … 表紙・目次・仕様・回路図まで、すべての図面
+   ・顧客提出用 … 仕様のページを外したもの (社外に出さない取り決めのため)
+   図番 (E-001 …) は両方で同じものを使う — 同じ図面を指すため。
+   用紙の右下の「n / N」と目次だけ、その版に載るページで数え直す。 */
+const RELEASE_KINDS = [
+  { k: "internal", label: "社内保存用", desc: "すべての図面" },
+  { k: "customer", label: "顧客提出用", desc: "仕様のページを外す" },
+];
+function releaseKindLabel(kind) {
+  const r = RELEASE_KINDS.find(x => x.k === kind);
+  return r ? r.label : String(kind || "");
+}
+/** その版に載せるページ (顧客提出用は仕様のページを外す) */
+function releasePages(kind, pages) {
+  const src = pages || (App.project ? App.project.pages : []) || [];
+  return kind === "customer" ? src.filter(pg => pg.kind !== "spec") : src.slice();
+}
+/** その版のページだけを載せた図面として fn を走らせる (目次と「n / N」を合わせる)。
+    ページは写しを使うので、元の図面のページ番号は書き換わらない。 */
+async function withReleaseProject(kind, fn) {
+  const keep = App.project, keepIdx = App.pageIdx;
+  const list = releasePages(kind, keep.pages).map(pg => ({ ...pg }));
+  list.forEach((pg, i) => { pg.no = i + 1; });
+  App.project = { ...keep, pages: list };
+  App.pageIdx = Math.max(0, Math.min(list.length - 1, keepIdx));
+  try { return await fn(list); }
+  finally { App.project = keep; App.pageIdx = keepIdx; }
+}
+
 /** ページの SVG を紙の実寸で画像にする (dpi は 1 インチあたりの画素) */
 async function pageToImage(page, dpi = 200) {
   const [pw, ph] = paperSize(pageSheetMeta(page).paper, pageSheetMeta(page).orient);

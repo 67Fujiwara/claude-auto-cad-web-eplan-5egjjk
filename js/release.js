@@ -1,9 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════
    ElectraCAD Studio — 設計完了 (出図) と履歴
 
-   「設計完了」で検図 → DXF (全ページ) と PDF (全ページを1ファイル) を出力し、
-   そのときの図面一式を履歴として保存する。履歴からはいつでも同じ図面を
-   開き直したり、DXF・JSON を出し直したりできる。
+   「設計完了」で検図 → DXF (全ページ) と PDF を出力し、そのときの図面一式を
+   履歴として保存する。履歴からはいつでも同じ図面を開き直したり、DXF・JSON を
+   出し直したりできる。
+   PDF は 2 通り作る:
+   ・社内保存用 … すべての図面 (表紙・目次・仕様・回路図)
+   ・顧客提出用 … 仕様のページを外したもの
+   どちらも図番はそのまま。用紙の右下の「n / N」と目次だけ、その版に
+   載るページで数え直す。
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
@@ -99,6 +104,7 @@ UI.finishDesign = () => {
   const warns = issues.filter(i => i.sev === "warn");
   const meta = projectMeta();
   const pages = App.project.pages;
+  const nSpec = pages.length - releasePages("customer", pages).length;
   const devs = pages.reduce((n, p) => n + p.devices.length, 0);
   const wires = pages.reduce((n, p) => n + condWires(p).length, 0);
 
@@ -117,7 +123,8 @@ UI.finishDesign = () => {
       <span class="mono" style="font-size:11px">${errs.slice(0, 4).map(e => escXML(`${e.loc} ${e.msg}`)).join("<br>")}${errs.length > 4 ? `<br>ほか ${errs.length - 4} 件` : ""}</span></div>` : ""}
     <div class="prop-sect">出力するもの</div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlDxf" checked/><span>DXF (AutoCAD互換・ページごとに ${pages.length} ファイル)</span></label></div>
-    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdf" checked/><span>PDF (全ページを1ファイルにまとめて出力)</span></label></div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfIn" checked/><span>PDF 社内保存用 (すべての図面 ${pages.length} ページを1ファイルに)</span></label></div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfCus" checked/><span>PDF 顧客提出用 (仕様${nSpec ? ` ${nSpec} ページ` : ""}を外した ${pages.length - nSpec} ページ)${nSpec ? "" : " — この図面に仕様のページはありません"}</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlJson" checked/><span>図面データ (JSON・再編集用)</span></label></div>
     <div class="prop-sect">まとめ方</div>
     <div class="prop-row"><label>出力先</label><select id="rlPack">
@@ -136,7 +143,9 @@ UI.finishDesign = () => {
       <div class="prop-row"><label>出図者</label><input id="rlBy" value="${escAttr(meta.designer || "")}" placeholder="署名"/></div>
     </div>
     <div class="prop-row"><label>備考</label><input id="rlNote" placeholder="変更点・出図先など"/></div>
-    <div class="prop-note">出図した図面一式は履歴に保存され、「設計完了履歴」からいつでも開き直せます。</div>
+    <div class="prop-note">PDF は社内保存用と顧客提出用の 2 通りを出します。図番は両方とも同じで、
+      用紙右下の「n / N」と目次だけ、その版に載るページで数え直します。<br>
+      出図した図面一式は履歴に保存され、「設計完了履歴」からいつでも開き直せます。</div>
   </div>`);
   const foot = h(`<div style="display:flex;gap:10px;width:100%">
     <button class="btn-solid" id="rlHist">設計完了履歴…</button>
@@ -154,13 +163,14 @@ UI.finishDesign = () => {
   foot.querySelector("#rlOk").addEventListener("click", async () => {
     if (errs.length && !confirm(`検図エラーが ${errs.length} 件あります。このまま設計完了にしますか？`)) return;
     const q = s => body.querySelector(s);
-    const wantDxf = q("#rlDxf").checked, wantPdf = q("#rlPdf").checked, wantJson = q("#rlJson").checked;
+    const wantDxf = q("#rlDxf").checked, wantJson = q("#rlJson").checked;
+    const wantPdfIn = q("#rlPdfIn").checked, wantPdfCus = q("#rlPdfCus").checked;
     const pack = q("#rlPack").value, dpi = +q("#rlDpi").value || 200;
     meta.rev = q("#rlRev").value.trim() || meta.rev || "0";
     if (q("#rlBy").value.trim()) meta.designer = q("#rlBy").value.trim();
     m.close();
     await UI.runRelease({
-      dxf: wantDxf, pdf: wantPdf, json: wantJson, pack, dpi,
+      dxf: wantDxf, pdfIn: wantPdfIn, pdfCus: wantPdfCus, json: wantJson, pack, dpi,
       note: q("#rlNote").value.trim(), rev: meta.rev, by: meta.designer || "",
       errs: errs.length, warns: warns.length, devs, wires, seq,
     });
@@ -188,16 +198,30 @@ UI.runRelease = async (opt) => {
     pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: pageToDXF(pg) }));
     applySheet(curPage());
   }
-  if (opt.pdf) {
-    UI.setMsg("PDF を作っています… (ページ数が多いと少しかかります)");
+  /* PDF は 2 通り。社内保存用はすべての図面、顧客提出用は仕様のページを外したもの。
+     ページ構成が同じになるとき (仕様のページが無い図面) は 1 回だけ作って使い回す */
+  const pdfKinds = [];
+  if (opt.pdfIn !== undefined ? opt.pdfIn : opt.pdf) pdfKinds.push("internal");
+  if (opt.pdfCus !== undefined ? opt.pdfCus : opt.pdf) pdfKinds.push("customer");
+  const pdfMade = new Map();
+  for (const kind of pdfKinds) {
+    const label = releaseKindLabel(kind);
+    const list = releasePages(kind, pages);
+    const name = safe(`${base}_${label}.pdf`);
+    const key = list.map(pg => pages.indexOf(pg)).join(",");
+    if (pdfMade.has(key)) { out.push({ name, data: pdfMade.get(key) }); continue; }
+    if (!list.length) { UI.setMsg(`PDF (${label}) に載せるページがありません`); continue; }
+    UI.setMsg(`PDF (${label}) を作っています… (ページ数が多いと少しかかります)`);
     try {
-      const blob = await buildPDF(pages, { dpi: opt.dpi || 200,
-        onProgress: (i, n) => UI.setMsg(`PDF を作っています… ${i + 1}/${n} ページ`) });
-      out.push({ name: `${base}.pdf`, data: blob });
+      const blob = await withReleaseProject(kind, pgs => buildPDF(pgs, { dpi: opt.dpi || 200,
+        onProgress: (i, n) => UI.setMsg(`PDF (${label}) を作っています… ${i + 1}/${n} ページ`) }));
+      out.push({ name, data: blob });
+      pdfMade.set(key, blob);
     } catch (e) {
-      UI.setMsg("PDF の作成に失敗しました — 他の形式だけ出力します");
+      UI.setMsg(`PDF (${label}) の作成に失敗しました — 他の形式だけ出力します`);
     }
   }
+  if (pdfKinds.length) applySheet(curPage());        // 図枠を表示中のページへ戻す
 
   const files = out.map(f => f.name);
   const where = await saveReleaseFiles(out, folder, opt.pack || (FS_DIR_API ? "dir" : "zip"));
