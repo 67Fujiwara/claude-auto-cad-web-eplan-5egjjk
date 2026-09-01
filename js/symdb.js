@@ -929,14 +929,14 @@ const DB_SYMBOLS = [
 
   /* ── シーケンス制御でよく使う記号 (提供資料「シーケンス制御回路でよく使う記号」より) ── */
   {
-    id: "cp1", stdNote: "遮断器 (07-13-05) と熱動素子 (07-21-04) の合成記号", db: true, group: "よく使う記号", cat: "db", letter: "F",
+    id: "cp1", stdNote: "遮断器 (07-13-05) と熱動素子 (07-21-04) の合成記号", db: true, group: "よく使う記号", cat: "db", letter: "CP",
     name: "サーキットプロテクタ (CP) 1P", nameEn: "Circuit protector 1P",
     desc: "制御回路の小容量保護器。過電流で開路 (熱動+電磁)", typ: "CP30-BA 1P 10A",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "breaker", bounds: [-6.8,-2, 10.6, 24],
     body: G_CP,
   },
   {
-    id: "cp2", stdNote: "遮断器 (07-13-05) と熱動素子 (07-21-04) の合成記号", db: true, group: "よく使う記号", cat: "db", letter: "F",
+    id: "cp2", stdNote: "遮断器 (07-13-05) と熱動素子 (07-21-04) の合成記号", db: true, group: "よく使う記号", cat: "db", letter: "CP",
     name: "サーキットプロテクタ (CP) 2P", nameEn: "Circuit protector 2P",
     desc: "単相制御回路の保護器 (2極連動)", typ: "CP30-BA 2P 10A",
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
