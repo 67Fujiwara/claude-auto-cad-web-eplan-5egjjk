@@ -1234,6 +1234,10 @@ function symCarryPrefs(oldId, newId) {
   const hid = symHiddenList();
   if (hid.includes(oldId) && !hid.includes(newId)) symSetHidden([...hid, newId]);
 }
+/** その元 id に「生きた」(退役していない) 定義が 1 つでもあるか */
+function symHasLiveOf(baseId) {
+  return [...SYMBOLS, ...DB_SYMBOLS].some(s2 => symBaseOf(s2) === baseId && !s2.retired);
+}
 /** その元 id の版すべてをパレットから退かせる (「元に戻す」)。
     置いてある機器のために定義は消さない */
 function symRetireVersions(baseId) {

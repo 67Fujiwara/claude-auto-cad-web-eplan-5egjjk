@@ -2072,7 +2072,9 @@ function mergeProjectSymbols() {
       if (hit) nid = hit.id;
       else {
         nid = symNextVerId(sym.id);
-        const moved = { ...sym, id: nid, verOf: base, retired: true };
+        /* ライブラリ側に生きた定義があるときだけ退役印 (パレットはライブラリ優先)。
+           無ければこの図面の版が唯一の定義なので、パレットに出せる形で登録する */
+        const moved = { ...sym, id: nid, verOf: base, retired: symHasLiveOf(base) || undefined };
         SYMBOLS_BY_ID[nid] = moved;
         if (typeof DB_SYMBOLS !== "undefined" && !DB_SYMBOLS.some(x => x.id === nid)) DB_SYMBOLS.push(moved);
       }
@@ -2081,6 +2083,14 @@ function mergeProjectSymbols() {
     }
     SYMBOLS_BY_ID[sym.id] = sym;
     if (typeof DB_SYMBOLS !== "undefined" && !DB_SYMBOLS.some(x => x.id === sym.id)) DB_SYMBOLS.push(sym);
+  });
+  /* 退役印つきで保存された版 (過去の付け替えの名残) の救済: その元 id に
+     生きた定義が 1 つも無ければ、この図面の版が唯一の定義 — 退役を解いて
+     パレットに出せるようにする。放っておくと「機器は描けるのに記号が
+     どこにも見当たらない」になる */
+  list.forEach(sym => {
+    const cur = sym && sym.id ? SYMBOLS_BY_ID[sym.id] : null;
+    if (cur && cur.retired && !symHasLiveOf(symBaseOf(cur))) delete cur.retired;
   });
   if (Object.keys(remap).length) {
     App.project.pages.forEach(pg => (pg.devices || []).forEach(d => { if (remap[d.sym]) d.sym = remap[d.sym]; }));
@@ -2093,10 +2103,16 @@ function mergeProjectSymbols() {
     const used = new Set();
     App.project.pages.forEach(pg => (pg.devices || []).forEach(d => used.add(d.sym)));
     const pin = [];
+    const latest = symLatestMap();
     used.forEach(id => {
-      const sym = SYMBOLS_BY_ID[id];
+      let sym = SYMBOLS_BY_ID[id];
+      // 退役版を使っている機器は、同じ元の生きた最新版をパレットに出す
+      if (sym && sym.retired) {
+        const lv = latest[symBaseOf(sym)];
+        sym = lv ? SYMBOLS_BY_ID[lv.id] : null;
+      }
       if (sym && (sym.custom || sym.imported) && !sym.retired && !sym.altOf
-        && symCatOf(sym) === "db" && !dbPinnedList().includes(id)) pin.push(id);
+        && symCatOf(sym) === "db" && !dbPinnedList().includes(sym.id)) pin.push(sym.id);
     });
     if (pin.length) {
       dbSetPinned([...new Set([...dbPinnedList(), ...pin])]);

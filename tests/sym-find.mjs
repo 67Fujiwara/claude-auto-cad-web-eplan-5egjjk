@@ -9,7 +9,11 @@
    ・healPin   : 辞書には有るのにピンが外れている記号も、それを使う図面を
                  開き直せばパレットへ戻る
    ・searchAll : 検索中はピンの有無によらず全記号から探せる。検索を消せば
-                 棚は従来どおり (ピンだけ) */
+                 棚は従来どおり (ピンだけ)
+   ・revive    : 退役印つきの版だけを同梱した図面 (過去の付け替えの名残) を
+                 開くと、元 id に生きた定義が無ければ退役を解いてパレットに出す
+   ・keepRetired: 元 id に生きた定義があるときは図面の版は退役のまま、
+                 パレットには生きた側が出る (ライブラリ優先) */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -63,8 +67,41 @@ const R = await p.evaluate(async () => {
   UI.buildPalette("");
   out.searchAll.hiddenAgain = !document.getElementById("symTree").textContent.includes("特注ブロワ制御器");
 
+  /* ── 退役印つきの版だけを同梱した図面 (実際に報告のあった形) ── */
+  const orphan = { ...mkSym("usr_zz1~2", "退役版インバータ"), verOf: "usr_zz1", retired: true };
+  const proj2 = newProject("退役救済");
+  const pgz = proj2.pages.find(pg => !pg.kind);
+  pgz.devices.push({ id: "dz1", sym: "usr_zz1~2", x: 100, y: 100, tag: "-INV9" });
+  proj2.symbols = [orphan];
+  App.project = JSON.parse(JSON.stringify(proj2));
+  mergeProjectSymbols();
+  UI.buildPalette();
+  out.revive = {
+    retired: !!(SYMBOLS_BY_ID["usr_zz1~2"] || {}).retired,
+    inPalette: document.getElementById("symTree").textContent.includes("退役版インバータ"),
+    pinned: dbPinnedList().includes("usr_zz1~2"),
+  };
+
+  /* ── 元 id に生きた定義があるとき: 版は退役のまま、生きた側が出る ── */
+  const live = mkSym("usr_zz2", "生きてる方");
+  DB_SYMBOLS.push(live); SYMBOLS_BY_ID[live.id] = live;
+  const older = { ...mkSym("usr_zz2~2", "生きてる方"), verOf: "usr_zz2", retired: true,
+    body: '<rect x="-4" y="5" width="8" height="10"/>' };
+  const proj3 = newProject("退役維持");
+  const pgy = proj3.pages.find(pg => !pg.kind);
+  pgy.devices.push({ id: "dy1", sym: "usr_zz2~2", x: 100, y: 100, tag: "-INV8" });
+  proj3.symbols = [older];
+  App.project = JSON.parse(JSON.stringify(proj3));
+  mergeProjectSymbols();
+  UI.buildPalette();
+  out.keepRetired = {
+    retired: !!(SYMBOLS_BY_ID["usr_zz2~2"] || {}).retired,
+    livePinned: dbPinnedList().includes("usr_zz2"),
+    verNotPinned: !dbPinnedList().includes("usr_zz2~2"),
+  };
+
   // 後片付け
-  dbSetPinned(dbPinnedList().filter(x => x !== "usr_findme1"));
+  dbSetPinned(dbPinnedList().filter(x => !/^usr_(findme1|zz)/.test(x)));
   return out;
 });
 
@@ -73,6 +110,9 @@ const checks = {
   mergePin: R.mergePin.pinned === true && R.mergePin.inPalette === true,
   healPin: R.healPin.gone === true && R.healPin.back === true,
   searchAll: R.searchAll.hidden === true && R.searchAll.found === true && R.searchAll.hiddenAgain === true,
+  revive: R.revive.retired === false && R.revive.inPalette === true && R.revive.pinned === true,
+  keepRetired: R.keepRetired.retired === true && R.keepRetired.livePinned === true
+    && R.keepRetired.verNotPinned === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
