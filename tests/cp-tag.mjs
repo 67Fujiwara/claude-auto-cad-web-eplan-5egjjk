@@ -5,7 +5,8 @@
    ・cpNext   : 手で -CP5 を付けた後に置くと -CP6 (既存の続きから)
    ・cpShown  : 図面のシンボルの横に同じタグ (-CP1) が出る (画面の描画。
                 既定の「出力時非表示」の運用はそのまま)
-   ・othersKeep: ほかの保護器 (NFB など) は今までどおり F の連番のまま */
+   ・others   : CP 以外も現場の呼びどおりのタグになる
+                (NFB / PB / RY / MS / PL / EMS / TB / M / F など) */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -40,9 +41,11 @@ const R = await p.evaluate(async () => {
   const svg = devicesSVG(pg, {});
   out.cpShown = { p1: svg.includes(">-CP1<"), p6: svg.includes(">-CP6<") };
 
-  // ほかの保護器はこれまでどおり
-  const f = addDevice(pg, "mcb2", 220, 100);
-  out.othersKeep = { tag: f.tag, letter: symOf("mcb2").letter };
+  // CP 以外も現場の呼びどおりのタグになる
+  const pick = ["mcb2", "pb_no", "coil", "ms_no", "lamp", "estop", "terminal", "motor3", "fuse"];
+  out.others = pick.map((sid, i) => addDevice(pg, sid, 220 + i * 20, 100).tag);
+  out.othersLetters = { timer: symOf("timer_on").letter, thr: symOf("ol3").letter,
+    mc: symOf("cont_coil").letter, elb: symOf("elb3").letter, ss: symOf("sel_sw").letter };
   return out;
 });
 
@@ -52,7 +55,10 @@ const checks = {
   cpSeq: R.cpSeq.first === "-CP1" && R.cpSeq.second === "-CP2",
   cpNext: R.cpNext.tag === "-CP6",
   cpShown: R.cpShown.p1 === true && R.cpShown.p6 === true,
-  othersKeep: R.othersKeep.letter === "F" && R.othersKeep.tag === "-F1",
+  others: JSON.stringify(R.others) === JSON.stringify(
+    ["-NFB1", "-PB1", "-RY1", "-MS1", "-PL1", "-EMS1", "-TB1", "-M1", "-F1"])
+    && R.othersLetters.timer === "T" && R.othersLetters.thr === "THR"
+    && R.othersLetters.mc === "MC" && R.othersLetters.elb === "ELB" && R.othersLetters.ss === "SS",
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

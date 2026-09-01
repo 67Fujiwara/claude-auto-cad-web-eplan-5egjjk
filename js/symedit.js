@@ -548,7 +548,7 @@ UI.openSymbolEditor = (symId = null) => {
       <div class="prop-sect">機器の情報</div>
       <div class="prop-row"><label>名称</label><input id="seName" value="${escAttr(meta.name)}" placeholder="例: 圧力センサ (自社品)"/></div>
       <div class="prop-row"><label>英名</label><input id="seNameEn" value="${escAttr(meta.nameEn)}" placeholder="Pressure sensor"/></div>
-      <div class="prop-row"><label>文字記号</label><input id="seLetter" class="mono" value="${escAttr(meta.letter)}" maxlength="2" placeholder="B"/></div>
+      <div class="prop-row"><label>文字記号</label><input id="seLetter" class="mono" value="${escAttr(meta.letter)}" maxlength="4" placeholder="PB"/></div>
       <div class="prop-row"><label>型式</label><input id="seTyp" class="mono" value="${escAttr(meta.typ)}" placeholder="部品表に出る型式"/></div>
       <div class="prop-row"><label>分類</label><input id="seGroup" value="${escAttr(meta.group)}" placeholder="自作"/></div>
       <div class="prop-row"><label>説明</label><input id="seDesc" value="${escAttr(meta.desc)}" placeholder="用途・注意点"/></div>
