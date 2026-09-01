@@ -1182,31 +1182,65 @@ function symSetHidden(list) {
   try { localStorage.setItem("electracad.symHidden", JSON.stringify(list)); } catch (e) { }
 }
 
-/* 規格ライブラリの記号を編集で上書きしたときの、元 (規格原本) の控え。
-   起動のたびにソースから組み直されるので、上書き前にここへ挟んでおけば
-   「元に戻す」でいつでも復元できる */
-const SYM_ORIGINALS = new Map();
-function symOverrideStd(sym) {
-  const cur = SYMBOLS_BY_ID[sym.id];
-  if (cur && !SYM_ORIGINALS.has(sym.id)) SYM_ORIGINALS.set(sym.id, cur);
-  const si = SYMBOLS.findIndex(s => s.id === sym.id);
-  if (si >= 0) SYMBOLS[si] = sym;
-  // DB 側にも必ず載せる (localStorage への保存対象は DB_SYMBOLS の imported。
-  // 一覧は id で重複を除くので二重には出ない)
-  const di = DB_SYMBOLS.findIndex(s => s.id === sym.id);
-  if (di >= 0) DB_SYMBOLS[di] = sym; else DB_SYMBOLS.push(sym);
-  SYMBOLS_BY_ID[sym.id] = sym;
+/* ── シンボルの版管理 ──────────────────────────
+   既存シンボルを編集すると、同じ id を上書きせず「新しい版」(別 id) として
+   登録する。置いてある機器は元の版の id を持ち続けるので、この図面でも
+   別の案件の図面でも絵は変わらない — 変更が効くのはシンボルを追加する
+   ときから。版の id は「元id~2」「元id~3」…、verOf に元 (根) の id を持つ。
+   パレット・シンボルDBにはいちばん新しい版だけを出す。
+   retired = その版をパレットから退かせた印 (置いてある機器のためには残す) */
+function symBaseOf(sym) { return (sym && sym.verOf) || (sym && String(sym.id).replace(/~\d+$/, "")) || ""; }
+/** id だけから元 (根) の id を引く (機器の特別扱い判定に使う) */
+function symBaseIdOf(id) {
+  const s = SYMBOLS_BY_ID[id];
+  return s ? symBaseOf(s) : String(id).replace(/~\d+$/, "");
 }
-function symRestoreStd(id) {
-  const orig = SYM_ORIGINALS.get(id);
-  if (!orig) return false;
-  const si = SYMBOLS.findIndex(s => s.id === id);
-  if (si >= 0) SYMBOLS[si] = orig;
-  const di = DB_SYMBOLS.findIndex(s => s.id === id);
-  if (di >= 0) { if (orig.db) DB_SYMBOLS[di] = orig; else DB_SYMBOLS.splice(di, 1); }
-  SYMBOLS_BY_ID[id] = orig;
-  SYM_ORIGINALS.delete(id);
-  return true;
+/** 次の版の id (空いている番号まで進める) */
+function symNextVerId(fromId) {
+  const base = symBaseIdOf(fromId);
+  let n = 2;
+  while (SYMBOLS_BY_ID[`${base}~${n}`]) n++;
+  return `${base}~${n}`;
+}
+/** 元 id → いちばん新しい版 {n, id} (退役した版は数えない) */
+function symLatestMap() {
+  const best = {};
+  [...SYMBOLS, ...DB_SYMBOLS].forEach(s2 => {
+    if (s2.retired) return;
+    const b = symBaseOf(s2);
+    const m = /~(\d+)$/.exec(s2.id);
+    const n = m ? +m[1] : 1;
+    if (!best[b] || n > best[b].n) best[b] = { n, id: s2.id };
+  });
+  return best;
+}
+/** 絵と働きが同じか (名前などの付帯情報は見ない)。版を増やすかの判定に使う */
+function symSameDrawing(a, b) {
+  const pick = s2 => JSON.stringify({ body: s2.body, pins: s2.pins, bounds: s2.bounds,
+    sim: s2.sim, funcs: s2.funcs || null, lw: s2.lw || null });
+  return !!a && !!b && pick(a) === pick(b);
+}
+/** 棚の割当・パレットのピン/外し・タグ表示の設定を新しい版へ引き継ぐ */
+function symCarryPrefs(oldId, newId) {
+  if (SYM_CAT_OVR[oldId] && !SYM_CAT_OVR[newId]) {
+    SYM_CAT_OVR[newId] = SYM_CAT_OVR[oldId];
+    try { localStorage.setItem("electracad.symCats", JSON.stringify(SYM_CAT_OVR)); } catch (e) { }
+  }
+  const tv = SYM_TAG_VIS[oldId];
+  if (tv) setSymTagVis(newId, tv);
+  const pin = dbPinnedList();
+  if (pin.includes(oldId)) dbSetPinned([...new Set(pin.map(x => (x === oldId ? newId : x)))]);
+  const hid = symHiddenList();
+  if (hid.includes(oldId) && !hid.includes(newId)) symSetHidden([...hid, newId]);
+}
+/** その元 id の版すべてをパレットから退かせる (「元に戻す」)。
+    置いてある機器のために定義は消さない */
+function symRetireVersions(baseId) {
+  let n = 0;
+  DB_SYMBOLS.forEach(s2 => {
+    if (symBaseOf(s2) === baseId && s2.id !== baseId && s2.imported && !s2.retired) { s2.retired = true; n++; }
+  });
+  return n;
 }
 
 /* キーエンス KV Nano 基本ユニットの入出力結線図 (機種を差し替えれば端子ごと入れ替わる) */

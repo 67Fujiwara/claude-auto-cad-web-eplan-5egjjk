@@ -822,7 +822,7 @@ function pinLabelVisible(page, dev, pinIdx) {
   const p = sym.pins[pinIdx];
   // inBody: 端子名を記号の body に描いてある (入出力結線図の枠記号)。
   // 二重に打つと外郭の縁で重なるので、自動ラベルは出さない
-  if (!p || p.inBody || dev.sym === "terminal") return null;
+  if (!p || p.inBody || symBaseIdOf(dev.sym) === "terminal") return null;
   // 名前の無い端子でも、プロパティで番号を入れれば印字する (入力が正)
   const name = effectivePinName(dev, pinIdx);
   if (!name) return null;
@@ -2043,15 +2043,38 @@ function tocRows() {
     .filter(pg => pg.kind !== "cover" && pg.kind !== "toc")
     .map(pg => ({ name: pg.name, no: pageDwgNo(pg) }));
 }
-/** プロジェクトに同梱されたシンボル定義を辞書へ取り込む (読込・undo 後に呼ぶ) */
+/** プロジェクトに同梱されたシンボル定義を辞書へ取り込む (読込・undo 後に呼ぶ)。
+    同じ id なのに絵が違う定義が来たら (旧式データ: 編集で id を使い回していた)、
+    ライブラリ側は触らず「別の版」として取り込み、この図面の機器をその版へ
+    付け替える — 読み込んだ図面が他の案件のシンボルを書き換えないため */
 function mergeProjectSymbols() {
   const list = App.project && App.project.symbols;
   if (!Array.isArray(list)) return;
+  const remap = {};
   list.forEach(sym => {
     if (!sym || !sym.id) return;
+    const cur = SYMBOLS_BY_ID[sym.id];
+    if (cur && cur !== sym && !symSameDrawing(cur, sym)) {
+      // 同じ絵の版が既にあればそれを使い、無ければ退役版として登録する
+      const base = (sym.verOf || String(sym.id).replace(/~\d+$/, ""));
+      const hit = Object.values(SYMBOLS_BY_ID).find(s2 => symBaseOf(s2) === base && symSameDrawing(s2, sym));
+      let nid;
+      if (hit) nid = hit.id;
+      else {
+        nid = symNextVerId(sym.id);
+        const moved = { ...sym, id: nid, verOf: base, retired: true };
+        SYMBOLS_BY_ID[nid] = moved;
+        if (typeof DB_SYMBOLS !== "undefined" && !DB_SYMBOLS.some(x => x.id === nid)) DB_SYMBOLS.push(moved);
+      }
+      remap[sym.id] = nid;
+      return;
+    }
     SYMBOLS_BY_ID[sym.id] = sym;
     if (typeof DB_SYMBOLS !== "undefined" && !DB_SYMBOLS.some(x => x.id === sym.id)) DB_SYMBOLS.push(sym);
   });
+  if (Object.keys(remap).length) {
+    App.project.pages.forEach(pg => (pg.devices || []).forEach(d => { if (remap[d.sym]) d.sym = remap[d.sym]; }));
+  }
 }
 /** 図面で実際に使われている取り込みシンボルをプロジェクトへ保存する */
 function syncProjectSymbols() {
@@ -4087,8 +4110,9 @@ function bomCSV() {
 function buildPLCList() {
   const rows = [];
   App.project.pages.forEach(page => page.devices.forEach(dev => {
-    if (dev.sym === "plc_di" || dev.sym === "plc_do") {
-      rows.push({ tag: dev.tag, addr: dev.desc || "—", kind: dev.sym === "plc_di" ? "入力" : "出力", loc: devLocation(dev) });
+    const b0 = symBaseIdOf(dev.sym);
+    if (b0 === "plc_di" || b0 === "plc_do") {
+      rows.push({ tag: dev.tag, addr: dev.desc || "—", kind: b0 === "plc_di" ? "入力" : "出力", loc: devLocation(dev) });
     }
   }));
   return rows.sort((a, b) => a.addr.localeCompare(b.addr));
@@ -4108,7 +4132,7 @@ function buildConnectionList() {
         if (!net) return;
         if (!netPins.has(net)) netPins.set(net, []);
         const sym = symOf(dev.sym);
-        const label = dev.sym === "terminal" || sym.sim === "link"
+        const label = symBaseIdOf(dev.sym) === "terminal" || sym.sim === "link"
           ? (dev.tag || sym.name)
           : `${displayTag(dev) || sym.name}:${effectivePinName(dev, pin.idx) || pin.idx + 1}`;
         if (!netPins.get(net).includes(label)) netPins.get(net).push(label); // 端子等の重複列挙を防ぐ
@@ -4143,7 +4167,7 @@ function buildTerminalList() {
     }));
     const pinLabel = (d, idx) => {
       const s = symOf(d.sym);
-      if (d.sym === "terminal" || s.sim === "link") return d.tag || s.name;
+      if (symBaseIdOf(d.sym) === "terminal" || s.sim === "link") return d.tag || s.name;
       return `${displayTag(d) || s.name}:${effectivePinName(d, idx) || idx + 1}`;
     };
     page.devices.forEach(dev => {

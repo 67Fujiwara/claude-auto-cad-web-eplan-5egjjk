@@ -122,8 +122,8 @@ function aiGenerate(sel) {
     return null;
   }
   function driveContactFor(coilDev) {
-    if (coilDev.sym === "timer_on") return "aux_ton_no";   // 限時動作 (TON)
-    if (coilDev.sym === "timer_off") return "aux_toff_no"; // 限時復帰 (TOF) — 記号を使い分ける
+    if (symBaseIdOf(coilDev.sym) === "timer_on") return "aux_ton_no";   // 限時動作 (TON)
+    if (symBaseIdOf(coilDev.sym) === "timer_off") return "aux_toff_no"; // 限時復帰 (TOF) — 記号を使い分ける
     return "aux_no";
   }
 
@@ -558,7 +558,7 @@ function aiGenerate(sel) {
 
   // ── 主回路ページ (三相 / 単相モータ) ──
   if (motorsAll.length) {
-    const contCoils = coils.filter(c => c.sym === "cont_coil");
+    const contCoils = coils.filter(c => symBaseIdOf(c.sym) === "cont_coil");
     const olIds = [];
     const fixWire = (pg, pts, num) => { const w = addWire(pg, pts); if (w) { w.num = num; w.fixed = true; } };
     // 主回路も用紙幅で改ページする (黙って図枠外へ出さない)

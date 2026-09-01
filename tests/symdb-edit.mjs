@@ -148,27 +148,33 @@ R.insert = await p.evaluate(() => {
 });
 await p.evaluate(() => { document.querySelector(".modal-close").click(); });
 
-// ── 規格記号の上書き保存 → 復元 ──
+/* ── 規格記号の編集 = 新しい版 (coil~2) として登録される ──
+   規格の coil はそのまま。パレットには新しい版だけが出て、
+   「元に戻す」で版を退かせるとパレットに規格の coil が戻る */
 R.override = await p.evaluate(async () => {
   const origBody = SYMBOLS_BY_ID.coil.body;
   UI.openSymbolEditor("coil");
   SymEdit.shapes.push({ k: "line", pts: [[0, 25], [5, 25]], style: "solid" });
   document.querySelector("#seOk").click();
   await new Promise(r => setTimeout(r, 60));
-  const cur = SYMBOLS_BY_ID.coil;
+  const ver = SYMBOLS_BY_ID["coil~2"];
   const saved = (() => {
-    try { return (JSON.parse(localStorage.getItem("electracad.importedSyms")) || []).some(s => s.id === "coil" && s.edited); }
+    try { return (JSON.parse(localStorage.getItem("electracad.importedSyms")) || []).some(s => s.id === "coil~2" && s.edited); }
     catch (e) { return false; }
   })();
+  const inPal = allSymbols().map(s => s.id);
   const out = {
-    edited: !!cur.edited, inArray: SYMBOLS.find(s => s.id === "coil") === cur,
-    bodyChanged: cur.body !== origBody, saved,
-    stillLogic: symCatOf(cur) === "logic",
+    edited: !!(ver && ver.edited), verOf: ver && ver.verOf,
+    stdKept: SYMBOLS_BY_ID.coil.body === origBody,            // 規格側は書き換えない
+    bodyChanged: !!ver && ver.body !== origBody, saved,
+    stillLogic: !!ver && symCatOf(ver) === "logic",
+    palVer: inPal.includes("coil~2"), palStdHidden: !inPal.includes("coil"),
   };
-  // 復元
-  symRestoreStd("coil");
-  const back = SYMBOLS_BY_ID.coil;
-  out.reverted = !back.edited && back.body === origBody && SYMBOLS.find(s => s.id === "coil") === back;
+  // 「元に戻す」= 版を退かせる → パレットに規格の coil が戻る。定義は残る
+  symRetireVersions("coil");
+  const pal2 = allSymbols().map(s => s.id);
+  out.reverted = pal2.includes("coil") && !pal2.includes("coil~2")
+    && SYMBOLS_BY_ID.coil.body === origBody && !!SYMBOLS_BY_ID["coil~2"];
   saveImportedSymbols();
   return out;
 });
@@ -192,7 +198,9 @@ const checks = {
   rotateAll: JSON.stringify(R.rotate.all.pts) === "[[10,10],[-10,10]]" &&
     JSON.stringify(R.rotate.all.pins) === "[[10,10],[-10,10]]",
   insert: R.insert.nShapes >= 2 && R.insert.nPins === 2 && R.insert.pinOnGrid && !R.insert.pending && R.insert.msel > 0,
-  override: R.override.edited && R.override.inArray && R.override.bodyChanged && R.override.saved && R.override.stillLogic,
+  override: R.override.edited && R.override.verOf === "coil" && R.override.stdKept
+    && R.override.bodyChanged && R.override.saved && R.override.stillLogic
+    && R.override.palVer && R.override.palStdHidden,
   revert: R.override.reverted,
   stretchCopy: R.stretchCopy.editing === null && R.stretchCopy.name.includes("複製") && R.stretchCopy.nShapes >= 1,
 };

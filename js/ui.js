@@ -26,10 +26,19 @@ function h(html) {
 }
 
 /* ══════════════ シンボルパレット ══════════════ */
-/** ライブラリ+DBの全シンボル (id 重複なし)。分類の入れ替えは symCatOf で効く */
+/** ライブラリ+DBの全シンボル (id 重複なし)。分類の入れ替えは symCatOf で効く。
+    版が重ねられた記号は、いちばん新しい版だけを出す (古い版は置いてある
+    機器のためだけに残っている) */
 function allSymbols() {
   const seen = new Set();
-  return [...SYMBOLS, ...DB_SYMBOLS].filter(s => seen.has(s.id) ? false : (seen.add(s.id), true));
+  const latest = symLatestMap();
+  return [...SYMBOLS, ...DB_SYMBOLS].filter(s => {
+    if (seen.has(s.id)) return false;
+    seen.add(s.id);
+    if (s.retired) return false;
+    const b = latest[symBaseOf(s)];
+    return !b || b.id === s.id;
+  });
 }
 UI.buildPalette = (filter = "") => {
   const tree = document.getElementById("symTree");
@@ -391,7 +400,7 @@ UI.showProps = (focusTag = false) => {
            仮番号 1,2,3… を消せる)。記号どおりに戻したいときは既定値を入れ直す。
            結線図の枠記号 (端子名を外郭内に描く) と端子台は対象外 */
         const pins2 = sym.pins || [];
-        if (!pins2.length || pins2.length > 12 || sym.ioSheet || dev.sym === "terminal") return "";
+        if (!pins2.length || pins2.length > 12 || sym.ioSheet || symBaseIdOf(dev.sym) === "terminal") return "";
         const rows = pins2.map((p2, i) => {
           if (p2.inBody) return "";
           const auto = autoPinName(dev, i);
@@ -1693,15 +1702,28 @@ function loadImportedSymbols() {
   try {
     const raw = localStorage.getItem("electracad.importedSyms");
     if (!raw) return;
+    let migrated = 0;
     JSON.parse(raw).forEach(sym => {
-      if (SYMBOLS_BY_ID[sym.id]) {
-        // 規格ライブラリの記号を編集で上書きしたもの: 元を控えてから置き換える
-        if (sym.edited) symOverrideStd(sym);
+      const cur = SYMBOLS_BY_ID[sym.id];
+      if (cur && !cur.imported) {
+        /* 旧式データ: 規格記号を同じ id のまま上書きして保存していた。
+           規格側は触らず「新しい版」として取り込む — 上書き前に置いた
+           機器 (別の案件を含む) の絵を変えないため */
+        if (sym.edited || !symSameDrawing(cur, sym)) {
+          const nid = symNextVerId(sym.id);
+          const moved = { ...sym, id: nid, verOf: symBaseIdOf(sym.id) };
+          DB_SYMBOLS.push(moved);
+          SYMBOLS_BY_ID[nid] = moved;
+          symCarryPrefs(sym.id, nid);
+          migrated++;
+        }
         return;
       }
+      if (cur) return;
       DB_SYMBOLS.push(sym);
       SYMBOLS_BY_ID[sym.id] = sym;
     });
+    if (migrated) saveImportedSymbols();   // 版の形に直したものを保存し直す
   } catch (e) { /* 破損時は読み飛ばす */ }
 }
 

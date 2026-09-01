@@ -1861,12 +1861,16 @@ UI.openSymbolEditor = (symId = null) => {
     if (S.pins.length < 2 && sim !== "none" && !S.funcs.length) {
       if (!confirm("端子が2点未満です。回路の働きを設定しても通電計算はされません。\nこのまま登録しますか？")) return;
     }
-    const dupName = [...SYMBOLS, ...DB_SYMBOLS].find(s => s.name === name && s.id !== S.editingId);
+    const dupName = [...SYMBOLS, ...DB_SYMBOLS].find(s => s.name === name && s.id !== S.editingId
+      && !(S.editingId && symBaseIdOf(s.id) === symBaseIdOf(S.editingId)));
     if (dupName && !confirm(`「${name}」という名前のシンボルが既にあります。\nこのまま登録しますか？`)) return;
 
-    const id = S.editingId || ("usr_" + uid("s"));
     const orig = S.editingId ? SYMBOLS_BY_ID[S.editingId] : null;
-    const isStd = !!(orig && !orig.custom && !orig.imported) || !!(orig && orig.edited);  // 規格ライブラリの上書き
+    /* 既存シンボルの編集は「新しい版」(別 id) として登録する。
+       置いてある機器は元の版のままなので、この図面も別の案件の図面も
+       絵は変わらない — 変更が効くのはシンボルを追加するときから */
+    const id = orig ? symNextVerId(orig.id) : ("usr_" + uid("s"));
+    const isStd = !!(orig && !orig.custom && !orig.imported) || !!(orig && orig.edited);  // 規格記号の系譜 (管理で「元に戻す」が出る)
     const sym = {
       ...(orig || {}),                 // jis / stdNote / enclosure など元の付帯情報を引き継ぐ
       id, db: true,
@@ -1892,16 +1896,22 @@ UI.openSymbolEditor = (symId = null) => {
       imported: true,                  // localStorage へ保存する対象
       custom: orig ? !!orig.custom : true,   // 自作 (シンボル作成で描いたもの)
       nonstd: orig ? !!orig.nonstd : true,   // 規格記号ではないことを明示
-      edited: isStd || undefined,      // 規格記号の上書き (「自作シンボルの管理」で元に戻せる)
+      edited: isStd || undefined,      // 規格記号を編集した系譜 (「自作シンボルの管理」で元に戻せる)
+      verOf: orig ? symBaseOf(orig) : undefined,   // 元 (根) の id — 版の系譜
+      retired: undefined,
     };
-    if (isStd) {
-      // 規格ライブラリの記号を上書き: 元を控えてから全域 (パレット・図面) で置き換える
-      symOverrideStd(sym);
-    } else {
+    if (orig && symSameDrawing(orig, sym)
+      && ["name", "nameEn", "desc", "typ", "letter", "group"].every(k2 => (orig[k2] || "") === (sym[k2] || ""))) {
+      m.close();
+      UI.setMsg("変更はありません (シンボルはそのままです)");
+      return;
+    }
+    {
       const at = DB_SYMBOLS.findIndex(s => s.id === id);
       if (at >= 0) DB_SYMBOLS[at] = sym; else DB_SYMBOLS.push(sym);
       SYMBOLS_BY_ID[id] = sym;
     }
+    if (orig) symCarryPrefs(orig.id, id);   // 棚・パレット・タグ表示の設定を新しい版へ
     _symRectCache.delete(id);   // 同一 id で body を再編集した場合に古い箱をラベル障害物に使わない
     saveImportedSymbols();
     syncProjectSymbols();
@@ -1909,9 +1919,9 @@ UI.openSymbolEditor = (symId = null) => {
     UI.buildPalette();
     requestRender();
     m.close();
-    UI.setMsg(isStd
-      ? `シンボル「${name}」を上書きしました (「自作シンボルの管理」からいつでも元の規格図形に戻せます)`
-      : `シンボル「${name}」を${S.editingId ? "更新" : "登録"}しました (左のライブラリに表示)`);
+    UI.setMsg(orig
+      ? `シンボル「${name}」を新しい版として登録しました — 置いてある機器はそのまま、これから追加する分に使われます`
+      : `シンボル「${name}」を登録しました (左のライブラリに表示)`);
   });
 
   draw();
@@ -1919,7 +1929,12 @@ UI.openSymbolEditor = (symId = null) => {
 
 /** 自作シンボルの一覧から編集・削除する */
 UI.manageCustomSymbols = () => {
-  const list = () => DB_SYMBOLS.filter(s => s.custom || s.imported);
+  // 版が重ねられた記号はいちばん新しい版だけを出す (古い版は図面のために残っているだけ)
+  const list = () => {
+    const latest = symLatestMap();
+    return DB_SYMBOLS.filter(s => (s.custom || s.imported) && !s.retired
+      && (!latest[symBaseOf(s)] || latest[symBaseOf(s)].id === s.id));
+  };
   const body = h(`<div>
     <div class="prop-note" style="margin-top:0">
       自作シンボル・DXF から取り込んだシンボル・規格記号の上書きの一覧です。<br>
@@ -1952,16 +1967,16 @@ UI.manageCustomSymbols = () => {
       const id = b.dataset.id;
       const sym0 = SYMBOLS_BY_ID[id];
       if (sym0 && sym0.edited) {
-        // 規格記号の上書き: 削除ではなく元の規格図形へ復元する
-        if (!confirm(`「${sym0.name}」を元の規格図形に戻しますか？`)) return;
-        symRestoreStd(id);
-        _symRectCache.delete(id);
+        /* 規格記号を編集した系譜: 版をパレットから退かせて規格の図形に戻す。
+           置いてある機器は置いたときの版のままなので、絵は変わらない */
+        if (!confirm(`「${sym0.name}」の版を退かせて、パレットを元の規格図形に戻しますか？\n(すでに置いてある機器の絵は変わりません)`)) return;
+        symRetireVersions(symBaseOf(sym0));
         saveImportedSymbols();
         syncProjectSymbols();
         UI.buildPalette();
         requestRender();
         render();
-        UI.setMsg(`「${SYMBOLS_BY_ID[id].name}」を元の規格図形に戻しました`);
+        UI.setMsg(`パレットを元の規格図形に戻しました (置いてある機器はそのままです)`);
         return;
       }
       const used = App.project.pages.some(pg => pg.devices.some(d => d.sym === id));

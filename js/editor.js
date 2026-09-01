@@ -445,7 +445,7 @@ function simDevVisual(dev, sym) {
       return { color: (t ? t.output : en) ? SIM_P : null };
     case "load": {
       if (!en) return {};
-      if (dev.sym === "lamp") return { color: "#c77b00", extra: `<circle cx="0" cy="10" r="7.5" fill="rgba(255,190,60,.4)"/>` };
+      if (symBaseIdOf(dev.sym) === "lamp") return { color: "#c77b00", extra: `<circle cx="0" cy="10" r="7.5" fill="rgba(255,190,60,.4)"/>` };
       return { color: "#c77b00" };
     }
     case "load3":
