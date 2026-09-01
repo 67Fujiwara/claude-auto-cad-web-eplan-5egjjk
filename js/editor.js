@@ -838,16 +838,22 @@ function specSheetSVG(page, k, record) {
           out += txt(x0, y + RH / 2 + TH * 0.36 * f, colW, "(上でチェックすると、その項目の記入欄が出ます)");
           y += RH;
         } else {
-          picked.forEach((i, r) => {
-            const yy = y + r * RH;
+          /* I/F ごとに、書いた行 + 追記用の空き 1 行。1 行書き込むと
+             次の空き行が現れるので、同じ I/F が何本あっても書き足せる */
+          picked.forEach(i => {
             const name = (grp && grp.opts[i]) || String(i + 1);
-            const key = `${blk.of}_${i}`;
-            out += box(x0, yy, colW, RH);
-            out += txt(x0, yy + RH / 2 + TH * 0.36 * f, colW,
-              `・${name}: ${memo[key] || "(クリックして記入)"}`, "start");
-            if (record) Editor.specBoxes.push({ x: x0, y: yy, w: colW, h: RH, memo: key, label: `${name} の詳細` });
+            const vals = specBullets(page.spec, blk.of, i);
+            for (let r = 0; r <= vals.length; r++) {
+              const key = specBulletKey(blk.of, i, r);
+              const filled = r < vals.length;
+              out += box(x0, y, colW, RH);
+              out += txt(x0, y + RH / 2 + TH * 0.36 * f, colW,
+                `・${name}: ${filled ? vals[r] : (r ? "(クリックして追記)" : "(クリックして記入)")}`, "start");
+              if (record) Editor.specBoxes.push({ x: x0, y, w: colW, h: RH, memo: key,
+                label: `${name} の詳細 ${r + 1}` });
+              y += RH;
+            }
           });
-          y += RH * picked.length;
         }
       } else if (blk.kind === "fields") {
         // ラベルと記入欄の行 (定常時の温度レンジなど)。欄はクリックで書ける
@@ -1162,7 +1168,10 @@ function setupEditor() {
   window.addEventListener("mousemove", onMouseMove);
   window.addEventListener("mouseup", onMouseUp);
   svg.addEventListener("dblclick", onDblClick);
-  svg.addEventListener("contextmenu", e => { e.preventDefault(); cancelDraft(); });
+  /* 既定の右クリックメニューは出さない。作図のキャンセルはここではなく
+     mouseup で行う — OS によっては contextmenu が押した瞬間に発火するので、
+     ここで消すと右ドラッグのパンでも作図が消えてしまう */
+  svg.addEventListener("contextmenu", e => e.preventDefault());
   window.addEventListener("resize", requestRender);
 }
 
@@ -1185,9 +1194,11 @@ function onMouseDown(e) {
   const w = screenToWorld(e.clientX, e.clientY);
   const sx = snap(w.x), sy = snap(w.y);
 
-  // 中ボタン or パンツール or Space → パン
-  if (e.button === 1 || App.tool === "pan" || Editor.spaceHeld) {
-    Editor.drag = { type: "pan", startX: e.clientX, startY: e.clientY, tx0: Editor.view.tx, ty0: Editor.view.ty };
+  // 中ボタン・右ボタン or パンツール or Space → パン
+  // (右ドラッグ: マウスでつまんだ点を軸に、図面がマウスについてくる)
+  if (e.button === 1 || e.button === 2 || App.tool === "pan" || Editor.spaceHeld) {
+    Editor.drag = { type: "pan", startX: e.clientX, startY: e.clientY,
+      tx0: Editor.view.tx, ty0: Editor.view.ty, rmb: e.button === 2 };
     e.preventDefault();
     return;
   }
@@ -1253,6 +1264,7 @@ function onMouseDown(e) {
             const t2 = v2.trim();
             if (t2) pg.spec.memo[box.memo2] = t2; else delete pg.spec.memo[box.memo2];
           }
+          specCompactBullets(pg.spec);       // 箇条書きの途中を消したら詰める
           requestRender();
           UI.showProps();
           UI.setMsg(t ? `${box.label}を書き込みました` : `${box.label}を空にしました`);
@@ -1392,6 +1404,16 @@ function onMouseMove(e) {
   Editor.lastWorld = w;
   updateStatusCoords(w);
 
+  /* パン中は何より先に図面を動かす — 配線の作図やゴースト配置の途中でも
+     右ドラッグ (や中ボタン) で見たいところへ動かせるように */
+  if (Editor.drag && Editor.drag.type === "pan") {
+    const d = Editor.drag;
+    Editor.view.tx = d.tx0 + (e.clientX - d.startX);
+    Editor.view.ty = d.ty0 + (e.clientY - d.startY);
+    if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) > 3) d.moved = true;
+    requestRender();
+    return;
+  }
   if (Editor.ghost) {
     Editor.ghost.x = snap(w.x); Editor.ghost.y = snap(w.y);
     requestRender();
@@ -1437,12 +1459,6 @@ function onMouseMove(e) {
     return;
   }
 
-  if (d.type === "pan") {
-    Editor.view.tx = d.tx0 + (e.clientX - d.startX);
-    Editor.view.ty = d.ty0 + (e.clientY - d.startY);
-    requestRender();
-    return;
-  }
   if (d.type === "rubber") {
     d.x1 = w.x; d.y1 = w.y;
     requestRender();
@@ -1606,6 +1622,11 @@ function onMouseUp(e) {
   const d = Editor.drag;
   if (!d) return;
   Editor.drag = null;
+  if (d.type === "pan") {
+    // 動かさずに右クリックだけ → 従来どおり作図 (配線・配置) のキャンセル
+    if (d.rmb && !d.moved) cancelDraft();
+    return;
+  }
   if (d.type === "simhold") {
     App.sim.states[d.devId] = false;
     simSolve();

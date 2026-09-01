@@ -12,7 +12,10 @@
    ・newProj  : 新しい図面には仕様が 2 枚入る
    ・multi    : 外部 I/F は複数チェックでき、もう一度押すと外れる
    ・ifDetail : チェックした I/F ごとに詳細の箇条書き欄が出て、クリックで書ける。
-                外すとその行も消える */
+                外すとその行も消える
+   ・ifGrow   : 1 行書き込むと追記用の空き行が増える — 同じ I/F が複数あっても
+                続けて書ける
+   ・ifCompact: 途中の行を消すと後ろの行が詰まる (空きの枠が残らない) */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -165,6 +168,27 @@ R.ifDetail.after = await p.evaluate(() => ({
   memo: curPage().spec.memo.extif_2,
   drawn: kindSVG(curPage()).includes("・他装置: 検査装置と Ethernet 接続"),
 }));
+/* 1 行書き込んだので、追記用の空き行が増えているはず */
+R.ifGrow = await p.evaluate(() => ({
+  boxes: (Editor.specBoxes || []).filter(o => o.memo && o.memo.startsWith("extif_2")).map(o => o.memo),
+  rows: (kindSVG(curPage()).match(/・他装置:/g) || []).length,
+}));
+await p.evaluate(() => { window.prompt = () => "PLC リンク (2 台目)"; });
+R.ifGrow.clicked = await clickBox2('o.memo === "extif_2_1"');
+R.ifGrow.after = await p.evaluate(() => ({
+  memo: curPage().spec.memo.extif_2_1,
+  rows: (kindSVG(curPage()).match(/・他装置:/g) || []).length,
+  drawn: kindSVG(curPage()).includes("・他装置: PLC リンク (2 台目)"),
+}));
+// 途中の行 (1 行目) を消すと、2 行目が繰り上がる
+await p.evaluate(() => { window.prompt = () => ""; });
+R.ifCompact = { clicked: await clickBox2('o.memo === "extif_2"') };
+R.ifCompact.after = await p.evaluate(() => ({
+  first: curPage().spec.memo.extif_2 || null,
+  second: curPage().spec.memo.extif_2_1 || null,
+  rows: (kindSVG(curPage()).match(/・他装置:/g) || []).length,
+}));
+
 // チェックを外すと、その行も消える
 await clickBox2('o.k === "extif" && o.i === 2');
 R.ifDetail.afterUncheck = await p.evaluate(() => {
@@ -188,6 +212,12 @@ const checks = {
   ifDetail: R.ifDetail.rows === 1 && R.ifDetail.clicked === true
     && R.ifDetail.after.memo === "検査装置と Ethernet 接続" && R.ifDetail.after.drawn === true
     && R.ifDetail.afterUncheck.has === false,
+  ifGrow: JSON.stringify(R.ifGrow.boxes) === JSON.stringify(["extif_2", "extif_2_1"])
+    && R.ifGrow.rows === 2 && R.ifGrow.clicked === true
+    && R.ifGrow.after.memo === "PLC リンク (2 台目)" && R.ifGrow.after.rows === 3
+    && R.ifGrow.after.drawn === true,
+  ifCompact: R.ifCompact.clicked === true && R.ifCompact.after.first === "PLC リンク (2 台目)"
+    && R.ifCompact.after.second === null && R.ifCompact.after.rows === 2,
   multi: JSON.stringify(R.multi.on) === JSON.stringify([0, 2])
     && JSON.stringify(R.multi.off) === JSON.stringify([2]) && R.multi.drawn >= 1,
 };

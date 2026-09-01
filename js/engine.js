@@ -1956,12 +1956,45 @@ const SPEC_SHEET2 = [
       opts: ["ファン", "盤クーラー", "エアーパージ"] },
     { t: "外部 I/F", kind: "opts", k: "extif", multi: true, note: "(複数チェック可)",
       opts: ["上流", "下流", "他装置"] },
-    // チェックした I/F ごとに、内容を箇条書きで書き足せる欄
+    // チェックした I/F ごとに、内容を箇条書きで書き足せる欄。
+    // 1 行書くと追記用の空き行が増えるので、同じ I/F が何本あっても書ける
     { kind: "bullets", of: "extif", head: "詳細 (チェックした I/F ごとに記入)" },
-    // チェックした I/F ごとに、内容を箇条書きで書き足せる欄
-
   ] },
 ];
+
+/* ── 箇条書きの欄 (bullets) ──
+   保存キーは of_i (1 行目)、of_i_1、of_i_2 … と行ごとに分かれる。
+   書いたぶんだけ行が増え、途中の行を消したら詰める */
+function specBulletKey(of, i, r) { return r ? `${of}_${i}_${r}` : `${of}_${i}`; }
+/** その項目に書いてある行 (順番どおり・空きは無い前提) */
+function specBullets(spec, of, i) {
+  const memo = (spec && spec.memo) || {};
+  const out = [];
+  for (let r = 0; r < 30; r++) {
+    const v = memo[specBulletKey(of, i, r)];
+    if (v && String(v).trim()) out.push(String(v).trim()); else break;
+  }
+  return out;
+}
+/** 途中の行を消したときの空きを詰める。記入欄を書き換えた後に呼ぶ */
+function specCompactBullets(spec) {
+  if (!spec || !spec.memo) return;
+  const blocks = SPEC_SHEETS.flatMap(sh => sh.flatMap(sec => sec.blocks));
+  [...new Set(blocks.filter(b => b.kind === "bullets").map(b => b.of))].forEach(of => {
+    const grp = blocks.find(b => b.k === of);
+    const n = grp && grp.opts ? grp.opts.length : 8;
+    for (let i = 0; i < n; i++) {
+      const vals = [];
+      for (let r = 0; r < 30; r++) {
+        const k = specBulletKey(of, i, r);
+        const v = spec.memo[k];
+        if (v && String(v).trim()) vals.push(String(v).trim());
+        delete spec.memo[k];
+      }
+      vals.forEach((v, r) => { spec.memo[specBulletKey(of, i, r)] = v; });
+    }
+  });
+}
 /** 仕様ページの様式 (1 枚目 / 2 枚目 …)。ページの並び順で決まる */
 const SPEC_SHEETS = [SPEC_SHEET, SPEC_SHEET2];
 function specSheetFor(page) {
