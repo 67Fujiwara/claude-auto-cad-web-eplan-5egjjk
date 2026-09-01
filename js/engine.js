@@ -1548,6 +1548,14 @@ function gotoRefText(dev) {
   const mate = gotoCounterpart(dev);
   return mate ? `${no}/${sheetCol(mate.x)}${sheetRow(mate.y)}` : no;
 }
+/** 機能欄 (コメント) を持つ端子 — 入出力点のみ。
+    サービス電源 (0V/24V) とコモンは出力/入力の点ではないので機能欄を持たない */
+function symFnPins(sym) {
+  const rows = sym && sym.ioSheet && sym.ioSheet.rows;
+  if (!rows) return (sym && sym.pins) || [];
+  return sym.pins.filter(p => p.row !== undefined && rows[p.row] && rows[p.row].io);
+}
+
 /* 入出力結線図の機能欄。行ごとの文言 (dev.props.fn) を下線の上に置く。
    記号の中に文字を焼き込まず機器のプロパティに持つので、同じ記号を何枚
    置いても中身は別々に書ける (端子表 CSV・DXF・検図でも同じ配置を使う) */
@@ -1557,7 +1565,9 @@ function deviceRowTexts(page, dev) {
   const fn = (dev.props && dev.props.fn) || {};
   const s = contentScale(), h = TEXT_H.small * s * symTextK(sym) * devScale(dev);
   const out = [];
+  const fnPins = new Set(symFnPins(sym));
   sym.pins.forEach((p, i) => {
+    if (!fnPins.has(p)) return;          // 電源・コモンの行に文言は出さない
     /* 文言は端子名で持つ。行番号で持つと、機種を差し替えたとき端子の並びが
        変わって「出力 R507 = AC100V L」のような嘘を刷ってしまう */
     const t = Array.isArray(fn) ? fn[i] : fn[p.n];

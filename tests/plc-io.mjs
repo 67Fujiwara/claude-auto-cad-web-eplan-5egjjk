@@ -94,7 +94,9 @@ const R = await p.evaluate(() => {
          ioSheet.fnX/fnW から機器ごとに引く (コメント欄のドラッグ移動に追従) —
          実際に描かれる本数は kv-fncol.mjs の drawn が数える */
       fnLines: (sym.ioSheet && sym.ioSheet.fnX !== undefined && sym.ioSheet.fnW > 0
-        && Array.isArray(sym.ioSheet.rows)) ? sym.ioSheet.rows.length : 0,
+        && Array.isArray(sym.ioSheet.rows)) ? sym.ioSheet.rows.filter(r2 => r2.io).length : 0,
+      auxRows: (sym.ioSheet && Array.isArray(sym.ioSheet.rows))
+        ? sym.ioSheet.rows.filter(r2 => !r2.io).length : 0,
       /* 端子名は外郭の内側に描いてあること (自動ラベルは出さない)。
          外に出すと現場側の配線区画に文字が並び、端子の丸ともあきが取れない */
       termInBody: sym.pins.every(q => q.inBody === true) &&
@@ -801,6 +803,32 @@ const W1 = await p.evaluate(() => {
 console.log("事前レール:", JSON.stringify(W1));
 
 const ids = Object.keys(R.spec);
+/* 実際に引かれる下線の数 = 入出力点の数 (0V/24V・コモンの行には無い)。
+   画面 (devicesSVG)・機能欄の入力欄・DXF の 3 か所で数える */
+const FN = await p.evaluate(() => {
+  App.project = newProject("fn下線"); UI.renumberPages();
+  const pg = App.project.pages.find(isDrawingPage);
+  App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
+  const d = addDevice(pg, "kv_n40at_out", 100, 40);
+  const sym = symOf("kv_n40at_out");
+  const fx = sym.ioSheet.fnX;
+  const svg = devicesSVG(pg, {});
+  const drawn = (svg.match(new RegExp("M" + fx + ",", "g")) || []).length;
+  App.selection.clear(); App.selection.add(d.id); UI.showProps();
+  const fnEl = document.getElementById("pFn");
+  // 入力欄の端子一覧 (1 行 = 1 端子: 500 / 501 / …)。電源・コモンが無いこと
+  const lab = fnEl ? fnEl.closest(".prop-row").querySelector("label").textContent : "";
+  const m2 = /1 行 = 1 端子: (.+)\)/.exec(lab);
+  const uiNames = m2 ? m2[1].split(" / ").map(v => v.trim()) : [];
+  const dxf = pageToDXF(pg); applySheet(pg);
+  // DXF の下線: 始点 x (= 機能欄の左端の図面座標) が下線の本数ぶん現れる
+  const ax = pinAbs(d, { x: fx, y: 0 }).x;
+  const dxfLines = (dxf.match(new RegExp("^" + ax.toFixed(3).replace(".", "\\.") + "$", "gm")) || []).length;
+  App.selection.clear();
+  return { drawn, fnRows: sym.fnRows, total: sym.ioSheet.rows.length,
+    uiNames, dxfLines, fx, devx: d.x };
+});
+
 const checks = {
   // 想定の枚 (id) がすべてあること
   symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 9,
@@ -855,8 +883,14 @@ const checks = {
   peEarth: ids.every(id => (R.group[id] || {}).peEarth),
   // 端子名は記号の中。画面で自動ラベルが 1 つも出ないこと
   termInBody: ids.every(id => (R.group[id] || {}).termInBody) && R.termLabels === 0,
-  // 機能欄の下線が行数ぶんある
-  fnRuling: ids.every(id => (R.group[id] || {}).fnLines === (R.group[id] || {}).fnRows),
+  /* 機能欄は入出力点の行だけ。サービス電源 (0V/24V)・コモンは出力/入力の
+     点ではないので、下線も文言の行も持たない */
+  fnRuling: ids.every(id => (R.group[id] || {}).fnLines === (R.group[id] || {}).fnRows)
+    && ids.every(id => (R.group[id] || {}).auxRows >= 1),
+  fnNoPower: FN.drawn === FN.fnRows && FN.total > FN.fnRows
+    && FN.uiNames.length === FN.fnRows && FN.uiNames[0] === "500"
+    && !FN.uiNames.includes("0V") && !FN.uiNames.includes("24V") && !FN.uiNames.some(n => /^COM/.test(n))
+    && FN.dxfLines === FN.fnRows,
   /* 3 線式センサは NPN (シンク) 形 — 開閉要素は「出力と 0V」の間 */
   npnSensors: Array.isArray(R.npn) && R.npn.length === 3 && R.npn.every(o => o.sinks === true) &&
     R.npn.map(o => o.pins).join(",") === "BK-BU,BK-BU,N24V-OUT",
@@ -952,6 +986,7 @@ const checks = {
     Array.isArray(U2.swapDrc) && U2.swapDrc.length === 0,
 };
 const fail = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
+console.log("FN:", JSON.stringify(FN));
 console.log("CHECKS:", JSON.stringify(checks), fail.length ? "FAIL " + fail.join(",") : "ok");
 console.log("ERRORS:", errs.length, errs.slice(0, 3));
 await b.close();

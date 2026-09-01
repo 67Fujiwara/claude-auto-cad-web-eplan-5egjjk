@@ -407,7 +407,8 @@ function devicesSVG(page, opts = {}) {
     if (sym.ioSheet && sym.ioSheet.rows && sym.ioSheet.fnW) {
       const fx = (sym.ioSheet.fnX !== undefined ? sym.ioSheet.fnX : (sym.ioSheet.fnTextX || 0) - 1) + devFnDx(dev);
       let dfn = "";
-      sym.ioSheet.rows.forEach(rr => { dfn += `M${fx},${rr.y + 1.5} H${fx + sym.ioSheet.fnW} `; });
+      // 下線は入出力点の行だけ。電源 (0V/24V)・コモンは点ではないので引かない
+      sym.ioSheet.rows.forEach(rr => { if (rr.io) dfn += `M${fx},${rr.y + 1.5} H${fx + sym.ioSheet.fnW} `; });
       out += `<path d="${dfn}" stroke="currentColor" stroke-width="0.25" fill="none"/>`;
     }
     out += `</g>`;
@@ -1086,6 +1087,14 @@ function hitTest(wx, wy) {
       }
       continue;
     }
+    if (sym.ioSheet && sym.inkBoxes && sym.inkBoxes.length) {
+      /* 入出力結線図は外接矩形が用紙の大半を覆う。面全体で拾うと、中に描いた
+         配線・機器・ラベルが選べなくなるので、実際に線のある帯
+         (端子の列の箱・機能欄の下線) の近くだけで拾う */
+      if (devInkBoxes(d).some(r => wx > r.x - 1.5 && wx < r.x + r.w + 1.5 &&
+        wy > r.y - 1.5 && wy < r.y + r.h + 1.5)) cands.push({ type: "device", obj: d });
+      continue;
+    }
     const b = devBounds(d);
     if (wx > b.x - 1.5 && wx < b.x + b.w + 1.5 && wy > b.y - 1.5 && wy < b.y + b.h + 1.5) cands.push({ type: "device", obj: d });
   }
@@ -1644,6 +1653,15 @@ function onMouseUp(e) {
         ? bx < x1 && bx + bw > x0 && by < y1 && by + bh > y0        // 交差: 一部でも触れれば選択
         : bx >= x0 && bx + bw <= x1 && by >= y0 && by + bh <= y1;   // 窓: 完全包含のみ
       page.devices.forEach(dev => {
+        const sym2 = symOf(dev.sym);
+        if (sym2.ioSheet && sym2.inkBoxes && sym2.inkBoxes.length) {
+          // 結線図の枠は、線のある帯で判定 (交差=帯に触れる / 窓=帯が全部入る)
+          const bs = devInkBoxes(dev);
+          const hit = crossing ? bs.some(r => rectHit(r.x, r.y, r.w, r.h))
+                               : bs.every(r => rectHit(r.x, r.y, r.w, r.h));
+          if (hit) App.selection.add(dev.id);
+          return;
+        }
         const b = devBounds(dev);
         if (rectHit(b.x, b.y, b.w, b.h)) App.selection.add(dev.id);
       });

@@ -473,10 +473,12 @@ UI.showProps = (focusTag = false) => {
       ${sym.fnRows ? (() => {
         // 機能欄 (行ごとの文言)。1 行 1 端子でまとめて貼り付けられる
         const fn = (dev.props && dev.props.fn) || {};
-        const val = (p2, i) => (Array.isArray(fn) ? fn[i] : fn[p2.n]) || "";
-        const names = sym.pins.map(p2 => p2.n).join(" / ");
+        // 並べるのは入出力点だけ。電源 (0V/24V)・コモンは機能欄を持たない
+        const fnPins = symFnPins(sym);
+        const val = p2 => (Array.isArray(fn) ? fn[sym.pins.indexOf(p2)] : fn[p2.n]) || "";
+        const names = fnPins.map(p2 => p2.n).join(" / ");
         return `<div class="prop-row"><label>機能欄 <span class="rp-dim">(1 行 = 1 端子: ${escAttr(names)})</span></label>
-          <textarea id="pFn" rows="${Math.min(12, sym.fnRows)}" class="mono" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12px;padding:6px 8px;outline:none;resize:vertical">${escAttr(sym.pins.map(val).join("\n"))}</textarea></div>`;
+          <textarea id="pFn" rows="${Math.min(12, sym.fnRows)}" class="mono" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12px;padding:6px 8px;outline:none;resize:vertical">${escAttr(fnPins.map(val).join("\n"))}</textarea></div>`;
       })() : ""}
       ${sym.sheet ? (() => {
         // 用紙に合わせて作った記号 (入出力結線図)。今の用紙と違えば 1 押しで直せる
@@ -571,7 +573,7 @@ UI.showProps = (focusTag = false) => {
       dev.props = dev.props || {};
       const lines = fnEl.value.split("\n").map(v => v.trim());
       const map = {};
-      sym.pins.forEach((p2, i) => { if (lines[i]) map[p2.n] = lines[i]; });
+      symFnPins(sym).forEach((p2, i) => { if (lines[i]) map[p2.n] = lines[i]; });
       if (Object.keys(map).length) dev.props.fn = map; else delete dev.props.fn;
       App.labelRev++;
       UI.refresh(false);

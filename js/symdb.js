@@ -317,7 +317,7 @@ function kvBuild(o, pitch) {
   const gapX0 = gapX1 - KV_GAP;
   return {
     pins, body: parts.join(""), bounds, inkBoxes,
-    fnRows: rows.length,
+    fnRows: rows.filter(r => r.io).length,   // 機能欄の行 = 入出力点のみ
     /* 下地の寸法 (端子からの距離)。テストや使う人がここから隙間の位置を出せる:
        side = 現場側がどちらか。外側 (コモン側) レール = x ± rail /
        内側 (分岐側) = そこから sep だけ機器側 / 隙間 = [x+gapX0, x+gapX1] */

@@ -2,7 +2,8 @@
 
    ・bodyClean : 下線は body に焼き込まれていない (ioSheet.fnX/fnW を公開し、
                  画面・DXF が機器ごとに引く)
-   ・drawn     : 配置した機器のグループに、行数ぶんの下線が既定位置で描かれる
+   ・drawn     : 配置した機器のグループに、入出力点の行数ぶんの下線が既定位置で
+                 描かれる (電源 0V/24V・コモンの行には無い)
    ・dragMove  : 下線を実マウスでつまんで右へドラッグ → props.fnDx が付き
                  (0.5mm 刻み)、下線が新しい位置で描かれる
    ・devKept   : 機器そのもの (x,y) と行テキスト以外は動かない
@@ -38,8 +39,10 @@ const D = await p.evaluate(async () => {
   await new Promise(r => setTimeout(r, 250));
   const g = document.querySelector(`g.device[data-id="${d.id}"]`);
   const fx = sym.ioSheet.fnX;
+  // 下線は入出力点の行だけ (電源 0V/24V・コモンには無い)
   out.drawn = g && g.innerHTML.includes(`M${fx},`) &&
-    (g.innerHTML.match(new RegExp(`M${fx},`, "g")) || []).length === sym.ioSheet.rows.length;
+    (g.innerHTML.match(new RegExp(`M${fx},`, "g")) || []).length === sym.ioSheet.rows.filter(r2 => r2.io).length &&
+    sym.ioSheet.rows.some(r2 => !r2.io);
   out.devId = d.id; out.dev = { x: d.x, y: d.y };
   out.fnX = fx; out.fnW = sym.ioSheet.fnW;
   out.row0 = sym.ioSheet.rows[0].y;

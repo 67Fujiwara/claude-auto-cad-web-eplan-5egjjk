@@ -577,6 +577,7 @@ function pageToDXF(page) {
     if (sym.ioSheet && sym.ioSheet.rows && sym.ioSheet.fnW) {
       const fx0 = (sym.ioSheet.fnX !== undefined ? sym.ioSheet.fnX : (sym.ioSheet.fnTextX || 0) - 1) + devFnDx(dev);
       sym.ioSheet.rows.forEach(rr => {
+        if (!rr.io) return;              // 電源 (0V/24V)・コモンの行には引かない
         ents += dxfPoly([xf(fx0, rr.y + 1.5), xf(fx0 + sym.ioSheet.fnW, rr.y + 1.5)], "SYMBOL_THIN");
       });
     }
