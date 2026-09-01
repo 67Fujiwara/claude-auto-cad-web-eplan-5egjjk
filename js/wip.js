@@ -175,12 +175,18 @@ UI.updateWipChip = () => {
   const el = document.getElementById("btnWip");
   if (!el) return;
   const cur = wipList().find(r => r.id === wipCurrent());
+  const isMaster = !!(cur && cur.master);
   const lab = el.querySelector(".wip-label");
   if (lab) lab.textContent = cur ? cur.name : "作業中";
-  el.title = cur
-    ? `作業中: ${cur.name} — クリックで一覧 (ほかの案件に切り替え)`
-    : "作業中の図面 (一時保存) — 案件をいくつも並行して進められます";
-  el.classList.toggle("active", !!cur);
+  const badge = el.querySelector(".wip-master-badge");
+  if (badge) badge.hidden = !isMaster;      // マスターを開いている間だけ金色の札を出す
+  el.title = isMaster
+    ? `マスターファイル「${cur.name}」を開いています — ここで直した内容はひな型に残ります。案件は「コピーして開く」で始めてください`
+    : cur
+      ? `作業中: ${cur.name} — クリックで一覧 (ほかの案件に切り替え)`
+      : "作業中の図面 (一時保存) — 案件をいくつも並行して進められます";
+  el.classList.toggle("active", !!cur && !isMaster);
+  el.classList.toggle("master", isMaster);
 };
 
 /* ── 作業中の図面の一覧 ───────────────────────── */

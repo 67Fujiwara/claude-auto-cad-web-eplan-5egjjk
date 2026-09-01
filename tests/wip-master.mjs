@@ -9,7 +9,9 @@
    ・masterCopy: 別のファイルを開いているところからマスターをコピーして
                  新しい案件を始められる。コピーには機器が入っている
    ・masterKeep: コピーしてもマスター本体は変わらない (名前も中身もそのまま)
-   ・masterFirst: コピーで新しい枠が増えた後も、一覧はマスターが先頭 */
+   ・masterFirst: コピーで新しい枠が増えた後も、一覧はマスターが先頭
+   ・chipBadge : マスターを開いている間はヘッダの「作業中」チップに金色の
+                 「マスター」札が出る。普通の案件に切り替えると消える */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -113,6 +115,26 @@ R.masterFirst = await p.evaluate(async () => {
   return out;
 });
 
+// ── マスターを開いている間はヘッダに目印 ──
+R.chipBadge = await p.evaluate(async () => {
+  const chip = () => {
+    const el = document.getElementById("btnWip");
+    const badge = el.querySelector(".wip-master-badge");
+    return { badge: !!badge && !badge.hidden, master: el.classList.contains("master"),
+      title: el.title };
+  };
+  const before = chip();                          // いまは 新案件D (普通の案件)
+  const list = JSON.parse(localStorage.getItem("electracad.wip.list") || "[]");
+  const master = list.find(r => r.master);
+  if (!master) return { before, note: "マスターが一覧に無い" };
+  await UI.wipOpen(master.id);
+  const on = chip();
+  const a = JSON.parse(localStorage.getItem("electracad.wip.list") || "[]").find(r => r.name === "案件A");
+  await UI.wipOpen(a.id);
+  const after = chip();
+  return { before, on, after };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
   dialogBtns: R.dialogBtns.add === true && R.dialogBtns.master === true,
@@ -127,6 +149,10 @@ const checks = {
   masterKeep: R.masterKeep.stillMaster === true && R.masterKeep.name === "標準回路M"
     && R.masterKeep.bodyName === "標準回路M" && R.masterKeep.devices === 2,
   masterFirst: R.masterFirst.n === 4 && R.masterFirst.first === true,
+  chipBadge: R.chipBadge.before.badge === false && R.chipBadge.before.master === false
+    && R.chipBadge.on.badge === true && R.chipBadge.on.master === true
+    && /マスターファイル/.test(R.chipBadge.on.title)
+    && R.chipBadge.after.badge === false && R.chipBadge.after.master === false,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

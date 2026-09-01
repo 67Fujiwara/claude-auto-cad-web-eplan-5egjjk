@@ -102,6 +102,14 @@ input, select, textarea { font-family: inherit; }
 /* 作業中の図面を開いているときは、ヘッダのチップに案件名を出して目立たせる */
 .tb-chip.active { border-color: var(--accent); color: var(--accent-2); background: var(--accent-dim); }
 .tb-chip .wip-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-chip .wip-master-badge {
+  padding: 1px 7px; border-radius: 9px; font-size: 10px; font-weight: 700;
+  background: #b8860b; color: #fff; letter-spacing: .5px;
+  white-space: nowrap; flex: none;
+}
+/* マスターファイルを開いている間の目印 — 直した内容がひな型に残ることが分かるように */
+.tb-chip.master { border-color: #b8860b; color: #e8c268; background: rgba(184,134,11,.14); }
+.tb-chip.master:hover { background: rgba(184,134,11,.22); border-color: #d4a017; }
 
 /* ══════════════ リボン ══════════════ */
 #ribbon {
