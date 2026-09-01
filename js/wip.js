@@ -53,9 +53,15 @@ UI.wipSave = async (opts = {}) => {
     id = "wip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
     entry = { id, name };
     list.unshift(entry);
+    if (opts.name) {           // 枠の名前と図面の名前を合わせる (別枠/マスターの保存)
+      App.project.name = name;
+      const el = document.getElementById("projectName");
+      if (el) el.value = name;
+    }
   }
   const st = wipStats(App.project);
   Object.assign(entry, { at: new Date().toISOString(), project: App.project.name, ...st });
+  if (opts.master) entry.master = true;    // マスターファイル (標準回路のひな型) の印
   const ok = await relPutSnapshot(id, App.project);
   if (!ok) {
     UI.setMsg("一時保存できませんでした (ブラウザの保存領域がいっぱいの可能性があります) — ファイルに保存してください");
@@ -68,16 +74,14 @@ UI.wipSave = async (opts = {}) => {
   return id;
 };
 
-/** 作業中の図面を開く。開く前に今の図面を一時保存する (取りこぼさない) */
-UI.wipOpen = async (id) => {
-  const list = wipList();
-  const entry = list.find(r => r.id === id);
-  if (!entry) { UI.setMsg("その図面は見つかりませんでした"); return false; }
-  if (wipCurrent() && wipCurrent() !== id) await UI.wipSave();     // 今の続きを取っておく
+/** 今の図面を取りこぼさないよう退避する (開く・追加・コピーの前に呼ぶ) */
+async function wipStashCurrent(exceptId) {
+  if (wipCurrent() && wipCurrent() !== exceptId) await UI.wipSave();     // 今の続きを取っておく
   else if (!wipCurrent() && App.dirty &&
     confirm("今の図面はまだ作業中に入っていません。先に一時保存しますか？")) await UI.wipSave({ asNew: true });
-  const p = await relGetSnapshot(id);
-  if (!p || !p.pages) { UI.setMsg("図面の中身を読み出せませんでした"); return false; }
+}
+/** 読み出した図面を画面に載せる (wipOpen / コピーして開く の共通処理) */
+function wipShowProject(p, id) {
   if (App.sim.running) UI.toggleSim();
   App.project = p;
   App.fileHandle = null;
@@ -95,8 +99,75 @@ UI.wipOpen = async (id) => {
   saveLocal();
   UI.refresh();
   zoomFit();
-  UI.setMsg(`作業中の図面「${entry.name}」を開きました`);
+}
+
+/** 作業中の図面を開く。開く前に今の図面を一時保存する (取りこぼさない) */
+UI.wipOpen = async (id) => {
+  const list = wipList();
+  const entry = list.find(r => r.id === id);
+  if (!entry) { UI.setMsg("その図面は見つかりませんでした"); return false; }
+  await wipStashCurrent(id);
+  const p = await relGetSnapshot(id);
+  if (!p || !p.pages) { UI.setMsg("図面の中身を読み出せませんでした"); return false; }
+  wipShowProject(p, id);
+  UI.setMsg(entry.master
+    ? `マスターファイル「${entry.name}」を開きました — 直した内容はマスターに残ります`
+    : `作業中の図面「${entry.name}」を開きました`);
   return true;
+};
+
+/** 新しい図面を枠ごと追加して開く (今の図面は退避してから) */
+UI.wipNew = async (opts = {}) => {
+  const nm = opts.name !== undefined ? opts.name
+    : prompt("新しい図面の名前 (案件名など)", "");
+  if (nm === null || !nm.trim()) return null;
+  await wipStashCurrent("");
+  App.project = newProject(nm.trim());
+  App.fileHandle = null;
+  wipSetCurrent("");
+  const id = await UI.wipSave({ asNew: true, name: nm.trim() });
+  if (!id) return null;
+  wipShowProject(App.project, id);
+  UI.setMsg(`新しい図面「${nm.trim()}」を追加しました`);
+  return id;
+};
+
+/** 今の図面をマスターファイルとして保存する (標準回路のひな型) */
+UI.wipSaveMaster = async (opts = {}) => {
+  const nm = opts.name !== undefined ? opts.name
+    : prompt("マスターファイルの名前 (ひな型名)", App.project.name || "");
+  if (nm === null || !nm.trim()) return null;
+  const id = await UI.wipSave({ asNew: true, name: nm.trim(), master: true });
+  if (id) UI.setMsg(`マスターファイル「${nm.trim()}」として保存しました — 「コピーして開く」で案件を始められます`);
+  return id;
+};
+
+/** 図面のコピーを新しい枠として作って開く。元 (マスターなど) は変わらない */
+UI.wipCopy = async (id, opts = {}) => {
+  const list = wipList();
+  const src = list.find(r => r.id === id);
+  if (!src) { UI.setMsg("その図面は見つかりませんでした"); return null; }
+  const nm = opts.name !== undefined ? opts.name
+    : prompt(src.master ? "新しい案件の名前 (マスターからコピーします)" : "コピー先の名前",
+      src.master ? "" : `${src.name} のコピー`);
+  if (nm === null || !nm.trim()) return null;
+  await wipStashCurrent(id === wipCurrent() ? "" : id);
+  const p = await relGetSnapshot(id);
+  if (!p || !p.pages) { UI.setMsg("図面の中身を読み出せませんでした"); return null; }
+  p.name = nm.trim();
+  const nid = "wip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const ok = await relPutSnapshot(nid, p);
+  if (!ok) { UI.setMsg("コピーを保存できませんでした (ブラウザの保存領域を確認してください)"); return null; }
+  const st = wipStats(p);
+  const list2 = wipList();
+  list2.unshift({ id: nid, name: nm.trim(), at: new Date().toISOString(),
+    project: p.name, ...st, saved: true });
+  wipSaveList(list2);
+  wipShowProject(p, nid);
+  UI.setMsg(src.master
+    ? `マスター「${src.name}」をコピーして「${nm.trim()}」を始めました (マスターは変わりません)`
+    : `「${src.name}」のコピー「${nm.trim()}」を開きました`);
+  return nid;
 };
 
 /** ヘッダの「作業中」チップに、今の案件名を出す */
@@ -118,11 +189,14 @@ UI.openWip = () => {
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <button class="btn-solid primary" id="wipSaveNow">今の図面を一時保存</button>
       <button class="btn-solid" id="wipSaveNew">別枠として保存…</button>
+      <button class="btn-solid" id="wipAddNew">新しい図面を追加…</button>
+      <button class="btn-solid" id="wipAddMaster">マスターとして保存…</button>
       <span style="flex:1"></span>
       <span class="rp-dim" id="wipCount" style="font-size:11.5px"></span>
     </div>
     <div id="wipRows"></div>
     <div class="prop-note" style="margin-top:10px">
+      マスターファイル = 標準回路のひな型。「コピーして開く」で案件を始めれば、マスター本体は変わりません。<br>
       作業中の図面はこのブラウザの中に置かれます (別の PC では開けません)。
       人に渡す図面・長く残す図面は「保存 (JSON)」か「設計完了」でファイルに出してください。
     </div>
@@ -137,20 +211,30 @@ UI.openWip = () => {
       rows.innerHTML = '<div class="se-empty" style="padding:24px">まだ一時保存した図面はありません — 「今の図面を一時保存」で入れておくと、いつでも切り替えられます</div>';
       return;
     }
-    rows.innerHTML = list.map(r => {
+    // マスターファイルを先頭にまとめる (どの案件からでもすぐコピーできるように)
+    const sorted = [...list.filter(r => r.master), ...list.filter(r => !r.master)];
+    rows.innerHTML = sorted.map(r => {
       const on = r.id === cur;
       const when = r.at ? relStamp(new Date(r.at)) : "";
+      const badge = r.master
+        ? '<span style="display:inline-block;padding:1px 7px;margin-right:6px;border-radius:9px;font-size:10.5px;font-weight:700;background:#b8860b;color:#fff">マスター</span>' : "";
       return `<div class="wip-row" style="display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid ${on ? "var(--accent)" : "var(--line)"};border-radius:8px;margin-bottom:6px;background:${on ? "var(--accent-dim)" : "transparent"}">
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600">${escXML(r.name)}${on ? ' <span class="rp-dim" style="font-weight:400">(いま開いています)</span>' : ""}</div>
+          <div style="font-weight:600">${badge}${escXML(r.name)}${on ? ' <span class="rp-dim" style="font-weight:400">(いま開いています)</span>' : ""}</div>
           <div class="rp-dim" style="font-size:11.5px">${escXML(when)} — ページ ${r.pages || 0} ・ 機器 ${r.devices || 0} ・ 配線 ${r.wires || 0}</div>
         </div>
-        ${on ? `<button class="btn-solid primary" data-ov="${r.id}" style="padding:5px 10px;font-size:11.5px">上書き保存</button>`
-             : `<button class="btn-solid primary" data-open="${r.id}" style="padding:5px 10px;font-size:11.5px">開く</button>`}
+        ${r.master ? `<button class="btn-solid primary" data-copy="${r.id}" style="padding:5px 10px;font-size:11.5px">コピーして開く</button>` : ""}
+        ${on ? `<button class="btn-solid${r.master ? "" : " primary"}" data-ov="${r.id}" style="padding:5px 10px;font-size:11.5px">上書き保存</button>`
+             : `<button class="btn-solid${r.master ? "" : " primary"}" data-open="${r.id}" style="padding:5px 10px;font-size:11.5px">開く</button>`}
+        ${r.master ? "" : `<button class="btn-solid" data-copy="${r.id}" style="padding:5px 9px;font-size:11.5px">コピー</button>`}
         <button class="btn-solid" data-ren="${r.id}" style="padding:5px 9px;font-size:11.5px">名前</button>
         <button class="btn-solid" data-del="${r.id}" style="padding:5px 9px;font-size:11.5px">削除</button>
       </div>`;
     }).join("");
+    rows.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+      const nid = await UI.wipCopy(b.dataset.copy);
+      if (nid) m.close();
+    }));
     rows.querySelectorAll("[data-open]").forEach(b => b.addEventListener("click", async () => {
       const ok = await UI.wipOpen(b.dataset.open);
       if (ok) m.close();
@@ -193,6 +277,14 @@ UI.openWip = () => {
     if (nm === null || !nm.trim()) return;
     const id = await UI.wipSave({ asNew: true, name: nm });
     if (id) { render(); UI.setMsg(`「${nm.trim()}」として一時保存しました`); }
+  });
+  body.querySelector("#wipAddNew").addEventListener("click", async () => {
+    const id = await UI.wipNew();
+    if (id) m.close();
+  });
+  body.querySelector("#wipAddMaster").addEventListener("click", async () => {
+    const id = await UI.wipSaveMaster();
+    if (id) render();
   });
 
   const m = UI.openModal({
