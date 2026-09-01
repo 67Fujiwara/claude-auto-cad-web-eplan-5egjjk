@@ -2652,8 +2652,9 @@ UI.refresh = (rebuildTabs = true) => {
   requestRender();
 };
 
-function boot() {
-  App.project = loadLocal() || demoProject();
+async function boot() {
+  // 前回の図面をそのまま開く (無ければサンプル)。大きな図面は IndexedDB 側から
+  App.project = (await loadAutosave()) || demoProject();
   mergeProjectSymbols();
   normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
   UI.renumberPages();   // ページ番号と図番を現在の設定に同期

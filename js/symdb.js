@@ -212,7 +212,7 @@ function kvSeqRows(seq, pitch) {
         : prev.io && !e.io ? Math.max(KV_AUXROW, pitch)
         : pitch;
     }
-    return { n: e.n, y, io: e.io, noDrc: e.noDrc };
+    return { n: e.n, y, io: e.io, noDrc: e.noDrc, ...(e.disp ? { disp: e.disp } : {}) };
   });
 }
 function kvSeqH(seq, pitch) {
@@ -277,8 +277,9 @@ function kvBuild(o, pitch) {
     if (i > 0 && !rows[i - 1].io && r.io) parts.push(`<path d="M${r1(BX)},${r1(r.y - KV_AUXROW / 2)} H${r1(BX + W)}"/>`);
     /* 端子名は外郭の内側 (端子の丸のすぐ隣)。外に置くと現場側の配線区画に
        文字が並び、機器のピン番号・線番と同じ帯で読み合わせることになる */
-    if (flip) parts.push(kvText(-(TR * 2 + KV_TERM_X), r1(r.y + 1.25), 2.5, r.n, "end"));
-    else parts.push(kvText(TR * 2 + KV_TERM_X, r1(r.y + 1.25), 2.5, r.n, "start"));
+    // 表示は disp があればそちら (三菱: デバイス番号 + 端子台の TB 番号併記)
+    if (flip) parts.push(kvText(-(TR * 2 + KV_TERM_X), r1(r.y + 1.25), 2.5, r.disp || r.n, "end"));
+    else parts.push(kvText(TR * 2 + KV_TERM_X, r1(r.y + 1.25), 2.5, r.disp || r.n, "start"));
     /* 機能欄 (コメント欄) の下線は body に焼き込まない — 機器ごとに
        ドラッグで位置を変えられるように、描画側 (画面・DXF) が
        ioSheet.fnX/fnW + 機器の fnDx から毎回引く */
@@ -309,7 +310,7 @@ function kvBuild(o, pitch) {
       return r;
     });
   // 注記の帯もインクとして申告 (ラベルの自動配置が上に乗らないように)
-  if (o.expNote) inkBoxes.push([r1(BX), r1(bh + 3), 48, 5.5]);
+  if (o.expNote) inkBoxes.push([r1(BX), r1(bh + 3), Math.max(48, r1(o.expNote.length * 3.6)), 5.5]);
   // 機器を落とす隙間 (dev.x からの左端/右端)。内側レールから lead だけ機器側
   /* 現場機器の置き場所の目安 (内側レールから引出しぶん端子側)。
      配線は自分で引く方式なので、これは配置の案内に使うだけ */
@@ -1248,6 +1249,64 @@ KV_UNITS.forEach(([m, cfg]) => mkKvUnit(m, cfg).forEach(s2 => {
   if (s2.altOf) { SYMBOLS_BY_ID[s2.id] = s2; return; }   // 台数違いはパレットに出さない (プロパティで差し替える)
   DB_SYMBOLS.push(s2);
 }));
+
+/* ── 三菱 MELSEC iQ-R ユニットの入出力結線図 ──
+   作り (枠・端子・レール・機能欄・行ピッチ) は KV Nano と同じ機構を使い、
+   接点構成 (端子の刻印・コモン・空き端子) は三菱の取扱説明書どおり:
+   ・RX40C7   … DC入力 16点 (＋/−コモン共用)。18点端子台。
+                TB1〜TB16 = X00〜X0F、TB17 = COM、TB18 = 空き端子 (結線禁止)
+   ・RY40NT5P … トランジスタ出力 (シンク) 16点。DC12/24V 0.5A/点・5A/コモン。
+                TB1〜TB16 = Y00〜Y0F、TB18 = COM、TB17 = 空き端子
+   デバイス番号は 16進 (X00〜X0F / Y00〜Y0F)。空き端子は結線してはいけない
+   端子なので行としては描かない (注記で知らせる) */
+const MEL_UNITS = [
+  ["RX40C7", { kind: "入力", pts: 16, head: "X0", com: "COM",
+    comTB: "TB17", vacantTB: "TB18",
+    spec: "DC24V 7mA・プラスコモン/マイナスコモン共用・16点/1コモン" }],
+  ["RY40NT5P", { kind: "出力", pts: 16, head: "Y0", com: "COM",
+    comTB: "TB18", vacantTB: "TB17",
+    spec: "トランジスタ出力 (シンク)・DC12/24V 0.5A/点・5A/コモン・16点/1コモン" }],
+];
+function mkMelUnit(model, cfg) {
+  const isIn = cfg.kind === "入力";
+  // デバイス番号は 16進: X00〜X0F / Y00〜Y0F
+  const dev = i => cfg.head + i.toString(16).toUpperCase();
+  /* 端子名はデバイス番号 + 括弧で端子台の TB 番号を併記する。
+     RX40C7 は TB17 = COM だが RY40NT5P は TB18 = COM と物理位置が入れ違いで、
+     番号が紙に無いと出力の COM を空き端子 (TB17) に締める誤配線を誘発する */
+  const seq = [];
+  for (let i = 0; i < cfg.pts; i++) seq.push({ n: dev(i), disp: `${dev(i)} (${i + 1})`, io: true, noDrc: true });
+  seq.push({ n: cfg.com, disp: `${cfg.com} (${cfg.comTB.replace("TB", "")})`, io: false });   // コモンは結び忘れを知らせる (noDrc にしない)
+  return mkKvSheet({
+    id: model.toLowerCase() + (isIn ? "_in" : "_out"),
+    model, title: `${cfg.kind} ${cfg.pts}点`, seq, allSeqs: [seq],
+    /* 下地は DC24V の想定 (KV と同じ規則):
+       入力は COM = +24V (プラスコモン・シンク入力/NPN 機器)、機器の帰りは N24V。
+       出力 (シンク) はコモンを N24V へ、負荷の帰りは P24V */
+    railTags: isIn ? { branch: "N24V", supply: "P24V" } : { branch: "P24V", supply: "N24V" },
+    fieldSide: isIn ? "left" : "right",
+    swapGroup: `melsec_${isIn ? "in" : "out"}`,
+    name: `${model} ${cfg.kind}結線図`,
+    nameEn: `${model} ${isIn ? "input" : "output"} wiring`,
+    /* 紙に必ず載る注記 (箱の下)。COM の物理位置が 2 形式で入れ違いのため、
+       空き端子の結線禁止と TB 番号の意味は注記貼付を待たず図自体で知らせる */
+    expNote: `※( )内は端子台の TB 番号。${cfg.vacantTB} は空き端子 — 結線禁止` +
+      (isIn ? "" : "　定格 DC12/24V 0.5A/点・5A/コモン (誘導負荷は還流ダイオード推奨)"),
+    stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
+      "外郭 + 端子 + 端子指示。端子の図記号番号は規格原本との照合が必要)。" +
+      `端子の並びは三菱 MELSEC iQ-R ${model} の取扱説明書どおり (${cfg.comTB} = COM)。` +
+      `図の端子名はデバイス番号 (${dev(0)}〜${dev(cfg.pts - 1)})、括弧の数字が端子台の刻印 (TB 番号)。` +
+      `${cfg.vacantTB} は空き端子 (結線禁止) のため描いていない。` +
+      "ユニットの電源と接地は別紙の電源回路図に描きます",
+    desc: `三菱 MELSEC iQ-R ${model} の${cfg.kind}結線図 (${dev(0)}〜${dev(cfg.pts - 1)} の${cfg.pts}点)。` +
+      `${cfg.spec}。端子台は 18点ねじ端子 (TB1〜TB16 = ${dev(0)}〜${dev(cfg.pts - 1)}、${cfg.comTB} = COM、${cfg.vacantTB} = 空き端子・結線禁止)。` +
+      (isIn ? `下地は COM = +24V のプラスコモン (シンク入力・NPN 機器向け)。ソース入力 (マイナスコモン・COM = 0V) で使うときはレールのタグを描き替えてください。`
+            : `シンク出力: 負荷は出力端子と P24V の間、COM は N24V (0V) へ。`) +
+      `置くと P24V/N24V のレールとコモンの結線が実線で引かれます — 端子までの配線は自分で引きます。` +
+      `機能欄の文言はプロパティでまとめて入れられます。ユニットの電源と接地は別紙の電源回路図に描きます。`,
+  });
+}
+MEL_UNITS.forEach(([m, cfg]) => DB_SYMBOLS.push(mkMelUnit(m, cfg)));
 
 // 全シンボル辞書へ統合 (描画・配置・部品表・DXFすべてで使える)
 DB_SYMBOLS.forEach(s => { SYMBOLS_BY_ID[s.id] = s; });

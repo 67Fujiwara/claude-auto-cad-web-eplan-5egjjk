@@ -4258,9 +4258,37 @@ function redo() {
 
 /* ══════════════ 保存 / 読込 ══════════════ */
 const LS_KEY = "electracad.project.v1";
+/* 自動保存。localStorage は 5MB 程度で頭打ちになり、大きな図面 (数百機器) は
+   入り切らずに「毎回ファイルを開き直す」羽目になる。そこで IndexedDB
+   (設計完了・一時保存と同じ入れ物) にも置き、起動時はそちらも見る。
+   IndexedDB への書き込みは連続編集で重くならないよう少し遅らせてまとめる */
+const AUTOSAVE_ID = "autosave";
+let _autosaveTimer = null;
 function saveLocal() {
   syncProjectSymbols();
-  try { localStorage.setItem(LS_KEY, JSON.stringify(App.project)); } catch (e) { /* 容量超過等は無視 */ }
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(App.project));
+    localStorage.setItem(LS_KEY + ".ok", "1");
+  } catch (e) {
+    // 入り切らなかった印 — 起動時に IndexedDB 側を採用する
+    try { localStorage.setItem(LS_KEY + ".ok", "0"); } catch (e2) { }
+  }
+  clearTimeout(_autosaveTimer);
+  _autosaveTimer = setTimeout(() => {
+    try { relPutSnapshot(AUTOSAVE_ID, App.project); } catch (e) { /* 保存領域なし */ }
+  }, 800);
+}
+/** 前回の図面を読み出す (localStorage が壊れている/入り切らなかったときは IndexedDB) */
+async function loadAutosave() {
+  const ls = loadLocal();
+  let lsOK = true;
+  try { lsOK = localStorage.getItem(LS_KEY + ".ok") !== "0"; } catch (e) { }
+  if (ls && lsOK) return ls;
+  try {
+    const p = await relGetSnapshot(AUTOSAVE_ID);
+    if (p && p.pages && p.pages.length) return p;
+  } catch (e) { }
+  return ls;
 }
 function loadLocal() {
   try {

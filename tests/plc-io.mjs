@@ -64,6 +64,12 @@ const R = await p.evaluate(() => {
     kv_n40at_out: { io: 16, first: "500", last: "515", aux: "0V,24V,COM", paper: "A3", orient: "portrait" },
     kv_n14ar_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
     kv_n14ar_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
+    /* 三菱 MELSEC iQ-R — 作りは KV と同じ・接点構成は三菱の取説どおり。
+       デバイス番号は 16進 (X00〜X0F / Y00〜Y0F)、コモンは 1 つ (RX40C7=TB17 /
+       RY40NT5P=TB18)、空き端子 (RX40C7=TB18 / RY40NT5P=TB17) は結線禁止なので描かない。
+       サービス電源 (0V/24V) の端子は無い */
+    rx40c7_in:    { io: 16, first: "X00", last: "X0F", aux: "COM", paper: "A3", orient: "portrait" },
+    ry40nt5p_out: { io: 16, first: "Y00", last: "Y0F", aux: "COM", paper: "A3", orient: "portrait" },
   };
   // 尺度は社内標準に合わせて 1:1 (幾何は NS と同一)
   Object.values(SPEC).forEach(v => { v.scale = "1:1"; });
@@ -79,7 +85,11 @@ const R = await p.evaluate(() => {
     if (!sym || !Array.isArray(sym.pins) || !sym.pins.every(q => q && q.n !== undefined)) {
       out.group[id] = "記号がありません"; return;
     }
-    const io = sym.pins.filter(x => /^\d+$/.test(x.n)), aux = sym.pins.filter(x => !/^\d+$/.test(x.n));
+    /* 入出力点かどうかは ioSheet.rows の io 印で見る (KV は数字、三菱は X00
+       のような 16進デバイス名なので、名前の形では判別できない) */
+    const rowsIo = sym.ioSheet && Array.isArray(sym.ioSheet.rows) ? sym.ioSheet.rows : null;
+    const isIo = x => (rowsIo && x.row !== undefined && rowsIo[x.row]) ? !!rowsIo[x.row].io : /^\d+$/.test(x.n);
+    const io = sym.pins.filter(isIo), aux = sym.pins.filter(x => !isIo(x));
     if (!io.length) { out.group[id] = "端子がありません"; return; }
     out.group[id] = {
       io: io.length, first: io[0].n, last: io[io.length - 1].n, aux: aux.map(x => x.n).join(","),
@@ -100,7 +110,7 @@ const R = await p.evaluate(() => {
       /* 端子名は外郭の内側に描いてあること (自動ラベルは出さない)。
          外に出すと現場側の配線区画に文字が並び、端子の丸ともあきが取れない */
       termInBody: sym.pins.every(q => q.inBody === true) &&
-        sym.pins.every(q => sym.body.includes(`>${q.n}</text>`)),
+        sym.pins.every(q => sym.body.includes(`>${q.n}`)),   // 三菱は「X00 (1)」と TB 番号併記
       rail: sym.ioSheet && sym.ioSheet.rail, gap: sym.ioSheet && sym.ioSheet.gap,
       /* 実機のユニットに合わせた向き: 入力は現場側が左 (レール→機器→端子→箱)、
          出力は箱が左 (箱→端子→負荷→レール→名称欄)。箱の位置と名称欄の位置で確かめる */
@@ -829,9 +839,19 @@ const FN = await p.evaluate(() => {
     uiNames, dxfLines, fx, devx: d.x };
 });
 
+/* 三菱の端子名に端子台の TB 番号が併記されているか (ブラウザ側で読む) */
+const MELTB = await p.evaluate(() => {
+  const has = (id, t) => ((symOf(id) || {}).body || "").includes(">" + t + "<");
+  return { inX: has("rx40c7_in", "X00 (1)"), inCom: has("rx40c7_in", "COM (17)"),
+    outY: has("ry40nt5p_out", "Y00 (1)"), outCom: has("ry40nt5p_out", "COM (18)"),
+    // 空き端子の結線禁止は注記として紙に焼き込む (TB17/TB18 は形式で入れ違い)
+    inNote: ((symOf("rx40c7_in") || {}).body || "").includes("TB18 は空き端子 — 結線禁止"),
+    outNote: ((symOf("ry40nt5p_out") || {}).body || "").includes("TB17 は空き端子 — 結線禁止") };
+});
+
 const checks = {
   // 想定の枚 (id) がすべてあること
-  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 9,
+  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 11,
   // 群ごとの点数・端子番号 (16 点で次のチャネルへ繰り上がる)
   groups: ids.every(id => R.group[id] && R.group[id].io !== undefined && R.group[id].io === R.spec[id].io &&
     R.group[id].first === R.spec[id].first && R.group[id].last === R.spec[id].last &&
@@ -887,6 +907,10 @@ const checks = {
      点ではないので、下線も文言の行も持たない */
   fnRuling: ids.every(id => (R.group[id] || {}).fnLines === (R.group[id] || {}).fnRows)
     && ids.every(id => (R.group[id] || {}).auxRows >= 1),
+  /* 三菱は端子名に端子台の TB 番号を併記する (COM の物理位置が RX40C7=TB17 /
+     RY40NT5P=TB18 と入れ違いのため、番号が無いと空き端子への誤配線を誘発する) */
+  melTB: MELTB.inX === true && MELTB.inCom === true && MELTB.outY === true && MELTB.outCom === true
+    && MELTB.inNote === true && MELTB.outNote === true,
   fnNoPower: FN.drawn === FN.fnRows && FN.total > FN.fnRows
     && FN.uiNames.length === FN.fnRows && FN.uiNames[0] === "500"
     && !FN.uiNames.includes("0V") && !FN.uiNames.includes("24V") && !FN.uiNames.some(n => /^COM/.test(n))
