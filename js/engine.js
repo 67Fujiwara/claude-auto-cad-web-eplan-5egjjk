@@ -2085,6 +2085,24 @@ function mergeProjectSymbols() {
   if (Object.keys(remap).length) {
     App.project.pages.forEach(pg => (pg.devices || []).forEach(d => { if (remap[d.sym]) d.sym = remap[d.sym]; }));
   }
+  /* この図面が使っている自作シンボルはパレットに出す。
+     別の PC で作った図面を開いたときや、棚 (分類) を消した後に
+     「機器は描けるのに記号がパレットに見当たらない」を防ぐ —
+     データベースの棚はパレットに追加 (ピン) した記号しか出さないため */
+  try {
+    const used = new Set();
+    App.project.pages.forEach(pg => (pg.devices || []).forEach(d => used.add(d.sym)));
+    const pin = [];
+    used.forEach(id => {
+      const sym = SYMBOLS_BY_ID[id];
+      if (sym && (sym.custom || sym.imported) && !sym.retired && !sym.altOf
+        && symCatOf(sym) === "db" && !dbPinnedList().includes(id)) pin.push(id);
+    });
+    if (pin.length) {
+      dbSetPinned([...new Set([...dbPinnedList(), ...pin])]);
+      if (typeof UI !== "undefined" && UI.buildPalette && document.getElementById("symTree")) UI.buildPalette();
+    }
+  } catch (e) { /* パレットが無い画面 (テスト等) では何もしない */ }
 }
 /** 図面で実際に使われている取り込みシンボルをプロジェクトへ保存する */
 function syncProjectSymbols() {

@@ -51,7 +51,9 @@ UI.buildPalette = (filter = "") => {
     // 分類はデータベースで記号ごとに入れ替えられる (symCatOf)。
     // "データベース" 分類はパレットに追加 (ピン) されたものだけを、
     // それ以外の棚は「外す」で隠したものを除いて出す
-    const source = catId === "db" ? all.filter(s => symCatOf(s) === "db" && pinned.has(s.id))
+    /* データベースの棚は普段ピン留めした記号だけ。ただし検索中は全部から
+       探す — 作った記号が「どの棚にも出ていなくて見つからない」を防ぐ */
+    const source = catId === "db" ? all.filter(s => symCatOf(s) === "db" && (pinned.has(s.id) || f))
       : all.filter(s => symCatOf(s) === catId && !hidden.has(s.id));
     const syms = source.filter(s =>
       (!f || s.name.toLowerCase().includes(f) || s.nameEn.toLowerCase().includes(f) || (s.desc || "").toLowerCase().includes(f) || (s.jis || "").includes(f)));
