@@ -532,12 +532,18 @@ function textsSVG(page, opts = {}) {
        回した後も基点は動かない — 選択枠も同じ変換に入れる */
     const rot = textRot(t);
     const rt = rot ? ` transform="rotate(${rot} ${t.x} ${t.y})"` : "";
+    // 複数行 (Enter で改行)。行送りは文字高の 1.5 倍 (JIS の推し)
+    const lines = textLines(t);
+    const lh = h * TEXT_LINE_K;
     if (selected) {
-      const wApprox = t.text.length * h * 0.62 + 2 * fr;
-      out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${h + 2.5 * fr}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"${rt}/>`;
+      const wApprox = Math.max(...lines.map(ln => ln.length)) * h * 0.62 + 2 * fr;
+      const hApprox = h + 2.5 * fr + (lines.length - 1) * lh;
+      out += `<rect x="${t.x - wApprox / 2}" y="${t.y - h}" width="${wApprox}" height="${hApprox}" fill="rgba(31,122,224,.1)" stroke="${SEL}" stroke-width="${LINE_W.thin * fr}" rx="${0.8 * fr}"${rt}/>`;
     }
     // noMin: 取り込んだ図面の文字は元の寸法に忠実に (和文の最小呼びへ持ち上げない)
-    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif"${rt}>${escXML(t.text)}</text>`;
+    const body2 = lines.length === 1 ? escXML(t.text)
+      : lines.map((ln, i) => `<tspan x="${t.x}" dy="${i ? lh : 0}">${escXML(ln) || " "}</tspan>`).join("");
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif"${rt}>${body2}</text>`;
   });
   return out;
 }
@@ -1048,10 +1054,12 @@ function hitTest(wx, wy) {
     const t = page.texts[i];
     const fr = contentScale();
     const th = textHeight(t) * fr;
-    const w = t.text.length * th * 0.62 + 2 * fr, h = th + 2 * fr;
+    const lines = textLines(t);
+    const w = Math.max(...lines.map(l2 => l2.length)) * th * 0.62 + 2 * fr, h = th + 2 * fr;
+    const ext = (lines.length - 1) * th * TEXT_LINE_K;   // 2 行目以降のぶん下へ広げる
     // 回した文字は、基点まわりに逆回転してから箱に入れる (斜めでも掴める)
     const [lx, ly] = textLocalPt(t, wx, wy);
-    if (lx > t.x - w / 2 && lx < t.x + w / 2 && ly > t.y - h && ly < t.y + 1.5) cands.push({ type: "text", obj: t });
+    if (lx > t.x - w / 2 && lx < t.x + w / 2 && ly > t.y - h && ly < t.y + 1.5 + ext) cands.push({ type: "text", obj: t });
   }
   /* ワイヤは機器より先に拾う。機器の外形箱 (bounds) は線より広いので、
      機器と重なった導体が箱に食われて選べなくなる (囲み記号や端子を貫く線) */
@@ -2018,27 +2026,16 @@ function pasteClipboard() {
   App.selection.clear();
   // 貼り付け位置: カーソル位置基準。カーソルが無効なら元位置+10mm (連続ペーストは累積)
   const cb = App.clipboard;
-  // 尺度の異なるページへ貼るとき: 図記号・文字は常に 1:1 のまま、配置座標・
-  // 配線経路・破線枠だけを尺度比で伸縮し、図枠に対する見た目 (占める割合) を保つ。
-  // 尺度変更が図枠だけを広げる仕様と同じ考え方。端子の張り出しは伸縮しないので、
-  // 端子につながっていた配線の端点は貼り付け後に端子へ吸着し直す
-  const fSrc = scaleFactor(cb.scale || pageSheetMeta(page).scale);
-  const fDst = scaleFactor(pageSheetMeta(page).scale);
-  const kf = fSrc > 0 && fDst > 0 ? fDst / fSrc : 1;
-  const rs = v => Math.round(v * kf * 100) / 100;
-  const pinHooks = [];               // 元座標での「配線端点 ⇔ 機器端子」の接続
-  if (kf !== 1) cb.wires.forEach((w0, wi) => [...new Set([0, w0.pts.length - 1])].forEach(pi => {
-    const pt = w0.pts[pi];
-    cb.devs.forEach((d0, di) => devPins(d0).forEach(pn => {
-      if (Math.abs(pn.x - pt[0]) < 0.01 && Math.abs(pn.y - pt[1]) < 0.01)
-        pinHooks.push({ wi, end: pi === 0 ? 0 : 1, di, pin: pn.idx });
-    }));
-  }));
+  /* 尺度の異なるページへ貼るときも、座標も大きさもそのまま写す。
+     中身は「作図領域の mm」で持っていて、描画時にページの尺度で一括に
+     縮尺されるため、そのまま写せば貼り付け先の他の記号と同じ縮尺・
+     同じ格子に乗る。以前は印刷実寸を保とうと記号ごと伸縮していたが、
+     貼り付け先の図面の中で大きさがちぐはぐになるのでやめた */
   let minX = Infinity, minY = Infinity;
-  cb.devs.forEach(d => { minX = Math.min(minX, rs(d.x)); minY = Math.min(minY, rs(d.y)); });
-  cb.wires.forEach(w => w.pts.forEach(p => { minX = Math.min(minX, rs(p[0])); minY = Math.min(minY, rs(p[1])); }));
-  cb.texts.forEach(t => { minX = Math.min(minX, rs(t.x)); minY = Math.min(minY, rs(t.y)); });
-  (cb.zones || []).forEach(z => { minX = Math.min(minX, rs(z.x)); minY = Math.min(minY, rs(z.y)); });
+  cb.devs.forEach(d => { minX = Math.min(minX, d.x); minY = Math.min(minY, d.y); });
+  cb.wires.forEach(w => w.pts.forEach(p => { minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]); }));
+  cb.texts.forEach(t => { minX = Math.min(minX, t.x); minY = Math.min(minY, t.y); });
+  (cb.zones || []).forEach(z => { minX = Math.min(minX, z.x); minY = Math.min(minY, z.y); });
   if (!isFinite(minX)) { minX = 0; minY = 0; }
   let dx, dy;
   const lw = Editor.lastWorld;
@@ -2060,11 +2057,7 @@ function pasteClipboard() {
   cb.devs.forEach(d0 => {
     const d = deepCopy(d0);
     idMap[d0.id] = d.id = uid("d");
-    d.x = rs(d.x) + dx; d.y = rs(d.y) + dy;
-    if (kf !== 1) {                    // 図記号ごと伸縮して印刷上の大きさを保つ
-      const ns = Math.round(devScale(d) * kf * 10000) / 10000;
-      if (ns !== 1) d.scale = ns; else delete d.scale;
-    }
+    d.x = d.x + dx; d.y = d.y + dy;
     page.devices.push(d);
     App.selection.add(d.id);
   });
@@ -2087,11 +2080,7 @@ function pasteClipboard() {
   cb.wires.forEach(w0 => {
     const w = deepCopy(w0);
     w.id = uid("w");
-    w.pts = w.pts.map(p => [rs(p[0]) + dx, rs(p[1]) + dy]);
-    if (kf !== 1) {                    // 線の太さ・線番の文字高も印刷実寸を保つ
-      const ns = Math.round(objScale(w) * kf * 10000) / 10000;
-      if (ns !== 1) w.scale = ns; else delete w.scale;
-    }
+    w.pts = w.pts.map(p => [p[0] + dx, p[1] + dy]);
     w.num = null;
     page.wires.push(w);
     App.selection.add(w.id);
@@ -2099,8 +2088,7 @@ function pasteClipboard() {
   cb.texts.forEach(t0 => {
     const t = deepCopy(t0);
     t.id = uid("t");
-    t.x = rs(t.x) + dx; t.y = rs(t.y) + dy;
-    if (kf !== 1) t.size = Math.round((t.size || TEXT_H.normal) * kf * 100) / 100;
+    t.x = t.x + dx; t.y = t.y + dy;
     page.texts.push(t);
     App.selection.add(t.id);
   });
@@ -2108,30 +2096,11 @@ function pasteClipboard() {
   (cb.zones || []).forEach(z0 => {
     const z = deepCopy(z0);
     z.id = uid("z");
-    z.x = rs(z.x) + dx; z.y = rs(z.y) + dy;
-    if (kf !== 1) {
-      z.w = rs(z.w); z.h = rs(z.h);          // 枠の大きさも図枠に対する割合を保つ
-      if (z.lx !== undefined) z.lx = rs(z.lx);
-      if (z.ly !== undefined) z.ly = rs(z.ly);
-      if (z.label) z.labelSize = Math.round(zoneLabelSize(z0) * kf * 100) / 100;
-      const ns = Math.round(objScale(z) * kf * 10000) / 10000;
-      if (ns !== 1) z.scale = ns; else delete z.scale;
-    }
+    z.x = z.x + dx; z.y = z.y + dy;
     pageZones(page).push(z);
     App.selection.add(z.id);
   });
-  // 伸縮で端子位置 (張り出しは 1:1 のまま) からずれた配線端点を端子へ吸着し直す
-  if (kf !== 1 && pinHooks.length) {
-    const dBase = page.devices.length - cb.devs.length;
-    const wBase = page.wires.length - cb.wires.length;
-    pinHooks.forEach(h => {
-      const d = page.devices[dBase + h.di], w = page.wires[wBase + h.wi];
-      const pn = d && devPins(d)[h.pin];
-      if (pn && w) moveWireEndpoint(w, h.end === 0 ? 0 : w.pts.length - 1, [pn.x, pn.y]);
-    });
-  }
   UI.setMsg("カーソル位置に貼り付けました");
-  if (kf !== 1) UI.toast(`尺度 ${cb.scale} → ${pageSheetMeta(page).scale}: 図記号・文字も含めて ${Math.round(kf * 100) / 100} 倍にし、印刷上の大きさを保ちました`, 5200);
   // 黙って行き先を消すと気づけないので知らせる
   if (droppedGoto) UI.toast(`⚠ 行き先 ${droppedGoto} 個は自分のページを指すことになるため未設定にしました`, 4200);
   requestRender();

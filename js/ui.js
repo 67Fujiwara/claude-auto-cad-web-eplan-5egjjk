@@ -758,6 +758,10 @@ UI.showProps = (focusTag = false) => {
         if (!applyAux(wantAux, true)) { e.target.value = w.style || "solid"; return; }
       } else commit();
       if (v === "solid") delete w.style; else w.style = v;
+      /* 線番の表示をこの線が担っていた場合、作図線になると番号ごと消えて
+         見える。表示を残りの導体区間へ立て直す (逆方向の変更も同じ処理で整う) */
+      if (!isWireConductive(w) && w.num) w.numShow = false;
+      normalizeWireNumbers();
       UI.refresh(false);
       UI.showProps();
     });
@@ -771,9 +775,11 @@ UI.showProps = (focusTag = false) => {
       commit();
       const v = e.target.value.trim();
       const n = setWireNumber(page, w, v);   // ネット全体に反映 (1ネット1線番)
+      const chained = v ? chainIoWireNumbers(page, w, v) : 0;   // PLC の行なら下へ連番
       UI.refresh(false);
       UI.showProps();
-      UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
+      UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)` +
+                    (chained ? ` — PLC の行に合わせて下の ${chained} 本へ連番を振りました` : "")
                   : `線番を消しました (この配線 ${n} 本には線番を出しません — 自動採番も付けません)`);
     });
     const numAuto = pane.querySelector("#pNumAuto");
@@ -825,13 +831,18 @@ UI.showProps = (focusTag = false) => {
     const t = selTexts[0];
     pane.innerHTML = `
       <div class="prop-head"><div class="prop-head-txt"><div class="t1">テキスト</div><div class="t2">図面注記</div></div></div>
-      <div class="prop-row"><label>内容</label><input id="pTxt" value="${(t.text || "").replace(/"/g, "&quot;")}"/></div>
+      <div class="prop-row"><label>内容 <span class="rp-dim">(Enter で改行)</span></label>
+        <textarea id="pTxt" rows="${Math.min(6, Math.max(2, textLines(t).length + 1))}" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12.5px;padding:6px 8px;outline:none;resize:vertical">${escXML(t.text || "")}</textarea></div>
       <div class="prop-grid2">
         <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2.5" value="${textHeight(t)}"/></div>
         <div class="prop-row"><label>角度 (°)</label><input id="pTrot" class="mono" type="number" step="15" value="${textRot(t)}"/></div>
       </div>
       <div class="prop-note">角度は時計回り。R キーでも 90° ずつ回せます (縦書きの注記は 90° か 270°)。</div>`;
-    pane.querySelector("#pTxt").addEventListener("change", e => { commit(); t.text = e.target.value; UI.refresh(false); });
+    pane.querySelector("#pTxt").addEventListener("change", e => {
+      commit();
+      t.text = e.target.value.replace(/\n+$/, "");   // 末尾の空行は落とす
+      UI.refresh(false);
+    });
     pane.querySelector("#pTsz").addEventListener("change", e => { commit(); const n = parseFloat(e.target.value); if (!isNaN(n)) t.size = Math.max(2.5, n); UI.refresh(false); });
     const trot = pane.querySelector("#pTrot");
     if (trot) trot.addEventListener("change", e => {
@@ -866,6 +877,7 @@ UI.showProps = (focusTag = false) => {
       commit();
       selWires.forEach(w => {
         if (v === "solid") delete w.style; else w.style = v;
+        if (!isWireConductive(w) && w.num) w.numShow = false;
         const manual = w.aux !== undefined && !w.auxAuto;
         if (!manual) {
           if (v === "solid") { delete w.aux; delete w.auxAuto; }
@@ -873,6 +885,7 @@ UI.showProps = (focusTag = false) => {
         }
         if (!isWireConductive(w)) { w.num = null; w.numShow = false; w.fixed = false; delete w.spec; }
       });
+      normalizeWireNumbers();   // 消えた線番の表示を残りの導体区間へ立て直す
       UI.refresh(false);
       UI.setMsg(`${selWires.length} 本の線種を「${WIRE_STYLES[v].name}」に変更しました`);
     });
@@ -1831,6 +1844,8 @@ UI.openWireNumInput = (clientX, clientY, wire) => {
     if (save && v !== (wire.num || "")) {
       commit();
       const n = setWireNumber(curPage(), wire, v);   // ネット全体に反映 (1ネット1線番)
+      const chained = v ? chainIoWireNumbers(curPage(), wire, v) : 0;
+      if (chained) UI.setMsg(`PLC の行に合わせて下の ${chained} 本へ連番を振りました`);
       UI.refresh(false);
       UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
                   : `線番を消しました (この配線 ${n} 本には線番を出しません — プロパティの「自動採番に戻す」で戻せます)`);

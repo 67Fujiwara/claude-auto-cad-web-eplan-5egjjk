@@ -1688,14 +1688,18 @@ function textLocalPt(t, x, y) {
   const dx = x - t.x, dy = y - t.y;
   return [t.x + dx * cs - dy * sn, t.y + dx * sn + dy * cs];
 }
+/** 図面注記の行 (Enter で改行できる)。1 行なら [本文] */
+const TEXT_LINE_K = 1.5;   // 行送り = 文字高 × 1.5 (JIS Z 8313 の推し)
+function textLines(t) { return String((t && t.text) || "").split("\n"); }
 function textBounds(t) {
   // noMin: 取り込んだ図面の文字は和文の最小呼びへ持ち上げない (見た目と一致させる)
   const h = t.noMin ? (t.size || TEXT_H.normal) * contentScale()
     : textHeightMM(t.text || "", (t.size || TEXT_H.normal) * contentScale());
-  const w = textWidthMM(t.text || "", h);
+  const lines = textLines(t);
+  const w = Math.max(...lines.map(ln => textWidthMM(ln, h)));
   const anchor = t.anchor || "middle";
   const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;
-  const box = { x, y: t.y - h, w, h: h * 1.25 };
+  const box = { x, y: t.y - h, w, h: h * 1.25 + (lines.length - 1) * h * TEXT_LINE_K };
   const a = textRot(t);
   if (!a) return box;
   /* 回した文字は、回転後の 4 隅を包む外接箱で見る (検図の重なり判定・
@@ -2379,7 +2383,9 @@ function spliceDeviceIntoWires(page, dev) {
         if (ptOnSeg(pin.x, pin.y, w.pts[i][0], w.pts[i][1], w.pts[i + 1][0], w.pts[i + 1][1])) {
           const ptsA = [...w.pts.slice(0, i + 1), [pin.x, pin.y]];
           const ptsB = [[pin.x, pin.y], ...w.pts.slice(i + 1)];
-          const mk = pts => ({ id: uid("w"), pts, num: w.num, fixed: w.fixed, numShow: false, spec: w.spec, stub: w.stub });
+          // 元の線の性質 (線種・太さの倍率・電線仕様・線番の非表示印など) を丸ごと引き継ぐ。
+          // 個別に写すと、端子を割り込ませた瞬間に線が細くなる等の取りこぼしが出る
+          const mk = pts => ({ ...deepCopy(w), id: uid("w"), pts, numShow: false });
           page.wires.splice(wi, 1, mk(ptsA), mk(ptsB));
           break;
         }
@@ -3007,6 +3013,62 @@ function ensureNumShown(wires, wireNet) {
 
 /** ワイヤ1本の線番編集をネット全体へ反映する (1ネットに2つの線番が印字されるのを防ぐ)。
     num が空なら自動採番に戻す。表示位置は autoNumberWires が最長区間で決める。 */
+/* ── PLC 入出力結線図の線番の連番入力 ──
+   結線図の行 (入出力点) の配線に線番を入れたら、その下の行の配線へ
+   連番を自動で振る。キーエンスの R 番は 10 進、三菱の X/Y は 16 進。
+   空きの行は番号だけ進め、手で入れた線番は上書きしない。
+   連番で入れた線には chain の印を付け、先頭を入れ直せば付け替わる */
+function incWireNum(num) {
+  const hx = /^([XY])([0-9A-F]+)$/i.exec(num);
+  if (hx) {
+    const v = parseInt(hx[2], 16) + 1;
+    return hx[1].toUpperCase() + v.toString(16).toUpperCase().padStart(hx[2].length, "0");
+  }
+  const d = /^(.*?)(\d+)$/.exec(num);
+  if (d) return d[1] + String(parseInt(d[2], 10) + 1).padStart(d[2].length, "0");
+  return null;
+}
+/** wire の端点が乗っている入出力結線図の行 {dev, sym, fnPins, pins, k} (無ければ null) */
+function ioRowOfWire(page, wire) {
+  const ends = [wire.pts[0], wire.pts[wire.pts.length - 1]];
+  for (const dev of page.devices) {
+    const sym = symOf(dev.sym);
+    if (!sym.ioSheet) continue;
+    const fnPins = symFnPins(sym);
+    const pins = devPins(dev);
+    for (let i = 0; i < sym.pins.length; i++) {
+      const k = fnPins.indexOf(sym.pins[i]);
+      if (k < 0) continue;
+      const a = pins[i];
+      if (ends.some(pt => Math.abs(pt[0] - a.x) < .01 && Math.abs(pt[1] - a.y) < .01))
+        return { dev, sym, fnPins, pins, k };
+    }
+  }
+  return null;
+}
+/** 連番の自動入力。振った本数を返す (PLC の行でなければ 0) */
+function chainIoWireNumbers(page, wire, num) {
+  if (!num) return 0;
+  const hit = ioRowOfWire(page, wire);
+  if (!hit) return 0;
+  let n = num, count = 0;
+  const condList = condWires(page);
+  for (let k = hit.k + 1; k < hit.fnPins.length; k++) {
+    n = incWireNum(n);
+    if (!n) break;
+    const pinIdx = hit.sym.pins.indexOf(hit.fnPins[k]);
+    const a = hit.pins[pinIdx];
+    const w2 = condList.find(w => w !== wire &&
+      [w.pts[0], w.pts[w.pts.length - 1]].some(pt => Math.abs(pt[0] - a.x) < .01 && Math.abs(pt[1] - a.y) < .01));
+    if (!w2) continue;                              // 空きの行は番号だけ進める
+    if (w2.fixed && w2.num && !w2.chain) continue;  // 手で入れた線番は守る
+    setWireNumber(page, w2, n);
+    w2.chain = true;
+    count++;
+  }
+  return count;
+}
+
 function setWireNumber(page, wire, num, opts = {}) {
   const v = (num == null ? "" : String(num)).trim();
   const { wireNet } = computeNets(page, "open");

@@ -590,7 +590,17 @@ function pageToDXF(page) {
   // ── フリーテキスト ──
   page.texts.forEach(t => {
     // DXF の回転は反時計回り。画面 (時計回り) と合わせるため符号を反転する
-    ents += dxfText(t.x, t.y, textHeight(t) * contentScale(), t.text, "TEXT", t.anchor || "middle", -textRot(t), { mono: false });
+    {
+      // 複数行の注記は 1 行ずつ。行送りは画面と同じ 1.5 倍で、回転にも沿わせる
+      const th = textHeight(t) * contentScale();
+      const lh = th * TEXT_LINE_K;
+      const a = textRot(t) * Math.PI / 180;
+      textLines(t).forEach((ln, i) => {
+        if (!ln) return;
+        const ox = -lh * i * Math.sin(a), oy = lh * i * Math.cos(a);
+        ents += dxfText(t.x + ox, t.y + oy, th, ln, "TEXT", t.anchor || "middle", -textRot(t), { mono: false });
+      });
+    }
   });
 
   // ── DXF 全体 (R12) ──
