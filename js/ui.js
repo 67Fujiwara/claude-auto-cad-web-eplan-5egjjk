@@ -1092,6 +1092,7 @@ const MENUS = {
     { label: "部品表 (BOM)", key: "", fn: () => UI.showBOM() },
     { label: "配線番号の自動付与", key: "", fn: () => { commit(); autoNumberWires(); UI.refresh(false); UI.setMsg("配線番号を付与しました (図番×100+連番・機器を跨ぐと区間が変わります。手動線番は保護)"); } },
     { label: "線番の編集…", key: "", fn: () => UI.editWireNumbers() },
+    { label: "線番・電線仕様の自動ルール…", key: "", fn: () => UI.openAutoRules() },
     { sep: true },
     { label: "部品表CSV を出力", key: "", fn: () => downloadFile(App.project.name + "_部品表.csv", bomCSV(), "text/csv") },
     { label: "接続リストCSV を出力", key: "", fn: () => downloadFile(App.project.name + "_接続リスト.csv", connectionCSV(), "text/csv") },
@@ -1705,6 +1706,53 @@ UI.dxfImportDialog = (ents, fileName) => {
     m.close();
     UI.refresh();
     UI.setMsg(`DXF を作図しました (線 ${nWire} 本・文字 ${nText} 点)。円弧を含む図形はシンボル登録をご利用ください`);
+  });
+};
+
+/* ── 線番・電線仕様の自動ルールの設定 ──
+   project.meta に保存 — マスターファイルごとコピーされるので、
+   御社標準を一度作れば全案件に効く */
+UI.openAutoRules = () => {
+  const meta = projectMeta();
+  const rules = wireSpecRules();
+  const body = h(`<div>
+    <div class="prop-sect">線番 (配線番号)</div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="arNum" ${meta.numFromPins !== false ? "checked" : ""}/>
+      <span>接続先の端子名を線番にする (PLC の入出力点 = 500 / X00、端子台 = 端子の器具番号)</span></label></div>
+    <div class="prop-note" style="margin-top:4px">端子名の付かないネットは従来どおり「図番×100+連番」。手で入れた線番と電位名 (+24V/0V/PE) はいつでも優先されます。</div>
+    <div class="prop-sect">電線仕様 (太さ・色) の自動付与</div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="arSpec" ${rules.on !== false ? "checked" : ""}/>
+      <span>回路の種類から電線仕様を自動で付ける</span></label></div>
+    <div class="prop-grid2">
+      <div class="prop-row"><label>接地 (PE/FE/FG)</label><input id="arEarth" class="mono" value="${escAttr(rules.earth || "")}"/></div>
+      <div class="prop-row"><label>主回路 (NFB・MC・モータ)</label><input id="arMain" class="mono" value="${escAttr(rules.main || "")}"/></div>
+      <div class="prop-row"><label>DC24V 制御 (電源・PLC)</label><input id="arDc" class="mono" value="${escAttr(rules.dc24 || "")}"/></div>
+      <div class="prop-row"><label>その他の制御回路</label><input id="arCtrl" class="mono" value="${escAttr(rules.ctrl || "")}"/></div>
+    </div>
+    <div class="prop-note">手で入れた電線仕様は上書きしません。配線の仕様欄を空にすると自動ルールに戻ります。欄を空にした種類には付けません。<br>
+      この設定は図面 (プロジェクト) に保存されます — マスターファイルに入れておけば、コピーした案件すべてに効きます。</div>
+  </div>`);
+  const foot = h(`<div style="display:flex;gap:10px;width:100%">
+    <span style="flex:1"></span>
+    <button class="btn-solid" id="arCancel">キャンセル</button>
+    <button class="btn-solid primary" id="arOk">保存して今の図面に適用</button>
+  </div>`);
+  const m = UI.openModal({ title: "線番・電線仕様の自動ルール",
+    sub: "配線を引くだけで線番と電線仕様が付きます — 例外だけ手で直す運用", body, foot });
+  foot.querySelector("#arCancel").addEventListener("click", m.close);
+  foot.querySelector("#arOk").addEventListener("click", () => {
+    commit();
+    const q = sel => body.querySelector(sel);
+    if (q("#arNum").checked) delete meta.numFromPins; else meta.numFromPins = false;
+    rules.on = q("#arSpec").checked;
+    rules.earth = q("#arEarth").value.trim();
+    rules.main = q("#arMain").value.trim();
+    rules.dc24 = q("#arDc").value.trim();
+    rules.ctrl = q("#arCtrl").value.trim();
+    autoNumberWires();
+    m.close();
+    UI.refresh(false);
+    UI.setMsg("自動ルールを保存し、今の図面へ適用しました (手で入れた線番・仕様はそのまま)");
   });
 };
 

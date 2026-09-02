@@ -2915,6 +2915,32 @@ function autoNumberWires() {
     wires.forEach(w => {
       if (w.fixed && w.num) netNum.set(wireNet.get(w.id), w.num);
     });
+    /* 2.3) 線番 = 接続先の端子名 (設定 meta.numFromPins・既定オン)。
+       PLC 入出力結線図の入出力点につながるネットはその端子名 (500 / X00)、
+       端子 (端子台) につながるネットはその端子の器具番号 (タグ) を線番にする。
+       電位名・手動線番が先に付いたネットには触れない。
+       同じ名前が既に使われていれば飛ばす (連番にまかせる) */
+    if (projectMeta().numFromPins !== false) {
+      const nameNet = (net, nm) => {
+        if (net == null || !nm || netNum.has(net) || used.has(nm)) return;
+        netNum.set(net, nm);
+        used.add(nm);
+      };
+      page.devices.forEach(dev => {          // 先に PLC の端子名
+        const sym = symOf(dev.sym);
+        if (!sym.ioSheet) return;
+        const fnPins = new Set(symFnPins(sym));
+        sym.pins.forEach((pin2, i) => {
+          if (fnPins.has(pin2)) nameNet(pinNet(dev, i), String(pin2.n || "").trim());
+        });
+      });
+      page.devices.forEach(dev => {          // 次に端子台の器具番号
+        const b2 = symBaseIdOf(dev.sym);
+        if (b2 !== "terminal" && b2 !== "term_dot") return;
+        const nm = String(dev.tag || "").replace(/^-/, "").trim();
+        devPins(dev).forEach((pin2, i) => nameNet(pinNet(dev, i), nm));
+      });
+    }
     /* 2.2) 線番を付けるのは「機器のピンにつながる線」だけ。どのピンにも
        触れない線は配置図の外形・引出線などの作画であって回路ではないので、
        連番を振らず、過去に付いた自動番号も消す (手動線番・電位名は残す) */
@@ -2967,6 +2993,8 @@ function autoNumberWires() {
        保存した図面から来た numShow の取りこぼしがあっても、必ず 1 箇所に出す
        (「入力したのに表示されない」を作らない) */
     ensureNumShown(wires, wireNet);
+    // 電線仕様の標準ルール (線番と同じく、引いた瞬間に付く)
+    applyWireSpecRules(page, pinNet, wireNet);
     /* 作図線に残った線番の掃除。線種の変更やデータ取込の経路によっては
        非導通の線に昔の番号が残ることがあり、破線の上に線番が印字される */
     page.wires.forEach(w => {
@@ -3151,8 +3179,71 @@ function setWireSpec(page, wire, spec) {
   const { wireNet } = computeNets(page, "open");
   const net = wireNet.get(wire.id);
   const targets = net ? condWires(page).filter(w => wireNet.get(w.id) === net) : [wire];
-  targets.forEach(w => { if (v) w.spec = v; else delete w.spec; });
+  // 手で入れた仕様は specManual の印つき (自動ルールが上書きしない)。
+  // 空にすると印ごと消え、次の採番で自動ルールが入り直す
+  targets.forEach(w => {
+    if (v) { w.spec = v; w.specManual = true; delete w.specAuto; }
+    else { delete w.spec; delete w.specManual; delete w.specAuto; }
+  });
   return targets.length;
+}
+
+/* ── 電線仕様の標準ルール (回路の種類 → 太さ・色) ──
+   ネットの性格を接続先から見分けて、電線仕様を自動で付ける:
+   ・earth … 接地 (PE/FE/FG の端子・接地記号につながる)
+   ・main  … 主回路 (NFB・ELB・MMS・主接点・モータ・サーマル・電源母線)
+   ・dc24  … DC24V 制御 (電源ユニット・PLC 結線図につながる、または
+             線番が +24V/0V/P24V/N24V 系)
+   ・ctrl  … それ以外の制御回路
+   ルール表は project.meta.wireSpecs に保存 — マスターファイルごと
+   コピーされるので、御社標準を一度作れば全案件に効く */
+const WIRE_SPEC_DEFAULTS = {
+  on: true,
+  earth: "IV 2sq 緑/黄", main: "KIV 2sq 黒", dc24: "KIV 0.75sq 青", ctrl: "KIV 1.25sq 黄",
+};
+function wireSpecRules() {
+  const m = projectMeta();
+  if (!m.wireSpecs) m.wireSpecs = { ...WIRE_SPEC_DEFAULTS };
+  return m.wireSpecs;
+}
+const MAIN_CIRCUIT_IDS = new Set(["mcb1", "mcb2", "mcb3", "elb2", "elb3", "mms",
+  "main_cont", "main_cont2", "cont_no_main", "cont_nc_main", "motor3", "motor1",
+  "ol3", "ol2", "trafo", "autotrafo", "supply3", "supply1", "inverter_box", "disconnector", "ct"]);
+const RE_DC24_NUM = /^(\+?24V|0V|P24V?|N24V?|DC24V?)$/i;
+function applyWireSpecRules(page, pinNet, wireNet) {
+  const rules = wireSpecRules();
+  if (rules.on === false) return;
+  const RANK = { earth: 0, main: 1, dc24: 2 };
+  const netKind = new Map();
+  const setK = (net, kind) => {
+    if (net == null) return;
+    const cur = netKind.get(net);
+    if (cur == null || RANK[kind] < RANK[cur]) netKind.set(net, kind);
+  };
+  page.devices.forEach(dev => {
+    const sym = symOf(dev.sym);
+    const b2 = symBaseIdOf(dev.sym);
+    const isEarthDev = b2 === "earth" || b2 === "prot_earth" || b2 === "func_earth" || b2 === "chassis_earth";
+    devPins(dev).forEach((pin2, i) => {
+      const net = pinNet(dev, i);
+      if (net == null) return;
+      if (isEarthDev || RE_EARTH.test(pin2.name || "")) setK(net, "earth");
+      else if (MAIN_CIRCUIT_IDS.has(b2)) setK(net, "main");
+      else if (sym.ioSheet || b2 === "psu24" || b2 === "ps_box") setK(net, "dc24");
+    });
+  });
+  condWires(page).forEach(w => {
+    if (w.spec && !w.specAuto) return;   // 手で入れた仕様 (旧データ含む・specAuto 印なし) は守る
+    if (!w.num) {                                    // 回路でない線には付けない
+      if (w.specAuto) { delete w.spec; delete w.specAuto; }
+      return;
+    }
+    let kind = netKind.get(wireNet.get(w.id)) || "ctrl";
+    if (kind === "ctrl" && RE_DC24_NUM.test(String(w.num))) kind = "dc24";
+    const spec = String(rules[kind] || "").trim();
+    if (spec) { w.spec = spec; w.specAuto = true; }
+    else if (w.specAuto) { delete w.spec; delete w.specAuto; }
+  });
 }
 
 /* ══════════════ 通電シミュレーション ══════════════ */
