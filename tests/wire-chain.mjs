@@ -7,7 +7,12 @@
    ・manual   : 手で入れた線番は上書きしない。連番で入れた線 (chain 印) は
                 先頭を入れ直せば付け替わる
    ・hex      : 三菱ユニットでは Y08 → Y09 → Y0A と 16進で進む
-   ・uiPath   : プロパティの線番欄から入れても連番が働く */
+   ・uiPath   : プロパティの線番欄から入れても連番が働く
+   ・termStrip: 縦に並べた端子 (端子台) でも同じ — 先頭に入れると下の端子の
+                配線へ連番。配線の無い端子は番号だけ進み、35mm 超のあきで
+                別の端子台とみなして止まる
+   ・termHoriz: 横に並べた端子台 (右へ) でも働く
+   ・termUi   : 端子台もプロパティの線番欄から働く (chainWireNumbers 経由) */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -76,6 +81,56 @@ const R = await p.evaluate(async () => {
     out.uiPath = { w0: w0.num, w1: w1.num };
     App.selection.clear();
   }
+  /* ── 端子台 (縦): 5mm ピッチで 6 個 + 30mm 離れた別の端子台 ── */
+  {
+    App.project = newProject("端子台連番"); UI.renumberPages();
+    const pg = App.project.pages.find(isDrawingPage);
+    App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
+    pg.devices.length = 0; pg.wires.length = 0;
+    const ts = [];   // 縦 25mm ピッチ (端子の記号は 20mm 幅 — 重ならない間隔)
+    for (let i = 0; i < 6; i++) ts.push(addDevice(pg, "terminal", 100, 100 + i * 25, { tag: String(i + 1) }));
+    const far = addDevice(pg, "terminal", 100, 100 + 5 * 25 + 50, { tag: "FAR" });   // 50mm あき = 別の端子台
+    const wAt = (d) => { const a = devPins(d)[0]; return addWire(pg, [[a.x, a.y], [a.x - 30, a.y], [a.x - 30, a.y - 10]]); };
+    const w0 = wAt(ts[0]), w1 = wAt(ts[1]), w3 = wAt(ts[3]), w5 = wAt(ts[5]);
+    const wFar = wAt(far);
+    pg.wires.forEach(w => { w.num = null; w.fixed = false; w.numShow = false; });   // 自動採番を消して素の状態に
+    setWireNumber(pg, w0, "101");
+    const n = chainWireNumbers(pg, w0, "101");
+    // 離れた端子台には連番が及ばない (自動採番は別途付くので、chain 印と番号で見る)
+    out.termStrip = { n, w1: w1.num, w3: w3.num, w5: w5.num,
+      far: wFar.num, farChain: !!wFar.chain, w1chain: !!w1.chain };
+  }
+  /* ── 端子台 (横) ── */
+  {
+    const pg = curPage();
+    pg.devices.length = 0; pg.wires.length = 0;
+    const ts = [];   // 横に 10mm ピッチで並べる (縦向きの端子・配線は上下へ) = 端子台のよくある描き方
+    for (let i = 0; i < 3; i++) ts.push(addDevice(pg, "terminal", 100 + i * 10, 200, { tag: String(i + 1) }));
+    const wAt = (d) => { const a = devPins(d)[0]; return addWire(pg, [[a.x, a.y], [a.x, a.y - 30]]); };
+    const w0 = wAt(ts[0]), w1 = wAt(ts[1]), w2 = wAt(ts[2]);
+    pg.wires.forEach(w => { w.num = null; w.fixed = false; w.numShow = false; });
+    setWireNumber(pg, w0, "201");
+    const n = chainWireNumbers(pg, w0, "201");
+    out.termHoriz = { n, w1: w1.num, w2: w2.num };
+  }
+  /* ── 端子台もプロパティ経路で ── */
+  {
+    const pg = curPage();
+    pg.devices.length = 0; pg.wires.length = 0;
+    const t1 = addDevice(pg, "terminal", 100, 100, { tag: "1" });
+    const t2 = addDevice(pg, "terminal", 110, 100, { tag: "2" });
+    const a1 = devPins(t1)[0], a2 = devPins(t2)[0];
+    const w0 = addWire(pg, [[a1.x, a1.y], [a1.x, a1.y - 30]]);
+    const w1 = addWire(pg, [[a2.x, a2.y], [a2.x, a2.y - 30]]);
+    pg.wires.forEach(w => { w.num = null; w.fixed = false; w.numShow = false; });
+    App.selection.clear(); App.selection.add(w0.id); UI.showProps();
+    const inp = document.getElementById("pNum");
+    inp.value = "301";
+    inp.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 150));
+    out.termUi = { w0: w0.num, w1: w1.num };
+    App.selection.clear();
+  }
   return out;
 });
 
@@ -88,6 +143,11 @@ const checks = {
   manual: R.manual.w1 === "R601" && R.manual.w2 === "TEBUCHI" && R.manual.w4 === "R604",
   hex: R.hex.n === 2 && R.hex.w9 === "Y09" && R.hex.w10 === "Y0A",
   uiPath: R.uiPath.w0 === "R700" && R.uiPath.w1 === "R701",
+  termStrip: R.termStrip.n === 3 && R.termStrip.w1 === "102" && R.termStrip.w3 === "104"
+    && R.termStrip.w5 === "106" && R.termStrip.far !== "107" && R.termStrip.farChain === false
+    && R.termStrip.w1chain === true,
+  termHoriz: R.termHoriz.n === 2 && R.termHoriz.w1 === "202" && R.termHoriz.w2 === "203",
+  termUi: R.termUi.w0 === "301" && R.termUi.w1 === "302",
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

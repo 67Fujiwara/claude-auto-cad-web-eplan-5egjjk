@@ -775,11 +775,11 @@ UI.showProps = (focusTag = false) => {
       commit();
       const v = e.target.value.trim();
       const n = setWireNumber(page, w, v);   // ネット全体に反映 (1ネット1線番)
-      const chained = v ? chainIoWireNumbers(page, w, v) : 0;   // PLC の行なら下へ連番
+      const chained = v ? chainWireNumbers(page, w, v) : 0;   // PLC の行・端子台なら下へ連番
       UI.refresh(false);
       UI.showProps();
       UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)` +
-                    (chained ? ` — PLC の行に合わせて下の ${chained} 本へ連番を振りました` : "")
+                    (chained ? ` — 並び (PLC の行/端子台) に合わせて下の ${chained} 本へ連番を振りました` : "")
                   : `線番を消しました (この配線 ${n} 本には線番を出しません — 自動採番も付けません)`);
     });
     const numAuto = pane.querySelector("#pNumAuto");
@@ -1844,8 +1844,8 @@ UI.openWireNumInput = (clientX, clientY, wire) => {
     if (save && v !== (wire.num || "")) {
       commit();
       const n = setWireNumber(curPage(), wire, v);   // ネット全体に反映 (1ネット1線番)
-      const chained = v ? chainIoWireNumbers(curPage(), wire, v) : 0;
-      if (chained) UI.setMsg(`PLC の行に合わせて下の ${chained} 本へ連番を振りました`);
+      const chained = v ? chainWireNumbers(curPage(), wire, v) : 0;
+      if (chained) UI.setMsg(`並びに合わせて下の ${chained} 本へ連番を振りました`);
       UI.refresh(false);
       UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
                   : `線番を消しました (この配線 ${n} 本には線番を出しません — プロパティの「自動採番に戻す」で戻せます)`);

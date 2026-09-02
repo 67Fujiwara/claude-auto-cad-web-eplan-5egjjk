@@ -3069,6 +3069,66 @@ function chainIoWireNumbers(page, wire, num) {
   return count;
 }
 
+/* ── 端子台の線番の連番入力 ──
+   縦 (または横) に並べた端子の列 = 端子台。先頭の端子の配線に線番を
+   入れたら、下 (右) の端子の配線へ連番を振る — PLC の行と同じ流儀。
+   端子どうしのあき (基点の間隔) が 35mm を超えたところで別の端子台とみなす
+   (端子の記号は 20mm 幅、PLC の行ピッチは 15〜35mm — その並びまでは 1 本の台) */
+const TERM_STRIP_GAP = 35;
+function terminalStripFrom(page, wire) {
+  const isTerm = d => { const b2 = symBaseIdOf(d.sym); return b2 === "terminal" || b2 === "term_dot"; };
+  const ends = [wire.pts[0], wire.pts[wire.pts.length - 1]];
+  const onDev = d => devPins(d).some(a => ends.some(pt => Math.abs(pt[0] - a.x) < .01 && Math.abs(pt[1] - a.y) < .01));
+  const t0 = page.devices.find(d => isTerm(d) && onDev(d));
+  if (!t0) return null;
+  const terms = page.devices.filter(isTerm);
+  const mk = axis => {
+    const same = terms.filter(d => d !== t0 &&
+      Math.abs(axis === "v" ? d.x - t0.x : d.y - t0.y) < .01);
+    const key = d => (axis === "v" ? d.y : d.x);
+    const after = same.filter(d => key(d) > key(t0) + .01).sort((a, b2) => key(a) - key(b2));
+    const strip = [];
+    let prev = key(t0);
+    for (const d of after) {
+      if (key(d) - prev > TERM_STRIP_GAP) break;   // あきが大きい = 別の端子台
+      strip.push(d);
+      prev = key(d);
+    }
+    return strip;
+  };
+  const v = mk("v"), h2 = mk("h");
+  return { t0, rest: v.length >= h2.length ? v : h2 };
+}
+/** 端子台の連番。振った本数を返す (端子の上でなければ 0) */
+function chainTerminalWireNumbers(page, wire, num) {
+  if (!num) return 0;
+  const strip = terminalStripFrom(page, wire);
+  if (!strip || !strip.rest.length) return 0;
+  const { wireNet } = computeNets(page, "open");
+  const myNet = wireNet.get(wire.id);
+  const condList = condWires(page);
+  let n = num, count = 0;
+  for (const d of strip.rest) {
+    n = incWireNum(n);
+    if (!n) break;
+    const pins = devPins(d);
+    const w2 = condList.find(w => w !== wire && wireNet.get(w.id) !== myNet &&
+      pins.some(a => [w.pts[0], w.pts[w.pts.length - 1]].some(pt =>
+        Math.abs(pt[0] - a.x) < .01 && Math.abs(pt[1] - a.y) < .01)));
+    if (!w2) continue;                              // 配線の無い端子は番号だけ進める
+    if (w2.fixed && w2.num && !w2.chain) continue;  // 手で入れた線番は守る
+    setWireNumber(page, w2, n);
+    w2.chain = true;
+    count++;
+  }
+  return count;
+}
+/** 線番の連番入力 — PLC の行 → 端子台の順に試す */
+function chainWireNumbers(page, wire, num) {
+  const a = chainIoWireNumbers(page, wire, num);
+  return a || chainTerminalWireNumbers(page, wire, num);
+}
+
 function setWireNumber(page, wire, num, opts = {}) {
   const v = (num == null ? "" : String(num)).trim();
   const { wireNet } = computeNets(page, "open");
