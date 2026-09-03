@@ -500,9 +500,11 @@ function pageToDXF(page) {
       ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
     }
     if (wr.spec && wr.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
-      const [mx, my, horiz, gap, side] = wireLabelPos(wr, page);
-      const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
-      ents += dxfText(sx, sy, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      const [mx, my, horiz, gap, side, hideSpec] = wireLabelPos(wr, page);
+      if (!hideSpec) {                       // 画面と同じ: 狭い所では仕様を出さない
+        const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
+        ents += dxfText(sx, sy, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+      }
     }
   });
   junctionDots(page).forEach(([x, y]) => {

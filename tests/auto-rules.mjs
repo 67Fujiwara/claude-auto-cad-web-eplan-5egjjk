@@ -103,7 +103,28 @@ const R = await p.evaluate(async () => {
     wireSpecRules().ctrl = "";
     autoNumberWires();
     out.specOff.empty = wC.spec === undefined;
-    wireSpecRules().ctrl = "KIV 1.25sq 黄";
+    wireSpecRules().ctrl = "KIV 1.25sq Y";
+  }
+
+  // ── ケーブルの心線には電線仕様を付けない (5mm ピッチで書ききれない) ──
+  {
+    const pg = fresh();
+    const t1 = addDevice(pg, "terminal", 80, 100, { tag: "C1" });
+    const t2 = addDevice(pg, "terminal", 130, 100, { tag: "C2" });
+    const a1 = devPins(t1)[1], a2 = devPins(t2)[1];
+    // 端子から下りて、心線囲みの中を横切り、隣の端子へ戻る (回路として採番される線)
+    const wCore = addWire(pg, [[a1.x, a1.y], [a1.x, 140], [a2.x, 140], [a2.x, a2.y]]);
+    addDevice(pg, "cable_core", 105, 135, {});   // 囲みの軸が横切りの区間をまたぐ
+    autoNumberWires();
+    out.coreSkip = { spec: wCore.spec, num: wCore.num, inEncl: wireInEnclosure(pg, wCore) };
+  }
+
+  // ── 旧既定 (和名の色) で保存された図面は色記号へ置き換わる。手で変えた欄は残る ──
+  {
+    projectMeta().wireSpecs = { on: true, earth: "IV 2sq 緑/黄", main: "KIV 3.5sq 黒",
+      dc24: "KIV 0.75sq 青", ctrl: "KIV 1.25sq 黄" };
+    const r2 = wireSpecRules();
+    out.migrate = { earth: r2.earth, main: r2.main, dc24: r2.dc24 };
   }
 
   // ── 設定画面 ──
@@ -123,16 +144,19 @@ const R = await p.evaluate(async () => {
 const checks = {
   noPageErrors: errs.length === 0,
   pinName: R.pinName.w0 === "Y00" && R.pinName.w10 === "Y0A"
-    && R.pinName.spec0 === "KIV 0.75sq 青" && R.pinName.auto0 === true,
+    && R.pinName.spec0 === "KIV 0.75sq BL" && R.pinName.auto0 === true,
   termName: R.termName.w1 === "R200" && R.termName.w2 === "S200",
   fallback: R.fallback.seq === true,
   manualWin: R.manualWin.w1 === "TEDIRECT",
   numOffSw: R.numOffSw.notName === true && !!R.numOffSw.w2,
-  specRule: R.specRule.earth === "IV 2sq 緑/黄" && R.specRule.main === "KIV 2sq 黒"
-    && R.specRule.ctrl === "KIV 1.25sq 黄",
-  specKeep: R.specKeep.manual === "CVV 0.5sq" && R.specKeep.back === "KIV 1.25sq 黄",
+  specRule: R.specRule.earth === "IV 2sq G/Y" && R.specRule.main === "KIV 2sq BK"
+    && R.specRule.ctrl === "KIV 1.25sq Y",
+  specKeep: R.specKeep.manual === "CVV 0.5sq" && R.specKeep.back === "KIV 1.25sq Y",
   specOff: R.specOff.off === true && R.specOff.empty === true,
   dialog: R.dialog.has === true && R.dialog.saved === "KIV 0.5sq 青",
+  migrate: R.migrate.earth === "IV 2sq G/Y" && R.migrate.dc24 === "KIV 0.75sq BL"
+    && R.migrate.main === "KIV 3.5sq 黒",
+  coreSkip: R.coreSkip.inEncl === true && !!R.coreSkip.num && R.coreSkip.spec === undefined,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

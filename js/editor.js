@@ -362,9 +362,11 @@ function wiresSVG(page, opts = {}) {
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec && w.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
-      const [mx, my, horiz, gap, side] = wireLabelPos(w, page);
-      const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
-      out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr * wk, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+      const [mx, my, horiz, gap, side, hideSpec] = wireLabelPos(w, page);
+      if (!hideSpec) {                     // 狭くて線番しか置けない所では仕様を出さない
+        const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
+        out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr * wk, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+      }
     }
   });
   /* ジャンクションドット (直径は線幅の約3倍)。丸端子の円の中には打たない —

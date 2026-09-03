@@ -431,8 +431,10 @@ function wireSpecBox(w, mx, my, horiz, gap, side) {
     画面・DXF・検図・配置器がどれも同じ矩形を見るための唯一の入口 —
     引数を1つ渡し忘れただけで検図と描画が別の場所を見る、という事故を防ぐ */
 function wireLabelBoxes(w, pos) {
-  const [mx, my, horiz, gap, side] = pos;
-  return { num: wireNumBox(w, mx, my, horiz), spec: wireSpecBox(w, mx, my, horiz, gap, side) };
+  // pos[5] = 仕様は出さない印 (狭くて線番しか置けなかったとき)
+  const [mx, my, horiz, gap, side, hideSpec] = pos;
+  return { num: wireNumBox(w, mx, my, horiz),
+    spec: hideSpec ? null : wireSpecBox(w, mx, my, horiz, gap, side) };
 }
 /** 配線から線番の文字までのすき間 (mm)。並走する導体が 5mm 以内にあるときは
     WIRE_LABEL_GAP_TIGHT まで詰める — そうしないと文字が自分の線より隣の線に
@@ -460,7 +462,16 @@ function wireLabelMap(page) {
     .filter(w => w.num && w.numShow !== false)
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   wires.forEach(w => {
-    const res = wireLabelPosCalc(w, page, placed);
+    const st = {};
+    let res = wireLabelPosCalc(w, page, placed, { state: st });
+    /* 線番+電線仕様の 2 段では空きが無い狭い所は、仕様を出さずに線番だけで
+       置き直す。2 段を無理に押し込んで端子番号や図記号に重ねるより読める
+       (仕様のデータ・部品表・接続リストはそのまま残る) */
+    if (st.dirty && w.spec && w.numShow !== false) {
+      const st2 = {};
+      const res2 = wireLabelPosCalc(w, page, placed, { noSpec: true, state: st2 });
+      if (!st2.dirty) res = [res2[0], res2[1], res2[2], res2[3], res2[4], 1];
+    }
     map.set(w.id, res);
     const { num, spec } = wireLabelBoxes(w, res);
     placed.push(num);
@@ -476,7 +487,7 @@ function wireLabelPos(w, page) {
   }
   return wireLabelPosCalc(w, page, []);
 }
-function wireLabelPosCalc(w, page, placed) {
+function wireLabelPosCalc(w, page, placed, opt = {}) {
   const f = contentScale();
   const segs = [];
   for (let i = 0; i < w.pts.length - 1; i++) {
@@ -497,6 +508,15 @@ function wireLabelPosCalc(w, page, placed) {
     }
   });
   (notes || []).forEach(t => obst.push(textBounds(t)));
+  // 図枠 (輪郭線) の外へは置かない — 外周の帯を障害物として与える。
+  // これが無いと、図枠ぎわの線の線番・電線仕様が枠の外に置かれて検図に出る
+  {
+    const M = 200, ml = SHEET.marginLeft, mr = SHEET.margin;
+    obst.push({ x: -M, y: -M, w: SHEET.w + 2 * M, h: mr + M });
+    obst.push({ x: -M, y: SHEET.h - mr, w: SHEET.w + 2 * M, h: mr + M });
+    obst.push({ x: -M, y: -M, w: ml + M, h: SHEET.h + 2 * M });
+    obst.push({ x: SHEET.w - mr, y: -M, w: mr + M, h: SHEET.h + 2 * M });
+  }
   (placed || []).forEach(b => obst.push(b));      // すでに確定した他の線番ラベル
   // 導体そのものも障害物にする。梯子図では線番の脇を別の配線が横切るので、
   // それを見ないと交差する導体の上に線番が乗る (自分の線は除く — 線番は
@@ -554,7 +574,8 @@ function wireLabelPosCalc(w, page, placed) {
     return horiz ? [pt[0], pt[1] + o, horiz, gap, side] : [pt[0] + o, pt[1], horiz, gap, side];
   };
   const boxOf = (pos) => {
-    const { num: b, spec: sp } = wireLabelBoxes(w, pos);
+    const { num: b, spec: sp0 } = wireLabelBoxes(w, pos);
+    const sp = opt.noSpec ? null : sp0;    // 仕様を省略して線番だけで測る回
     if (!sp) return b;
     const x0 = Math.min(b.x, sp.x), y0 = Math.min(b.y, sp.y);
     return { x: x0, y: y0, w: Math.max(b.x + b.w, sp.x + sp.w) - x0, h: Math.max(b.y + b.h, sp.y + sp.h) - y0 };
@@ -785,6 +806,7 @@ function wireLabelPosCalc(w, page, placed) {
         return best === Infinity ? 0 : best;
       };
       ok.sort((a2, b2) => bias(a2) - bias(b2));
+      if (opt.state) opt.state.dirty = true;   // 囲みの上に載せる置き方 (空きは無い)
       return ok[0].res;
     }
   }
@@ -810,6 +832,7 @@ function wireLabelPosCalc(w, page, placed) {
     if (ok) return ok;
   }
   // 全滅時は重なり面積が最小の候補 (無条件フォールバックはしない)
+  if (opt.state) opt.state.dirty = true;
   return best ? best.res : posOf(pt, horiz, 1, 0);
 }
 
@@ -3199,17 +3222,40 @@ function setWireSpec(page, wire, spec) {
    コピーされるので、御社標準を一度作れば全案件に効く */
 const WIRE_SPEC_DEFAULTS = {
   on: true,
-  earth: "IV 2sq 緑/黄", main: "KIV 2sq 黒", dc24: "KIV 0.75sq 青", ctrl: "KIV 1.25sq 黄",
+  // 色は記号で書く (BK=黒 / BL=青 / Y=黄 / G/Y=緑黄)
+  earth: "IV 2sq G/Y", main: "KIV 2sq BK", dc24: "KIV 0.75sq BL", ctrl: "KIV 1.25sq Y",
 };
+const WIRE_SPEC_OLD = { earth: "IV 2sq 緑/黄", main: "KIV 2sq 黒", dc24: "KIV 0.75sq 青", ctrl: "KIV 1.25sq 黄" };
 function wireSpecRules() {
   const m = projectMeta();
   if (!m.wireSpecs) m.wireSpecs = { ...WIRE_SPEC_DEFAULTS };
+  // 旧既定 (色を和名で書いた版) のままの欄は色記号の新既定へ置き換える。
+  // 手で変えた欄はそのまま
+  Object.keys(WIRE_SPEC_OLD).forEach(k => {
+    if (m.wireSpecs[k] === WIRE_SPEC_OLD[k]) m.wireSpecs[k] = WIRE_SPEC_DEFAULTS[k];
+  });
   return m.wireSpecs;
 }
 const MAIN_CIRCUIT_IDS = new Set(["mcb1", "mcb2", "mcb3", "elb2", "elb3", "mms",
   "main_cont", "main_cont2", "cont_no_main", "cont_nc_main", "motor3", "motor1",
   "ol3", "ol2", "trafo", "autotrafo", "supply3", "supply1", "inverter_box", "disconnector", "ct"]);
 const RE_DC24_NUM = /^(\+?24V|0V|P24V?|N24V?|DC24V?)$/i;
+/** 囲み記号 (多芯ケーブル・シールド) の中を通る心線か。
+    心線に 1 本ずつ電線仕様は書かない — ケーブルの種別は囲みの機能テキストに書く */
+function wireInEnclosure(page, w) {
+  return page.devices.some(dev => {
+    const sym = symOf(dev.sym);
+    const rx = sym.enclosure;
+    if (!rx) return false;
+    const st = Math.max(0, (sym.span || (sym.stretch && sym.stretch.def) || 25) - 10);
+    const p0 = pinAbs(dev, { x: 0, y: 0 }), p1 = pinAbs(dev, { x: 0, y: st });
+    for (let i = 0; i < w.pts.length - 1; i++) {
+      const mx = (w.pts[i][0] + w.pts[i + 1][0]) / 2, my = (w.pts[i][1] + w.pts[i + 1][1]) / 2;
+      if (distToSeg(mx, my, [p0.x, p0.y], [p1.x, p1.y]) < rx + 1) return true;
+    }
+    return false;
+  });
+}
 function applyWireSpecRules(page, pinNet, wireNet) {
   const rules = wireSpecRules();
   if (rules.on === false) return;
@@ -3234,7 +3280,8 @@ function applyWireSpecRules(page, pinNet, wireNet) {
   });
   condWires(page).forEach(w => {
     if (w.spec && !w.specAuto) return;   // 手で入れた仕様 (旧データ含む・specAuto 印なし) は守る
-    if (!w.num) {                                    // 回路でない線には付けない
+    // 回路でない線・ケーブルの心線 (5mm ピッチで書ききれない) には付けない
+    if (!w.num || wireInEnclosure(page, w)) {
       if (w.specAuto) { delete w.spec; delete w.specAuto; }
       return;
     }
