@@ -3033,6 +3033,9 @@ function autoNumberWires() {
 function normalizeWireNumbers() {
   (App.project ? App.project.pages : []).forEach(page => {
     if (!isDrawingPage(page)) return;
+    // 旧仕様 (尺度違いコピペの伸縮) が残した線の太さ倍率を消す —
+    // 一部の配線だけ細く描かれ、線番・仕様ラベルの寸法もずれる原因だった
+    page.wires.forEach(w => { if (w.scale !== undefined) delete w.scale; });
     const wires = condWires(page).filter(w => w.num);
     if (!wires.length) return;
     const { wireNet } = computeNets(page, "open");

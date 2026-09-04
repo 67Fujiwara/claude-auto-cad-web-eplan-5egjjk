@@ -4,7 +4,10 @@
                  電線仕様・線番非表示の印がそのまま残る (細くならない)
    ・strokeSame: 分割後の描画の線幅が分割前と同じ
    ・numRevive : 線番の表示を担っていた区間を作図線に変えると、表示が
-                 残りの導体区間へ立て直される (番号が消えっぱなしにならない) */
+                 残りの導体区間へ立て直される (番号が消えっぱなしにならない)
+   ・uniformW  : 旧仕様 (尺度違いコピペの伸縮) が残した w.scale があっても、
+                 線は標準の太さ・ラベルは標準の文字高で描く (細い線が出ない)
+   ・loadClean : 読み込み時 (normalizeWireNumbers) に w.scale がデータからも消える */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -66,6 +69,23 @@ const R = await p.evaluate(async () => {
     otherShown: other.numShow !== false && !!other.num,
   };
   App.selection.clear();
+
+  // ── 旧仕様の名残 (w.scale) があっても太さ・文字高は標準のまま ──
+  {
+    const pg2 = curPage();
+    pg2.devices.length = 0; pg2.wires.length = 0;
+    const wa = addWire(pg2, [[60, 60], [140, 60]]);
+    const wb = addWire(pg2, [[60, 80], [140, 80]]);
+    wb.scale = 0.4; wb.num = "999"; wb.numShow = true; wb.fixed = true;
+    wa.num = "998"; wa.numShow = true; wa.fixed = true;
+    const svg = wiresSVG(pg2, { print: true });
+    const swOf2 = id => +(new RegExp(`stroke-width="([\\d.]+)" fill="none"[^>]*data-id="${id}" class="wire"`).exec(svg) || [0, -1])[1];
+    const fsOf = num => +(new RegExp(`font-size="([\\d.]+)"[^>]*>${num}<`).exec(svg) || [0, -1])[1];
+    out.uniformW = { a: swOf2(wa.id), b: swOf2(wb.id), fa: fsOf("998"), fb: fsOf("999") };
+    // 読み込み時の掃除で scale が消える
+    normalizeWireNumbers();
+    out.loadClean = { gone: wb.scale === undefined };
+  }
   return out;
 });
 
@@ -80,6 +100,9 @@ const checks = {
   numRevive: R.numRevive.numbered === true && !!R.numRevive.shownFirst
     && R.numRevive.after.changedCond === false
     && !!R.numRevive.after.otherNum && R.numRevive.after.otherShown === true,
+  uniformW: R.uniformW.a > 0 && R.uniformW.a === R.uniformW.b
+    && R.uniformW.fa > 0 && R.uniformW.fa === R.uniformW.fb,
+  loadClean: R.loadClean.gone === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

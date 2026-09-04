@@ -337,16 +337,17 @@ function wiresSVG(page, opts = {}) {
     const dOf = pts2 => "M" + pts2.map(p => p[0] + "," + p[1]).join(" L");
     const d = trimPolyByCircles(w.pts, masks).map(dOf).join(" ");
     const cond = isWireConductive(w);
-    // 線の太さは JIS Z 8312 の系列 (配線=太線 0.5 / 作図線=細線 0.25、比 2:1)
-    const wk = objScale(w);            // 尺度の違うページから貼った配線の倍率
-    let color = INK, sw = (cond ? LINE_W.thick : LINE_W.thin) * fr * wk;
+    /* 線の太さは JIS Z 8312 の系列 (配線=太線 0.5 / 作図線=細線 0.25、比 2:1)。
+       旧仕様 (尺度違いコピペの伸縮) が残した w.scale はもう見ない — 一部の
+       配線だけ細く描かれる原因だった。読み込み時にデータからも消している */
+    let color = INK, sw = (cond ? LINE_W.thick : LINE_W.thin) * fr;
     if (cond && sim && sim.wireNet) {
       const net = sim.wireNet.get(w.id);
-      if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = LINE_W.extra * fr * wk; }
-      else if (sim.nNets.has(net)) { color = SIM_N; sw = LINE_W.extra * fr * wk; }
+      if (sim.pNets.has(net) || sim.acNets.has(net)) { color = SIM_P; sw = LINE_W.extra * fr; }
+      else if (sim.nNets.has(net)) { color = SIM_N; sw = LINE_W.extra * fr; }
     }
     const st = WIRE_STYLES[w.style] || WIRE_STYLES.solid;
-    const da = wireDashArray(w, fr * wk);
+    const da = wireDashArray(w, fr);
     const dash = da ? ` stroke-dasharray="${da}" stroke-linecap="${st.round ? "round" : "butt"}"` : "";
     const selected = !print && App.selection.has(w.id);
     if (selected) out += `<path d="${d}" stroke="${SEL}" stroke-width="${2.2 * fr}" fill="none" opacity="0.28" stroke-linecap="round"/>`;
@@ -358,14 +359,14 @@ function wiresSVG(page, opts = {}) {
       const [mx, my, horiz] = wireLabelPos(w, page);
       // 位置は wireLabelPos が確定済み (当たり判定矩形と完全に一致させる)
       const lx = mx, ly = my;
-      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, TEXT_H.small * fr * wk, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec && w.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz, gap, side, hideSpec] = wireLabelPos(w, page);
       if (!hideSpec) {                     // 狭くて線番しか置けない所では仕様を出さない
         const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
-        out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr * wk, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+        out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
       }
     }
   });
