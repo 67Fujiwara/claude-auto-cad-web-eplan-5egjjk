@@ -538,6 +538,15 @@ function textsSVG(page, opts = {}) {
     // 複数行 (Enter で改行)。行送りは文字高の 1.5 倍 (JIS の推し)
     const lines = textLines(t);
     const lh = h * TEXT_LINE_K;
+    // 白抜き文字 (t.inv): 黒地の帯を先に敷き、文字を白で載せる (警告・銘板向け)
+    if (t.inv) {
+      const hEff = t.noMin ? h : textHeightMM(t.text || "", h);
+      const wMax = Math.max(...lines.map(ln => textWidthMM(ln, hEff, false, false)));
+      const pad = hEff * 0.25;
+      const anchor = t.anchor || "middle";
+      const bx = (anchor === "middle" ? t.x - wMax / 2 : anchor === "end" ? t.x - wMax : t.x) - pad;
+      out += `<rect x="${bx}" y="${t.y - hEff - pad}" width="${wMax + 2 * pad}" height="${hEff * 1.25 + (lines.length - 1) * lh + 2 * pad}" fill="${INK}" data-id="${t.id}" rx="${0.3 * fr}"${rt}/>`;
+    }
     if (selected) {
       const wApprox = Math.max(...lines.map(ln => ln.length)) * h * 0.62 + 2 * fr;
       const hApprox = h + 2.5 * fr + (lines.length - 1) * lh;
@@ -546,7 +555,7 @@ function textsSVG(page, opts = {}) {
     // noMin: 取り込んだ図面の文字は元の寸法に忠実に (和文の最小呼びへ持ち上げない)
     const body2 = lines.length === 1 ? escXML(t.text)
       : lines.map((ln, i) => `<tspan x="${t.x}" dy="${i ? lh : 0}">${escXML(ln) || " "}</tspan>`).join("");
-    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif"${rt}>${body2}</text>`;
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.text, h, false, { noMin: !!t.noMin })}" text-anchor="${t.anchor || "middle"}" fill="${t.inv ? "#fff" : INK}" data-id="${t.id}" class="cadtext" font-family="sans-serif"${rt}>${body2}</text>`;
   });
   return out;
 }

@@ -597,6 +597,22 @@ function pageToDXF(page) {
       const th = textHeight(t) * contentScale();
       const lh = th * TEXT_LINE_K;
       const a = textRot(t) * Math.PI / 180;
+      /* 白抜き文字 (黒地に白) — DXF の塗りつぶし色は受け側の背景設定に依存して
+         反転してしまうため、画面の帯と同じ寸法の囲み枠で強調を伝える */
+      if (t.inv) {
+        const lines0 = textLines(t);
+        const hEff = t.noMin ? th : textHeightMM(t.text || "", th);
+        const wMax = Math.max(...lines0.map(ln => textWidthMM(ln, hEff, false, false)));
+        const pad = hEff * 0.25;
+        const anchor0 = t.anchor || "middle";
+        const x0 = (anchor0 === "middle" ? t.x - wMax / 2 : anchor0 === "end" ? t.x - wMax : t.x) - pad;
+        const y0 = t.y - hEff - pad;
+        const w2 = wMax + 2 * pad, h2 = hEff * 1.25 + (lines0.length - 1) * lh + 2 * pad;
+        const cs = Math.cos(a), sn = Math.sin(a);
+        const rp = (px, py) => { const dx = px - t.x, dy = py - t.y; return [t.x + dx * cs - dy * sn, t.y + dx * sn + dy * cs]; };
+        ents += dxfPoly([[x0, y0], [x0 + w2, y0], [x0 + w2, y0 + h2], [x0, y0 + h2], [x0, y0]]
+          .map(p2 => rp(p2[0], p2[1])), "TEXT");
+      }
       textLines(t).forEach((ln, i) => {
         if (!ln) return;
         const ox = -lh * i * Math.sin(a), oy = lh * i * Math.cos(a);

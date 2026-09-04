@@ -1723,6 +1723,8 @@ function textBounds(t) {
   const anchor = t.anchor || "middle";
   const x = anchor === "middle" ? t.x - w / 2 : anchor === "end" ? t.x - w : t.x;
   const box = { x, y: t.y - h, w, h: h * 1.25 + (lines.length - 1) * h * TEXT_LINE_K };
+  // 白抜き文字は黒地の余白ぶん外へ広がる (検図・ラベルよけも帯で見る)
+  if (t.inv) { const p2 = h * 0.25; box.x -= p2; box.y -= p2; box.w += 2 * p2; box.h += 2 * p2; }
   const a = textRot(t);
   if (!a) return box;
   /* 回した文字は、回転後の 4 隅を包む外接箱で見る (検図の重なり判定・

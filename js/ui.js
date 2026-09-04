@@ -837,6 +837,9 @@ UI.showProps = (focusTag = false) => {
         <div class="prop-row"><label>文字高 (mm)</label><input id="pTsz" class="mono" type="number" step="0.5" min="2.5" value="${textHeight(t)}"/></div>
         <div class="prop-row"><label>角度 (°)</label><input id="pTrot" class="mono" type="number" step="15" value="${textRot(t)}"/></div>
       </div>
+      <div class="prop-row" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="pTinv"${t.inv ? " checked" : ""} style="width:auto"/>
+        <label for="pTinv" style="margin:0;cursor:pointer">白抜き文字 (黒地に白)</label></div>
       <div class="prop-note">角度は時計回り。R キーでも 90° ずつ回せます (縦書きの注記は 90° か 270°)。</div>`;
     pane.querySelector("#pTxt").addEventListener("change", e => {
       commit();
@@ -844,6 +847,12 @@ UI.showProps = (focusTag = false) => {
       UI.refresh(false);
     });
     pane.querySelector("#pTsz").addEventListener("change", e => { commit(); const n = parseFloat(e.target.value); if (!isNaN(n)) t.size = Math.max(2.5, n); UI.refresh(false); });
+    pane.querySelector("#pTinv").addEventListener("change", e => {
+      commit();
+      if (e.target.checked) t.inv = true; else delete t.inv;
+      App.labelRev++;   // 帯のぶん bbox が変わるのでラベルよけを引き直す
+      UI.refresh(false);
+    });
     const trot = pane.querySelector("#pTrot");
     if (trot) trot.addEventListener("change", e => {
       commit();
