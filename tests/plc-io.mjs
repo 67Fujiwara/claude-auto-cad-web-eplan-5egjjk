@@ -53,15 +53,17 @@ const R = await p.evaluate(() => {
   const SPEC = {
     /* 1 枚 = 1 チャネル (16 点 + コモン)。A3 縦 1:1 にびっしり収まる。
        端子の刻印は取説の回路図どおり (デバイス番号から R を除いた数字、
-       コモンは C0/C1…、出力の 1 枚目にサービス電源 0V/24V)。
-       AT 形の出力コモンの刻印と N24/N40 の入力コモンは未確認 (類推) */
+       出力の 1 枚目にサービス電源 0V/24V)。コモンは端子台の部屋ごとに分かれ、
+       C の連番を入力の部屋から出力の部屋へ通しで振る (N14AR の写しで確認。
+       AT 形の部屋割りは端子台が AR 形と共通の前提での類推) */
     kv_n14at_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
-    kv_n14at_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,COM", paper: "A3", orient: "landscape" },
+    kv_n14at_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
     kv_n24at_in:  { io: 14, first: "000", last: "013", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n24at_out: { io: 10, first: "500", last: "509", aux: "0V,24V,COM", paper: "A3", orient: "portrait" },
+    kv_n24at_out: { io: 10, first: "500", last: "509", aux: "0V,24V,C1,C2,C3,C4,C5", paper: "A3", orient: "portrait" },
     kv_n40at_in1: { io: 16, first: "000", last: "015", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n40at_out: { io: 16, first: "500", last: "515", aux: "0V,24V,COM", paper: "A3", orient: "portrait" },
+    kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C1", paper: "A3", orient: "portrait" },
+    kv_n40at_out1:{ io: 10, first: "500", last: "509", aux: "0V,24V,C2,C3,C4,C5,C6", paper: "A3", orient: "portrait" },
+    kv_n40at_out2:{ io: 6,  first: "510", last: "515", aux: "C7", paper: "A3", orient: "portrait" },
     kv_n14ar_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
     kv_n14ar_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
     /* 三菱 MELSEC iQ-R — 作りは KV と同じ・接点構成は三菱の取説どおり。
@@ -225,6 +227,16 @@ const R = await p.evaluate(() => {
   const n2 = buildIoScaffold(t.pg, t.d);               // 二度押しても増えない (引き直す)
   // 自動の端子番号ラベルが 1 つも出ていないこと (記号の中に描いてあるので)
   out.termLabels = pinLabelBoxes(t.pg).filter(x => x.owner === t.d.id).length;
+  /* 最下段のコモンの合流点に接続点の黒丸が付くこと (JIS C 0617-1)。
+     レールが合流点で切れると角 (2 方向) になり黒丸が消える —
+     レールを 5mm 延ばして合流点を線の途中に乗せている */
+  {
+    const sym0 = symOf(t.d.sym), sp0 = sym0.ioSheet;
+    const rowsA = sp0.rows.map((r0, i) => pinAbs(t.d, sym0.pins[i] || { x: 0, y: r0.y }));
+    const yBot = rowsA[rowsA.length - 1].y;
+    const comX0 = t.d.x + (sp0.side === "right" ? 1 : -1) * sp0.rail;
+    out.botDot = junctionDots(t.pg).some(([x, y]) => Math.abs(x - comX0) < 0.1 && Math.abs(y - yBot) < 0.1);
+  }
   /* 下地を引いただけ (機器はまだ置いていない) で検図が 0 件であること。
      全点を使い切る図面のほうが珍しいので、空いている行の隙間の端を
      毎回「宙吊り」と言われると、本当に見るべき指摘が埋もれる */
@@ -660,7 +672,7 @@ const R = await p.evaluate(() => {
   App.pageIdx = i2;
   applySheet(curPage());
   const dxf = pageToDXF(curPage());
-  out.dxf = { r107: /\n1\n107\n/.test(dxf), com: /\n1\nC0\n/.test(dxf) };
+  out.dxf = { r107: /\n1\n107\n/.test(dxf), com: /\n1\nC1\n/.test(dxf) };   // 入力 2 部屋目のコモンは C1
   return out;
 });
 console.log(JSON.stringify(R, null, 1));
@@ -746,7 +758,7 @@ const V1 = await p.evaluate(() => {
   return { drc0: runDRC().filter(i => i.page === q.no).length };
 });
 // 機種差し替え: 6 点 → 8 点 (行ピッチは同じなので既存 6 行はそのまま合う)
-await p.selectOption("#pSwap", "kv_n40at_out").catch(() => {});
+await p.selectOption("#pSwap", "kv_n40at_out1").catch(() => {});
 await p.waitForTimeout(250);
 const V2 = await p.evaluate(() => {
   const q = curPage();
@@ -819,8 +831,10 @@ const FN = await p.evaluate(() => {
   App.project = newProject("fn下線"); UI.renumberPages();
   const pg = App.project.pages.find(isDrawingPage);
   App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
-  const d = addDevice(pg, "kv_n40at_out", 100, 40);
-  const sym = symOf("kv_n40at_out");
+  const d = addDevice(pg, "kv_n40at_out1", 100, 40);
+  const sym = symOf("kv_n40at_out1");
+  // 記号が無い (壊れている) ときはクラッシュせず判定を落とす
+  if (!sym.ioSheet) return { drawn: -1, fnRows: -2, total: -1, uiNames: [], dxfLines: -1, fx: 0, devx: 0 };
   const fx = sym.ioSheet.fnX;
   const svg = devicesSVG(pg, {});
   const drawn = (svg.match(new RegExp("M" + fx + ",", "g")) || []).length;
@@ -849,16 +863,26 @@ const MELTB = await p.evaluate(() => {
     outNote: ((symOf("ry40nt5p_out") || {}).body || "").includes("TB17 は空き端子 — 結線禁止") };
 });
 
+/* 図中注記: AT 形は類推の照合指示、入力の枚は +コモンの極性宣言が紙に焼かれる
+   (N14AR は写しで確認済みなので類推の文言なし・極性宣言のみ) */
+const KVNOTE = await p.evaluate(() => ({
+  inPol: ((symOf("kv_n14at_in") || {}).body || "").includes("コモンは +24V (NPN 機器向け)"),
+  inSurm: ((symOf("kv_n40at_in2") || {}).body || "").includes("類推"),
+  outSurm: ((symOf("kv_n40at_out1") || {}).body || "").includes("類推"),
+  arClean: !(((symOf("kv_n14ar_out") || {}).body || "").includes("類推")),
+  arInPol: ((symOf("kv_n14ar_in") || {}).body || "").includes("+24V (NPN"),
+}));
+
 const checks = {
   // 想定の枚 (id) がすべてあること
-  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 11,
+  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 12,
   // 群ごとの点数・端子番号 (16 点で次のチャネルへ繰り上がる)
   groups: ids.every(id => R.group[id] && R.group[id].io !== undefined && R.group[id].io === R.spec[id].io &&
     R.group[id].first === R.spec[id].first && R.group[id].last === R.spec[id].last &&
     R.group[id].aux === R.spec[id].aux),
   // 16 点で次のチャネルへ繰り上がる (枚の切れ目はチャネルをまたがない)
   relayCarry: (R.group.kv_n40at_in1 || {}).last === "015" && (R.group.kv_n40at_in2 || {}).first === "100" &&
-    (R.group.kv_n40at_out || {}).last === "515",
+    (R.group.kv_n40at_out2 || {}).last === "515",
   // 1 枚 = 1 チャネル (16 点まで)
   perSheet16: ids.every(id => (R.group[id] || {}).io <= 16),
   // 用紙は 1:1。図枠に収まり表題欄を避け、レールの左に余白が残る
@@ -896,7 +920,7 @@ const checks = {
      電源と接地はこの図に無い (別紙) ので、ここには出てこない */
   /* 未使用の入出力点とサービス電源 (0V/24V) は黙るが、コモンの結び忘れは
      知らせる。分割コモン (C1〜C4) も 1 つずつ */
-  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "C0,C1,C2,C3,C4,COM" &&
+  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "C0,C1,C2,C3,C4,C5,C6,C7,COM" &&
     R.unconnected.otherSev === "warn" && R.unconnected.peSev === "" &&
     // 電源端子・接地端子が 1 つも無いこと
     ids.every(id => !/[LN]|PE/.test((R.group[id] || {}).aux || "")),
@@ -926,7 +950,7 @@ const checks = {
   /* 出力の A3 縦置きは横幅をぎりぎりまで使う — 現場側 (レールまでの距離) を
      160mm へ広げる (箱 36 + 現場 160 + コメント欄 62 ≈ 作図領域 267)。
      A3 横の出力 (8 点以下の機種) は従来の 80mm のまま */
-  fillWidth: (R.group.kv_n40at_out || {}).rail >= 155 && (R.group.kv_n24at_out || {}).rail >= 155 &&
+  fillWidth: (R.group.kv_n40at_out1 || {}).rail >= 155 && (R.group.kv_n24at_out || {}).rail >= 155 &&
     (R.group.kv_n14at_out || {}).rail === 80 && (R.group.kv_n40at_in1 || {}).rail === 80,
   /* 分割コモン (KV-N14AR): 取説どおりの並びで、コモン 4 つが全部 0V レールへ結ばれる */
   splitCom: (R.splitCom || {}).order === "0V,24V,500,C1,501,C2,502,C3,503,504,505,C4" &&
@@ -945,8 +969,12 @@ const checks = {
   }),
   /* 端子の丸はユニットの外郭の「中」(四角の中に丸)。円は辺に内側から接する */
   termInBox: ids.every(id => ((R.group[id] || {}).layout || {}).circleInBox === true),
+  // 最下段コモンの合流に接続点の黒丸 (レールの 5mm 延長で線の途中に乗せる)
+  botDot: R.botDot === true,
+  // 図中注記 (類推の照合指示 + 入力の +コモン極性宣言)
+  kvNote: KVNOTE.inPol && KVNOTE.inSurm && KVNOTE.outSurm && KVNOTE.arClean && KVNOTE.arInPol,
   // 出力の枚でも UI 経路 (機種差し替え・行ピッチ) が下地と負荷を壊さない
-  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out" && V2.drc.length === 0 &&
+  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out1" && V2.drc.length === 0 &&
     V3.pitch === 30 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,
   // 出力の枚の 3 線式センサ: 短絡を描かず、置き場所の誤りをエラーで知らせる
   out3wire: (R.out3wire || {}).noShort === true && R.out3wire.told >= 1,
@@ -993,7 +1021,7 @@ const checks = {
   unitSheets: (R.unit || {}).dupTag === 0 && R.unit.bomRows === 1 &&
     (R.unit.bomTags || []).join(",") === "-A100",
   // 部品表・DXF
-  bom: R.bom === 9,
+  bom: R.bom === 10,   // N40AT の出力が部屋割りで 2 枚に割れたぶん 1 行増える
   dxf: (R.dxf || {}).r107 === true && R.dxf.com === true,
   // プロパティ: 機種の差し替え・下地・機能欄の入口があること
   /* 規格外の図記号は図面上で説明する (JIS C 0617-1)。プロパティの説明文は

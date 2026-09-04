@@ -47,7 +47,7 @@ const R = await p.evaluate(async () => {
 
   // ── KV: 行 0,1,2 と 4 に配線 (行 3 は空き) ──
   {
-    const u = setupUnit("kv_n40at_out");
+    const u = setupUnit("kv_n40at_out1");
     const w0 = u.wireAt(0), w1 = u.wireAt(1), w2 = u.wireAt(2), w4 = u.wireAt(4);
     setWireNumber(u.pg, w0, "R500");
     const n = chainIoWireNumbers(u.pg, w0, "R500");
@@ -71,7 +71,7 @@ const R = await p.evaluate(async () => {
 
   // ── プロパティの線番欄から (実 UI 経路) ──
   {
-    const u = setupUnit("kv_n40at_out");
+    const u = setupUnit("kv_n40at_out1");
     const w0 = u.wireAt(0), w1 = u.wireAt(1);
     App.selection.clear(); App.selection.add(w0.id); UI.showProps();
     const inp = document.getElementById("pNum");

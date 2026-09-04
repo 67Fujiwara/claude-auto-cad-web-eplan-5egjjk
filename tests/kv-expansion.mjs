@@ -21,7 +21,7 @@
    ・swapKeepCh : 2台目のまま機種を N8ET へ差し替えると 2台目の N8ET (700〜) に着地する
    ・boundsNote : 図中注記のぶん外接矩形が下へ伸びる (注記 7mm は用紙判定にも入る)
    ・legend     : 規格外図記号の凡例 (stdNote) を pasteStdNote で図面に貼れる
-   ・baseKept   : 既存の基本ユニット (kv_n40at_out など) は変わらない */
+   ・baseKept   : 基本ユニットの端子構成 (部屋割りコモン込み) が想定どおり */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -68,7 +68,7 @@ const R = await p.evaluate(async () => {
       && v16.bounds[3] > s16.bounds[3],   // ピッチを広げると縦に伸びる
   };
   out.baseKept = {
-    n40pins: SYMBOLS_BY_ID["kv_n40at_out"].pins.length,    // 16点+COM+0V/24V = 19
+    n40pins: SYMBOLS_BY_ID["kv_n40at_out1"].pins.length,   // 10点+コモン5部屋+0V/24V = 17
     n14in: SYMBOLS_BY_ID["kv_n14at_in"].pins.length,       // 8点+C0 = 9
   };
 
@@ -143,7 +143,7 @@ const checks = {
   oneSheet: R.oneSheet.s8 && R.oneSheet.s16 && R.oneSheet.noSplit,
   swap: R.swap === true,
   place: R.place.dev && R.place.pins === 17 && R.place.drawn && R.place.stretch,
-  baseKept: R.baseKept.n40pins === 19 && R.baseKept.n14in === 9,
+  baseKept: R.baseKept.n40pins === 17 && R.baseKept.n14in === 9,
   alts: R.alts.made && R.alts.notInDb && R.alts.altOf && R.alts.samePos
     && R.alts.pins7 === [...seq(0, 7).map(v => String(+v + 100)), "COM"].join(","),
   onSheet: R.onSheet.header && R.onSheet.note1 && R.onSheet.note2,
@@ -153,7 +153,7 @@ const checks = {
   swapClean: R.swapClean.shown && R.swapClean.noAlt && R.swapClean.hasBase,
   swapShow: R.swapShow === true,
   swapKeepCh: R.swapKeepCh.sym === "kv_n8et_out_c7" && R.swapKeepCh.pin0 === "700" && R.swapKeepCh.posKept,
-  boundsNote: R.boundsNote.s8 === 13 && R.boundsNote.base === 6,   // (4+7+2) / (4+2)
+  boundsNote: R.boundsNote.s8 === 13 && R.boundsNote.base === 13,   // (4+7+2) — AT 形は類推注記の帯が基本ユニットにも入る
   legend: R.legend.rows >= 1 && R.legend.onPage,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);

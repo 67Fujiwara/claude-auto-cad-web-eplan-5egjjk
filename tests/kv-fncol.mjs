@@ -26,14 +26,14 @@ await p.waitForTimeout(900);
 const R = {};
 const D = await p.evaluate(async () => {
   const out = {};
-  const sym = SYMBOLS_BY_ID["kv_n40at_out"];
+  const sym = SYMBOLS_BY_ID["kv_n40at_out1"];
   out.bodyClean = !sym.body.includes('stroke-width="0.25"')
     && sym.ioSheet.fnX !== undefined && sym.ioSheet.fnW > 0;
   const pg = newPage("fn", App.project.pages.length + 1);
   pg.paper = sym.sheet.paper; pg.orient = sym.sheet.orient; pg.scale = "NS";
   App.project.pages.push(pg); App.pageIdx = App.project.pages.length - 1;
   applySheet(pg);
-  const d = addDevice(pg, "kv_n40at_out", 60, 25, {});
+  const d = addDevice(pg, "kv_n40at_out1", 60, 25, {});
   d.props.fn = { "500": "運転表示灯" };
   UI.refresh(); zoomFit();
   await new Promise(r => setTimeout(r, 250));

@@ -22,7 +22,7 @@ const R = await p.evaluate(async () => {
   const pg = App.project.pages.find(isDrawingPage);
   App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
   pg.devices.length = 0; pg.wires.length = 0;
-  const d = addDevice(pg, "kv_n40at_out", 100, 40);   // 出力: 箱が左・機能欄が右端
+  const d = addDevice(pg, "kv_n40at_out1", 100, 40);   // 出力: 箱が左・機能欄が右端
   UI.setTool("select"); UI.refresh(); zoomFit();
   await new Promise(r => setTimeout(r, 200));
 

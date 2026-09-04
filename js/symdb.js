@@ -349,8 +349,9 @@ function mkKvSheet(o) {
     stdNote: o.stdNote || "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
       "外郭 + 端子 + 端子名。端子の図記号番号は規格原本との照合が必要)。" +
       "端子の刻印とコモンの分割は取扱説明書の入出力回路図どおり " +
-      "(写しで確認できたのは KV-N14AR。AT 形の出力コモンの刻印と、" +
-      "N24AT/N40AT の入力コモンの数・刻印は未確認 — C0 が 1 つ、は N14AR からの類推)。" +
+      "(写しで確認できたのは KV-N14AR — コモンは入力→出力へ C の通し連番。" +
+      "AT 形の部屋割りは端子台が AR 形と共通の前提での類推 — 実機の端子カバーの刻印と要照合。" +
+      "違うときは置いた記号の「端子番号」プロパティで描き替えられます)。" +
       "ユニットの電源と接地は別紙の電源回路図に描きます",
     sim: "none", thumbBox: flip ? [-KV_BOXW, 0, KV_BOXW, 16] : [0, 0, KV_BOXW, 16],
     /* 機器タグは箱の肩 (入力=左肩・出力=右肩)。1 行目より上なので
@@ -411,22 +412,21 @@ const KV_FIT_H = 360;
 /* ── 機種の端子データ ─────────────────────────────────────
    取扱説明書の入出力回路図から。KV-N14AR は写しで確認済み:
    ・端子の刻印はデバイス番号から R を除いた数字 (入力 000〜 / 出力 500〜)
-   ・コモンの刻印は C0, C1, … (入力は C0 が 1 つ)
-   ・出力コモンは機種で分割が違う — N14AR は C1=500 / C2=501 / C3=502 /
-     C4=503〜505 (リレー出力なので群ごとに別電源を入れられる)
+   ・コモンの刻印は C の連番 — 入力の部屋から出力の部屋へ通しで振られる
+     (N14AR: 入力 C0 / 出力 C1=500, C2=501, C3=502, C4=503〜505)
+   ・出力は端子台の部屋 (仕切り) ごとにコモンが分かれる — outRooms に
+     各部屋の点数を並べる ([1,1,1,3] = 1点部屋×3 + 3点部屋)。リレー出力は
+     部屋ごとに別電源を入れられる
    ・出力側の端子台にはサービス電源 (0V / 24V) の端子がある (交流電源形)
-   写しで確認できたのは N14AR のみ。AT 形の出力コモンの刻印は未確認 (COM のまま)。
-   N24AT/N40AT の入力コモン「C0 が 1 つ」も N14AR からの類推で、実機で分割
-   (C0/C1 併設など) なら inGroups/outGroups を書けば端子構成ごと差し替わる */
+   写しで確認できたのは N14AR のみ。AT 形の部屋割りは「端子台の成形が
+   AR 形と共通」の前提で N14AR の並びを拡張した類推 (N24=+4点部屋 /
+   N40=+4点+6点部屋)。実機の端子カバーの刻印と違うときは outRooms を
+   直すか、置いた記号の「端子番号」プロパティで刻印だけ描き替える */
 const KV_UNITS = [
-  ["KV-N14AT", { nIn: 8, nOut: 6 }],
-  ["KV-N24AT", { nIn: 14, nOut: 10 }],
-  ["KV-N40AT", { nIn: 24, nOut: 16 }],
-  ["KV-N14AR", { nIn: 8, relay: true,
-    outGroups: [
-      { pts: ["500"], com: "C1" }, { pts: ["501"], com: "C2" },
-      { pts: ["502"], com: "C3" }, { pts: ["503", "504", "505"], com: "C4" },
-    ] }],
+  ["KV-N14AT", { nIn: 8, nOut: 6, outRooms: [1, 1, 1, 3] }],
+  ["KV-N24AT", { nIn: 14, nOut: 10, outRooms: [1, 1, 1, 3, 4] }],
+  ["KV-N40AT", { nIn: 24, nOut: 16, outRooms: [1, 1, 1, 3, 4, 6] }],
+  ["KV-N14AR", { nIn: 8, nOut: 6, relay: true, outRooms: [1, 1, 1, 3] }],
   /* 拡張ユニット (トランジスタ・シンク出力形)。exp = 拡張:
      ・入力枚は無し。サービス電源 (0V/24V) の端子も無い — あれは基本ユニット
        (交流電源形) の出力端子台のもの
@@ -468,15 +468,43 @@ function mkKvUnit(model, cfg) {
           const take = Math.ceil((cnt - at) / (nSheets - k));
           const pts = [];
           for (let i = 0; i < take; i++) pts.push(kvTerm(ch0, c + at + i));
-          trial.push([{ pts, com }]);
+          trial.push([{ pts, com: "C0" }]);   // 名は仮 (高さ measure 用)。確定後に振る
           at += take;
         }
         const fits = trial.every((gs, k) =>
           kvSeqH(mkSeq(gs, kind === "出力" && !cfg.exp && sheets.length === 0 && k === 0), KV_PITCH_DEF)
-            + (cfg.exp ? 7 : 0) <= KV_FIT_H);   // 拡張は図中注記のぶんも枚割りに入れる
-        if (fits) { trial.forEach(gs => sheets.push(gs)); break; }
+            + (cfg.exp || (kind === "入力" ? IN_NOTE : AT_NOTE) ? 7 : 0) <= KV_FIT_H);   // 図中注記のぶんも枚割りに入れる
+        if (fits) {
+          trial.forEach(gs => { gs[0].com = typeof com === "function" ? com() : com; sheets.push(gs); });
+          break;
+        }
       }
     }
+    return sheets;
+  };
+  /* 部屋割り ([点数, …]) → 群の列。各部屋の末尾にその部屋のコモンが付く */
+  const mkRooms = (ch0, rooms, com) => {
+    let at = 0;
+    return rooms.map(cnt => {
+      const pts = [];
+      for (let i = 0; i < cnt; i++) pts.push(kvTerm(ch0, at + i));
+      at += cnt;
+      return { pts, com: com() };
+    });
+  };
+  /* 部屋を丸ごと (点とコモンを離さず) 枚へ詰める。svcFirst = 1 枚目の頭に
+     サービス電源 (0V/24V) が載る */
+  const packRooms = (groups, svcFirst) => {
+    const sheets = [];
+    let cur = [];
+    groups.forEach(g => {
+      const next = [...cur, g];
+      if (cur.length && kvSeqH(mkSeq(next, svcFirst && sheets.length === 0), KV_PITCH_DEF)
+          + (AT_NOTE ? 7 : 0) > KV_FIT_H) {
+        sheets.push(cur); cur = [g];
+      } else cur = next;
+    });
+    if (cur.length) sheets.push(cur);
     return sheets;
   };
   /* 拡張ユニット (出力専用)。リレー番号は接続順で決まるので、1〜3台目
@@ -521,9 +549,25 @@ function mkKvUnit(model, cfg) {
     });
     return out;
   }
-  const inSheets = cfg.nIn ? autoSheets(0, cfg.nIn, "C0", "入力") : [];
-  const outSheets = cfg.outGroups ? [cfg.outGroups]
-    : autoSheets(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.nOut, "COM", "出力");
+  /* コモンの刻印は C の連番 — 入力の部屋から出力の部屋へ通しで振る
+     (N14AR の写し: 入力 C0 / 出力 C1〜C4。入力が 2 部屋の機種は C0・C1 と
+     なり、出力は C2 から始まる) */
+  /* AT 形の部屋割りは類推 (端子台が AR 形と共通の前提) なので、紙にも注記を
+     焼き込む — 説明文はメタデータで印刷されず、現場が持つのは紙だけのため */
+  /* 帯の幅 = 文字数 × 3.6mm。A3 横の出力 (レール 80mm) ではコモン側レール
+     下端の電位リンク (箱の左端から 107mm〜) に届かない長さに抑える。
+     入力の枚は現場側 (レール) が左で、箱の下の右向きの帯と離れているので
+     極性の宣言まで足せる — KV の入力は両極性のため、+コモン (NPN 機器向け)
+     を黙って選んでいることを紙で宣言する (PNP はレールの電位名を描き替え) */
+  const AT_NOTE = cfg.relay ? "" :
+    "※コモン C の並びは類推 — 実機の刻印と照合のこと";
+  const IN_NOTE = (AT_NOTE ? AT_NOTE + "。" : "※") + "コモンは +24V (NPN 機器向け)";
+  let comN = 0;
+  const nextCom = () => `C${comN++}`;
+  const inSheets = cfg.nIn ? autoSheets(0, cfg.nIn, nextCom, "入力") : [];
+  const outSheets = cfg.outRooms
+    ? packRooms(mkRooms(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.outRooms, nextCom), !cfg.exp)
+    : autoSheets(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.nOut, nextCom, "出力");
   // 用紙は機種でそろえる (入力・出力ぜんぶの中でいちばん背の高い枚に合わせる)
   const allSeqs = [
     ...inSheets.map(gs => mkSeq(gs, false)),
@@ -544,6 +588,7 @@ function mkKvUnit(model, cfg) {
            負荷の帰りは P24V。リレー出力は電源極性が自由なので、交流負荷なら
            レールのタグを手で描き替える。
            どちらの紙でも「外側 = コモン側 / 内側 = 分岐側」で位置をそろえる */
+        ...((kind === "入力" ? IN_NOTE : AT_NOTE) ? { expNote: kind === "入力" ? IN_NOTE : AT_NOTE } : {}),
         railTags: kind === "入力" ? { branch: "N24V", supply: "P24V" } : { branch: "P24V", supply: "N24V" },
         /* 実機のユニットに合わせて、入力は現場側が左・出力は現場側が右 (鏡像) */
         fieldSide: kind === "入力" ? "left" : "right",
@@ -552,7 +597,7 @@ function mkKvUnit(model, cfg) {
         nameEn: `${model} ${kindId === "in" ? "input" : "output"} wiring`,
         desc: `キーエンス KV Nano 基本ユニット ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点)。` +
           `端子の刻印は取扱説明書の回路図どおり (デバイス番号は R + 数字)。` +
-          (cfg.relay && kind === "出力" ? `リレー出力でコモンは分割 (${gs.map(g => `${g.com}=${g.pts.join("·")}`).join(" / ")})。` : "") +
+          (kind === "出力" && gs.length > 1 ? `コモンは端子台の部屋ごとに分割 (${gs.map(g => `${g.com}=${g.pts.join("·")}`).join(" / ")})${cfg.relay ? " — リレー出力なので部屋ごとに別電源を入れられる" : ""}。` : "") +
           (kind === "出力" && i === 0 ? `0V/24V はユニットのサービス電源端子。` : "") +
           `置くと P24V/N24V のレールとコモンの結線が実線で引かれます — 端子までの配線は自分で引きます。` +
           `機能欄の文言はプロパティでまとめて入れられます。ユニットの電源と接地は別紙の電源回路図に描きます。`,
