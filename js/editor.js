@@ -1230,6 +1230,27 @@ function onMouseDown(e) {
     return;
   }
 
+  /* 作図線の先端をつまんで伸ばす (選択ツール)。端の区間が直交なら
+     その軸に沿って伸縮する。導体の配線は対象外 — 端点は端子への接続を
+     持つので、つまみで動かすと回路が切れてしまう */
+  if (App.tool === "select" && !App.sim.running) {
+    const tol = Math.max(1.5, 6 / Editor.view.s);
+    const page2 = curPage();
+    for (let i = page2.wires.length - 1; i >= 0; i--) {
+      const wr = page2.wires[i];
+      if (isWireConductive(wr)) continue;
+      for (const end of [0, wr.pts.length - 1]) {
+        const pt = wr.pts[end];
+        if (Math.hypot(w.x - pt[0], w.y - pt[1]) < tol) {
+          commit();
+          Editor.drag = { type: "wireEnd", w: wr, end: end === 0 ? 0 : 1 };
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+  }
+
   // シミュレーションモード → 入力機器の操作
   if (App.sim.running) {
     const hit = hitTest(w.x, w.y);
@@ -1479,6 +1500,19 @@ function onMouseMove(e) {
     return;
   }
 
+  if (d.type === "wireEnd") {
+    const wr = d.w, i = d.end === 0 ? 0 : wr.pts.length - 1;
+    const adj = wr.pts[d.end === 0 ? 1 : wr.pts.length - 2];
+    let nx = snap(w.x), ny = snap(w.y);
+    if (adj) {
+      const cur = wr.pts[i];
+      if (Math.abs(adj[0] - cur[0]) < .01) nx = adj[0];        // 垂直区間はまっすぐ伸縮
+      else if (Math.abs(adj[1] - cur[1]) < .01) ny = adj[1];   // 水平区間も同様
+    }
+    wr.pts[i] = [nx, ny];
+    requestRender();
+    return;
+  }
   if (d.type === "rubber") {
     d.x1 = w.x; d.y1 = w.y;
     requestRender();
@@ -1645,6 +1679,12 @@ function onMouseUp(e) {
   if (d.type === "pan") {
     // 動かさずに右クリックだけ → 従来どおり作図 (配線・配置) のキャンセル
     if (d.rmb && !d.moved) cancelDraft();
+    return;
+  }
+  if (d.type === "wireEnd") {
+    App.labelRev++;
+    saveLocal();
+    UI.setMsg("作図線を伸ばしました (先端をつまんでドラッグ / Shift なしで軸に沿って伸縮)");
     return;
   }
   if (d.type === "simhold") {

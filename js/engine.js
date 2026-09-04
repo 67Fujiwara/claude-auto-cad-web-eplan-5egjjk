@@ -3252,9 +3252,21 @@ function wireInEnclosure(page, w) {
     if (!rx) return false;
     const st = Math.max(0, (sym.span || (sym.stretch && sym.stretch.def) || 25) - 10);
     const p0 = pinAbs(dev, { x: 0, y: 0 }), p1 = pinAbs(dev, { x: 0, y: st });
+    const A = [p0.x, p0.y], B = [p1.x, p1.y];
+    /* 区間どうしの距離で見る。中点だけを見ると、長い線が囲みを端の方で
+       横切る場合 (中点は囲みから遠い) を取りこぼす */
+    const ccw = (o, a2, b2) => (b2[0] - o[0]) * (a2[1] - o[1]) - (a2[0] - o[0]) * (b2[1] - o[1]);
+    const cross = (a2, b2) => ccw(A, a2, b2) === 0 && ccw(B, a2, b2) === 0
+      ? Math.min(Math.max(a2[0], b2[0]), Math.max(A[0], B[0])) >= Math.max(Math.min(a2[0], b2[0]), Math.min(A[0], B[0])) &&
+        Math.min(Math.max(a2[1], b2[1]), Math.max(A[1], B[1])) >= Math.max(Math.min(a2[1], b2[1]), Math.min(A[1], B[1]))
+      : (ccw(A, B, a2) * ccw(A, B, b2) <= 0) && (ccw(a2, b2, A) * ccw(a2, b2, B) <= 0);
     for (let i = 0; i < w.pts.length - 1; i++) {
-      const mx = (w.pts[i][0] + w.pts[i + 1][0]) / 2, my = (w.pts[i][1] + w.pts[i + 1][1]) / 2;
-      if (distToSeg(mx, my, [p0.x, p0.y], [p1.x, p1.y]) < rx + 1) return true;
+      const a2 = w.pts[i], b2 = w.pts[i + 1];
+      if (cross(a2, b2)) return true;
+      const dmin = Math.min(
+        distToSeg(a2[0], a2[1], A, B), distToSeg(b2[0], b2[1], A, B),
+        distToSeg(A[0], A[1], a2, b2), distToSeg(B[0], B[1], a2, b2));
+      if (dmin < rx + 1) return true;
     }
     return false;
   });

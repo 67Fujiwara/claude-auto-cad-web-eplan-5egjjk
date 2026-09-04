@@ -1227,6 +1227,8 @@ UI.newProject = async () => {
   App.project = newProject();
   App.fileHandle = null;
   wipSetCurrent("");           // 新しい図面はまだどの枠にも入っていない
+  // マスターファイルに書いた自動ルール (線番・電線仕様) は新規でも最初から効かせる
+  if (typeof applyMasterRules === "function") await applyMasterRules(App.project);
 
   App.pageIdx = Math.max(0, App.project.pages.findIndex(isDrawingPage));
   App.selection.clear();

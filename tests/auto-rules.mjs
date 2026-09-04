@@ -117,6 +117,16 @@ const R = await p.evaluate(async () => {
     addDevice(pg, "cable_core", 105, 135, {});   // 囲みの軸が横切りの区間をまたぐ
     autoNumberWires();
     out.coreSkip = { spec: wCore.spec, num: wCore.num, inEncl: wireInEnclosure(pg, wCore) };
+    // 長い線が囲みを端の方で横切る場合 (区間の中点は囲みから遠い) も心線扱い
+    const t3 = addDevice(pg, "terminal", 60, 200, { tag: "C3" });
+    const t4 = addDevice(pg, "terminal", 260, 200, { tag: "C4" });
+    const b1 = devPins(t3)[1], b2 = devPins(t4)[1];
+    const wLong = addWire(pg, [[b1.x, b1.y], [b1.x, 240], [b2.x, 240], [b2.x, b2.y]]);
+    /* 長い囲み (24芯 = 軸 115mm) の軸の真ん中を横切らせる — 線の端も囲みの
+       端も互いに遠い形。区間どうしの交差判定が無いと取りこぼす */
+    addDevice(pg, "cable_core@125", 160, 180, {});
+    autoNumberWires();
+    out.coreCross = { spec: wLong.spec, num: wLong.num, inEncl: wireInEnclosure(pg, wLong) };
   }
 
   // ── 旧既定 (和名の色) で保存された図面は色記号へ置き換わる。手で変えた欄は残る ──
@@ -157,6 +167,7 @@ const checks = {
   migrate: R.migrate.earth === "IV 2sq G/Y" && R.migrate.dc24 === "KIV 0.75sq BL"
     && R.migrate.main === "KIV 3.5sq 黒",
   coreSkip: R.coreSkip.inEncl === true && !!R.coreSkip.num && R.coreSkip.spec === undefined,
+  coreCross: R.coreCross.inEncl === true && !!R.coreCross.num && R.coreCross.spec === undefined,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

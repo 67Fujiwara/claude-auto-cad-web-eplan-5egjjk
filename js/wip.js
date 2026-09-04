@@ -116,6 +116,22 @@ UI.wipOpen = async (id) => {
   return true;
 };
 
+/** マスターファイルの自動ルール (線番・電線仕様) を新しい図面へ引き継ぐ。
+    マスターに一度書いておけば、新規の図面でも最初から自動割り振りが効く */
+async function applyMasterRules(project) {
+  try {
+    const master = wipList().find(r => r.master);
+    if (!master) return false;
+    const src = await relGetSnapshot(master.id);
+    if (!src || !src.meta) return false;
+    project.meta = project.meta || {};
+    let took = false;
+    if (src.meta.wireSpecs) { project.meta.wireSpecs = JSON.parse(JSON.stringify(src.meta.wireSpecs)); took = true; }
+    if (src.meta.numFromPins !== undefined) { project.meta.numFromPins = src.meta.numFromPins; took = true; }
+    return took;
+  } catch (e) { return false; }
+}
+
 /** 新しい図面を枠ごと追加して開く (今の図面は退避してから) */
 UI.wipNew = async (opts = {}) => {
   const nm = opts.name !== undefined ? opts.name
@@ -125,6 +141,8 @@ UI.wipNew = async (opts = {}) => {
   App.project = newProject(nm.trim());
   App.fileHandle = null;
   wipSetCurrent("");
+  const took = await applyMasterRules(App.project);   // マスターの線番・電線仕様ルール
+  if (took) UI.setMsg("マスターファイルの自動ルール (線番・電線仕様) を引き継ぎました");
   const id = await UI.wipSave({ asNew: true, name: nm.trim() });
   if (!id) return null;
   wipShowProject(App.project, id);

@@ -135,6 +135,26 @@ R.chipBadge = await p.evaluate(async () => {
   return { before, on, after };
 });
 
+// ── マスターに書いた自動ルール (線番・電線仕様) が新規図面へ引き継がれる ──
+R.masterRules = await p.evaluate(async () => {
+  const list = JSON.parse(localStorage.getItem("electracad.wip.list") || "[]");
+  const master = list.find(r => r.master);
+  if (!master) return { note: "マスターが無い" };
+  await UI.wipOpen(master.id);
+  projectMeta().wireSpecs = { on: true, earth: "IV 3.5sq G/Y", main: "KIV 5.5sq BK",
+    dc24: "KIV 0.5sq BL", ctrl: "KIV 0.75sq Y" };
+  projectMeta().numFromPins = false;
+  await UI.wipSave();
+  // 「新しい図面を追加」→ ルールが乗っている
+  const idN = await UI.wipNew({ name: "ルール引き継ぎ" });
+  const gotNew = { spec: wireSpecRules().main, num: projectMeta().numFromPins };
+  // 「新規」ボタン → こちらも乗っている
+  window.confirm = () => true;
+  await UI.newProject();
+  const gotBtn = { spec: wireSpecRules().main, num: projectMeta().numFromPins };
+  return { idN: !!idN, gotNew, gotBtn };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
   dialogBtns: R.dialogBtns.add === true && R.dialogBtns.master === true,
@@ -153,6 +173,9 @@ const checks = {
     && R.chipBadge.on.badge === true && R.chipBadge.on.master === true
     && /マスターファイル/.test(R.chipBadge.on.title)
     && R.chipBadge.after.badge === false && R.chipBadge.after.master === false,
+  masterRules: R.masterRules.idN === true
+    && R.masterRules.gotNew.spec === "KIV 5.5sq BK" && R.masterRules.gotNew.num === false
+    && R.masterRules.gotBtn.spec === "KIV 5.5sq BK" && R.masterRules.gotBtn.num === false,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

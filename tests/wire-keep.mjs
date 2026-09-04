@@ -7,7 +7,9 @@
                  残りの導体区間へ立て直される (番号が消えっぱなしにならない)
    ・uniformW  : 旧仕様 (尺度違いコピペの伸縮) が残した w.scale があっても、
                  線は標準の太さ・ラベルは標準の文字高で描く (細い線が出ない)
-   ・loadClean : 読み込み時 (normalizeWireNumbers) に w.scale がデータからも消える */
+   ・loadClean : 読み込み時 (normalizeWireNumbers) に w.scale がデータからも消える
+   ・endDrag   : 作図線の先端をつまんでドラッグすると軸に沿って伸びる
+   ・endDragCond: 導体の配線では先端つまみにならない (回路を切らない) */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -86,6 +88,32 @@ const R = await p.evaluate(async () => {
     normalizeWireNumbers();
     out.loadClean = { gone: wb.scale === undefined };
   }
+
+  // ── 作図線の先端をつまんで延長 ──
+  {
+    const pg3 = curPage();
+    pg3.devices.length = 0; pg3.wires.length = 0;
+    const wd = addWire(pg3, [[100, 60], [100, 120]]);   // 縦の作図線
+    wd.style = "dashed"; wd.aux = true;
+    const wc = addWire(pg3, [[160, 60], [160, 120]]);   // 導体
+    UI.setTool("select"); UI.refresh(); zoomFit();
+    await new Promise(r => setTimeout(r, 200));
+    const bb = Editor.svg.getBoundingClientRect();
+    const S = (x, y) => [bb.left + Editor.view.tx + x * Editor.view.s, bb.top + Editor.view.ty + y * Editor.view.s];
+    const drag = (x0, y0, x1, y1) => {
+      const [ax, ay] = S(x0, y0), [cx, cy] = S(x1, y1);
+      Editor.svg.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: ax, clientY: ay, button: 0, buttons: 1 }));
+      window.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: cx, clientY: cy, buttons: 1 }));
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: cx, clientY: cy, button: 0 }));
+    };
+    drag(100, 120, 105, 160);                     // 下端をつまんで下へ (少し横にずれても軸に乗る)
+    out.endDrag = { pts: JSON.stringify(wd.pts) };
+    App.selection.clear();
+    drag(160, 120, 160, 160);                     // 導体の端 → 先端つまみにはならない
+    const lenSame = (wc.pts[1][1] - wc.pts[0][1]) === 60;   // 全体移動か不動 (長さ不変)
+    out.endDragCond = { lenSame };
+    App.selection.clear();
+  }
   return out;
 });
 
@@ -103,6 +131,8 @@ const checks = {
   uniformW: R.uniformW.a > 0 && R.uniformW.a === R.uniformW.b
     && R.uniformW.fa > 0 && R.uniformW.fa === R.uniformW.fb,
   loadClean: R.loadClean.gone === true,
+  endDrag: R.endDrag.pts === "[[100,60],[100,160]]",
+  endDragCond: R.endDragCond.lenSame === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
