@@ -1368,7 +1368,7 @@ function onMouseDown(e) {
     Editor.drag = { type: "zoneLabel", z: zl,
       lx0: zl.lx !== undefined ? zl.lx : ZONE_LABEL_DX * f0,
       ly0: zl.ly !== undefined ? zl.ly : ZONE_LABEL_DY * f0,
-      wx0: w.x, wy0: w.y, moved: false, snapshot: JSON.stringify(App.project) };
+      wx0: w.x, wy0: w.y, moved: false, snapshot: snapshotProject() };
     requestRender();
     return;
   }
@@ -1376,7 +1376,7 @@ function onMouseDown(e) {
   if (zh) {
     Editor.drag = { type: "zoneResize", z: zh.z, hx: zh.h.hx, hy: zh.h.hy,
       x0: zh.z.x, y0: zh.z.y, w0: zh.z.w, h0: zh.z.h, moved: false,
-      snapshot: JSON.stringify(App.project) };
+      snapshot: snapshotProject() };
     requestRender();
     return;
   }
@@ -1384,7 +1384,7 @@ function onMouseDown(e) {
   const fc = fnColAt(curPage(), w.x, w.y);
   if (fc) {
     Editor.drag = { type: "fnCol", dev: fc.dev, dx0: devFnDx(fc.dev),
-      wx0: w.x, wy0: w.y, moved: false, snapshot: JSON.stringify(App.project) };
+      wx0: w.x, wy0: w.y, moved: false, snapshot: snapshotProject() };
     requestRender();
     return;
   }
@@ -1400,7 +1400,7 @@ function onMouseDown(e) {
     // 移動ドラッグ準備
     Editor.drag = {
       type: "move", startW: w, moved: false,
-      snapshot: JSON.stringify(App.project),
+      snapshot: snapshotProject(),
       attach: buildMoveAttachment(),
     };
     UI.showProps();
@@ -1924,7 +1924,7 @@ function rotateSelection() {
   // ── セーフティネット: 回転で DRC 指摘が増える (= 回路が壊れる) 場合は
   //    自動で取り消して警告する。電気CADで無音の破壊は許されない。──
   const issuesBefore = runDRC().length;
-  const snapshot = JSON.stringify(App.project);
+  const snapshot = snapshotProject();
 
   // 文字も一緒に選んでいるときはブロック回転へ回す (文字だけ取り残さない)
   if (devs.length === 1 && selWires.length === 0 && selTexts.length === 0) {
@@ -1993,7 +1993,7 @@ function rotateGuard(snapshot, issuesBefore) {
   if (after.length <= issuesBefore) return true;
   // 何が起きるのかを具体的に伝える (図枠外へ出る / 接続が切れる など)
   const frameIssue = after.find(i => /図枠|表題欄/.test(i.msg));
-  App.project = JSON.parse(snapshot);
+  App.project = restoreSnapshot(snapshot);
   App.undoStack.pop(); // commit() で積んだ分を捨てる (取り消したので履歴に残さない)
   retainSelection();
   UI.setMsg(frameIssue

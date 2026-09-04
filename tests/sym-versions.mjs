@@ -112,7 +112,15 @@ await p.evaluate(() => {
   const legacy = { ...SYMBOLS_BY_ID.coil, body: SYMBOLS_BY_ID.coil.body + '<path d="M0,31 H5"/>', imported: true, edited: true };
   delete legacy.verOf; delete legacy.retired;
   localStorage.setItem("electracad.importedSyms", JSON.stringify([legacy]));
-  localStorage.removeItem("electracad.project.v1");   // 前段の図面と切り離す
+  /* 前段の図面と切り離す。自動保存はまとめ書き (800ms) なので、先に flush で
+     待ちを消化してから消す — 消した後にタイマーが発火して書き戻さないように */
+  /* ページを閉じるときの flush が今の図面 (試験用の版シンボル入り) を
+     書き戻すので、空の図面に差し替えてからリロードする */
+  App.project = newProject("空");
+  flushAutosave();
+  localStorage.removeItem("electracad.project.v1");
+  localStorage.removeItem("electracad.project.v1.ok");
+  return relDelSnapshot("autosave");
 });
 await p.reload();
 await p.waitForTimeout(900);

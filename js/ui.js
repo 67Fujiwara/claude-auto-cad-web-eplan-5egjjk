@@ -2740,6 +2740,7 @@ async function boot() {
   restoreFileHandle();
   UI.updateWipChip();          // ヘッダに今の案件名を出す
   window.addEventListener("beforeunload", e => {
+    flushAutosave();               // まとめ書き待ちの自動保存を取りこぼさない
     if (!App.dirty) return;
     e.preventDefault();
     e.returnValue = "";   // 未保存の変更がある場合は離脱を確認する

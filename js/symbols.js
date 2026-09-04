@@ -490,7 +490,17 @@ function symStrokeWidth(sym, fallback) {
 }
 
 /** シンボルの描画SVG文字列 (ローカル座標系) */
+/* 描画結果のメモ化。DXF 取り込みの大きなシンボル (数百 KB の path) は
+   文字寸法の解決・回転打ち消しを毎フレームやると重い。結果は
+   (id・回転・線幅・文字倍率) で決まるので使い回す。シンボルの版管理に
+   より同じ id の中身は不変 — 直に書き換える処理は symSerTouch() が
+   epoch を進めるのでキャッシュも自然に外れる */
+const _symBodyCache = new Map();
 function symBodySVG(sym, opts = {}) {
+  const epoch = typeof _symSerEpoch !== "undefined" ? _symSerEpoch : 0;
+  const key = `${sym.id}|${opts.rot || 0}|${opts.strokeWidth || ""}|${opts.textScale || 1}|${epoch}`;
+  const hit = _symBodyCache.get(key);
+  if (hit !== undefined) return hit;
   // シンボルごとの線の太さ (lw) を優先する。取り込んだ DXF や自作シンボルは
   // 細線 0.25mm で登録できるようにして、DXF 側の線幅設定に依存させない。
   const sw = symStrokeWidth(sym, opts.strokeWidth);
@@ -501,7 +511,10 @@ function symBodySVG(sym, opts = {}) {
   // 回転グループの内側にあるので、文字だけ逆回転を掛けて打ち消す。
   const rot = ((opts.rot || 0) % 360 + 360) % 360;
   if (rot) body = counterRotateUpright(counterRotateText(body, rot), rot);
-  return `<g fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
+  const out = `<g fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
+  if (_symBodyCache.size > 400) _symBodyCache.clear();   // 使い切りの簡易上限
+  _symBodyCache.set(key, out);
+  return out;
 }
 
 /** 記号内の文字の data-h (JIS の文字高 mm) から、実際の書体比で font-size を求める。

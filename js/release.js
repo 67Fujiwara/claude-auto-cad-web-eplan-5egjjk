@@ -41,7 +41,8 @@ function relOpenDB() {
   }), REL_TIMEOUT);
 }
 async function relPutSnapshot(id, project) {
-  const text = JSON.stringify(project);
+  // 直列化済みの文字列を渡せる (大きな図面を毎回 stringify し直さないため)
+  const text = typeof project === "string" ? project : JSON.stringify(project);
   try {
     const db = await relOpenDB();
     await relWithTimeout(new Promise((res, rej) => {

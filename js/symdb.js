@@ -1245,6 +1245,7 @@ function symRetireVersions(baseId) {
   DB_SYMBOLS.forEach(s2 => {
     if (symBaseOf(s2) === baseId && s2.id !== baseId && s2.imported && !s2.retired) { s2.retired = true; n++; }
   });
+  if (n && typeof symSerTouch === "function") symSerTouch();   // 直列化の使い回しを破棄
   return n;
 }
 

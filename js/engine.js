@@ -1903,6 +1903,45 @@ function snap(v) { return Math.round(v / GRID) * GRID; }
 function ptKey(x, y) { return Math.round(x * 10) + "," + Math.round(y * 10); }
 function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 
+/* ── プロジェクトの高速直列化 ──
+   図面データの 9 割超は同梱シンボル (DXF 取り込みの図形 — Phoenix Edge 等で
+   数 MB) が占める。シンボルは版管理により「同じ id なら中身も同じ」なので、
+   一度直列化した文字列を使い回し、毎回はページ・メタ (数百 KB) だけを
+   直列化する。これをやらないと、1 操作ごとの undo 控えと自動保存で
+   数 MB × 2 回の JSON.stringify が走り、クリックのたびに固まる。
+   シンボルの中身を直に書き換える処理 (退役印など) は symSerTouch() で
+   使い回しを破棄すること */
+let _symSer = { key: "", text: "[]" };
+let _symSerEpoch = 0;
+function symSerTouch() { _symSerEpoch++; }
+function serializeSymbols(list) {
+  const arr = Array.isArray(list) ? list : [];
+  const key = _symSerEpoch + "|" + arr.map(s2 => s2.id + (s2.retired ? "~R" : "")).join(",");
+  if (_symSer.key !== key) _symSer = { key, text: JSON.stringify(arr) };
+  return _symSer.text;
+}
+function serializeProject(project = App.project) {
+  const snap = snapshotProject(project);
+  return snap.rest === "{}" ? '{"symbols":' + snap.syms + "}"
+    : '{"symbols":' + snap.syms + "," + snap.rest.slice(1);
+}
+/** undo 控え用の分割スナップショット。シンボル文字列は参照共有なので、
+    100 段の undo でも重いシンボルはメモリに 1 つしか持たない */
+function snapshotProject(project = App.project) {
+  const rest = { ...project };
+  delete rest.symbols;
+  return { syms: serializeSymbols(project.symbols), rest: JSON.stringify(rest) };
+}
+let _symParse = { text: "", arr: null };
+function restoreSnapshot(snap) {
+  if (typeof snap === "string") return JSON.parse(snap);   // 旧形式 (丸ごと文字列) の控え
+  const proj = JSON.parse(snap.rest);
+  // シンボルは不変なので、直前と同じ文字列なら同じオブジェクトを使い回す
+  if (_symParse.text !== snap.syms) _symParse = { text: snap.syms, arr: JSON.parse(snap.syms) };
+  proj.symbols = _symParse.arr;
+  return proj;
+}
+
 /* ══════════════ プロジェクト / ページ ══════════════ */
 function newProject(name = "無題プロジェクト") {
   return {
@@ -2117,7 +2156,7 @@ function mergeProjectSymbols() {
      どこにも見当たらない」になる */
   list.forEach(sym => {
     const cur = sym && sym.id ? SYMBOLS_BY_ID[sym.id] : null;
-    if (cur && cur.retired && !symHasLiveOf(symBaseOf(cur))) delete cur.retired;
+    if (cur && cur.retired && !symHasLiveOf(symBaseOf(cur))) { delete cur.retired; symSerTouch(); }
   });
   if (Object.keys(remap).length) {
     App.project.pages.forEach(pg => (pg.devices || []).forEach(d => { if (remap[d.sym]) d.sym = remap[d.sym]; }));
@@ -4518,7 +4557,7 @@ function terminalCSV() {
 /* ══════════════ 元に戻す / やり直し ══════════════ */
 function commit() {
   App.labelRev++;          // ラベル配置キャッシュを無効化
-  App.undoStack.push(JSON.stringify(App.project));
+  App.undoStack.push(snapshotProject());
   if (App.undoStack.length > 100) App.undoStack.shift();
   App.redoStack.length = 0;
   App.dirty = true;                   // ファイルへ未保存の変更あり
@@ -4539,8 +4578,8 @@ function retainSelection() {
 function undo() {
   if (App.sim.running) return false;
   if (!App.undoStack.length) return false;
-  App.redoStack.push(JSON.stringify(App.project));
-  App.project = JSON.parse(App.undoStack.pop());
+  App.redoStack.push(snapshotProject());
+  App.project = restoreSnapshot(App.undoStack.pop());
   mergeProjectSymbols();
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
   applySheet(); // 用紙・尺度も一緒に巻き戻す
@@ -4553,8 +4592,8 @@ function undo() {
 function redo() {
   if (App.sim.running) return false;
   if (!App.redoStack.length) return false;
-  App.undoStack.push(JSON.stringify(App.project));
-  App.project = JSON.parse(App.redoStack.pop());
+  App.undoStack.push(snapshotProject());
+  App.project = restoreSnapshot(App.redoStack.pop());
   mergeProjectSymbols();
   App.pageIdx = Math.min(App.pageIdx, App.project.pages.length - 1);
   applySheet();
@@ -4573,19 +4612,33 @@ const LS_KEY = "electracad.project.v1";
    IndexedDB への書き込みは連続編集で重くならないよう少し遅らせてまとめる */
 const AUTOSAVE_ID = "autosave";
 let _autosaveTimer = null;
-function saveLocal() {
-  syncProjectSymbols();
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(App.project));
-    localStorage.setItem(LS_KEY + ".ok", "1");
-  } catch (e) {
-    // 入り切らなかった印 — 起動時に IndexedDB 側を採用する
+const LS_TRY_MAX = 4.5e6;   // localStorage の実用上限 (約 5MB) — 超える図面は試さない
+/* 自動保存の実書き込み。数 MB の図面では localStorage への同期書き込みが
+   150ms 超かかるので、操作のたびではなく 800ms のまとめ書きにする
+   (取りこぼし防止に、ページを閉じるときは flushAutosave で即書きする) */
+function _writeAutosave() {
+  const text = serializeProject();
+  if (text.length < LS_TRY_MAX) {
+    try {
+      localStorage.setItem(LS_KEY, text);
+      localStorage.setItem(LS_KEY + ".ok", "1");
+    } catch (e) {
+      try { localStorage.setItem(LS_KEY + ".ok", "0"); } catch (e2) { }
+    }
+  } else {
+    // 入り切らない大きさ — 例外を毎回起こさず、最初から IndexedDB 側に任せる
     try { localStorage.setItem(LS_KEY + ".ok", "0"); } catch (e2) { }
   }
+  try { relPutSnapshot(AUTOSAVE_ID, text); } catch (e) { /* 保存領域なし */ }
+}
+function saveLocal() {
+  syncProjectSymbols();
   clearTimeout(_autosaveTimer);
-  _autosaveTimer = setTimeout(() => {
-    try { relPutSnapshot(AUTOSAVE_ID, App.project); } catch (e) { /* 保存領域なし */ }
-  }, 800);
+  _autosaveTimer = setTimeout(_writeAutosave, 800);
+}
+function flushAutosave() {
+  clearTimeout(_autosaveTimer);
+  _writeAutosave();
 }
 /** 前回の図面を読み出す (localStorage が壊れている/入り切らなかったときは IndexedDB) */
 async function loadAutosave() {

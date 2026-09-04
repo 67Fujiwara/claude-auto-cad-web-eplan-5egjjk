@@ -62,7 +62,7 @@ UI.wipSave = async (opts = {}) => {
   const st = wipStats(App.project);
   Object.assign(entry, { at: new Date().toISOString(), project: App.project.name, ...st });
   if (opts.master) entry.master = true;    // マスターファイル (標準回路のひな型) の印
-  const ok = await relPutSnapshot(id, App.project);
+  const ok = await relPutSnapshot(id, serializeProject());
   if (!ok) {
     UI.setMsg("一時保存できませんでした (ブラウザの保存領域がいっぱいの可能性があります) — ファイルに保存してください");
     return null;
