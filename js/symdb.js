@@ -1199,11 +1199,14 @@ let SYM_TAG_VIS = {};
   } catch (e) { SYM_TAG_VIS = {}; }
 })();
 function symTagVis(sym) {
-  const v = sym && SYM_TAG_VIS[sym.id];
+  // 自分の id に設定があればそれ、無ければ基本形 (stretch/拡張の元) の設定
+  const own = sym && SYM_TAG_VIS[sym.id];
+  const v = own !== undefined ? own : sym && SYM_TAG_VIS[symTagVisKeyOf(sym)];
   return TAG_VIS_MODES.includes(v) ? v : TAG_VIS_DEFAULT;
 }
 function setSymTagVis(id, v) {
   if (!TAG_VIS_MODES.includes(v)) return;
+  id = symTagVisKeyOf(SYMBOLS_BY_ID[id]) || id;   // 寸法違いから変えても基本形へ保存
   if (v === TAG_VIS_DEFAULT) delete SYM_TAG_VIS[id];
   else SYM_TAG_VIS[id] = v;
   try { localStorage.setItem("electracad.symTagVis", JSON.stringify(SYM_TAG_VIS)); } catch (e) { }
@@ -1214,6 +1217,12 @@ function tagShownFor(dev, print) {
   if (v === "hide") return false;
   if (v === "noprint") return !print;
   return true;
+}
+/** 表示設定の保存キー。寸法違い (cable_core@35) や拡張の台数違いは、
+    パレットに出ている基本形のキーで引く — パレットで変えた設定が
+    置いてある寸法違いにも効くように */
+function symTagVisKeyOf(sym) {
+  return (sym && (sym.stretchOf || sym.altOf || sym.id)) || "";
 }
 
 /* パレットから外した記号 (localStorage)。「データベース」以外の分類の記号は

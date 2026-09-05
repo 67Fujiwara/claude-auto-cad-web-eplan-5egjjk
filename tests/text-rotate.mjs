@@ -89,10 +89,9 @@ const R = await p.evaluate(async () => {
 
   // ── DXF ──
   t2.rot = 90;
-  // 和文は \U+xxxx へ逃がして書き出されるので、その形で探す
+  // 和文は CP932 の実バイトで保存される (dxfEscape は生のまま通す)
   const dxf = pageToDXF(curPage()).split(/\r?\n/);
-  const esc = [..."盤内配線"].map(c => "\\U+" + c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")).join("");
-  out.dxf = { has: dxf.includes("-90"), text: dxf.includes(esc) };
+  out.dxf = { has: dxf.includes("-90"), text: dxf.includes("盤内配線") };
 
   // ── 検図の外接箱 ──
   const flat = { id: uid("t"), x: 200, y: 100, text: "ABCDEFGH", size: 3.5 };

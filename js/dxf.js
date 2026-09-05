@@ -290,15 +290,64 @@ function dxfCircle(cx, cy, r, layer, ltype) {
   p.push([10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)]);
   return dxfEntity(p);
 }
-/* 和文は DXF の Unicode エスケープ (\U+XXXX) で書き出す。R12 でも AutoCAD が
-   解釈でき、コードページ設定に依存せず文字化けしない。 */
+/* 和文は Shift-JIS (CP932) の実バイトで書き出す — ヘッダで宣言している
+   $DWGCODEPAGE ANSI_932 と一致し、日本語 CAD (AutoCAD/JW ほか) がそのまま
+   読める。以前の \U+XXXX エスケープは受け側の書体対応に依存して「?」に
+   化けることがあった。CP932 に無い文字だけ \U+XXXX に残す。
+   変換表は TextDecoder("shift_jis") の逆引きで起動時に 1 度だけ作る */
+let _SJIS_MAP = null;
+function sjisMap() {
+  if (_SJIS_MAP) return _SJIS_MAP;
+  const map = new Map();
+  try {
+    const dec = new TextDecoder("shift_jis", { fatal: true });
+    const one = new Uint8Array(1), two = new Uint8Array(2);
+    for (let b = 0xA1; b <= 0xDF; b++) {          // 半角カナ
+      one[0] = b;
+      try { map.set(dec.decode(one), [b]); } catch (e) { }
+    }
+    for (let hi = 0x81; hi <= 0xFC; hi++) {       // 2 バイト文字
+      if (hi > 0x9F && hi < 0xE0) continue;
+      two[0] = hi;
+      for (let lo = 0x40; lo <= 0xFC; lo++) {
+        if (lo === 0x7F) continue;
+        two[1] = lo;
+        try { const ch = dec.decode(two); if (!map.has(ch)) map.set(ch, [hi, lo]); } catch (e) { }
+      }
+    }
+  } catch (e) { }                                  // shift_jis 非対応環境は空 (全部 \U+ へ)
+  _SJIS_MAP = map;
+  return map;
+}
 function dxfEscape(text) {
   let out = "";
+  const map = sjisMap();
   for (const ch of String(text)) {
     const c = ch.codePointAt(0);
-    out += c < 128 ? ch : "\\U+" + c.toString(16).toUpperCase().padStart(4, "0");
+    out += c < 128 ? ch : map.has(ch) ? ch
+      : "\\U+" + c.toString(16).toUpperCase().padStart(4, "0");
   }
   return out;
+}
+/** DXF ファイルのバイト列 → 文字列。UTF-8 として正しければそれ、
+    壊れていれば Shift-JIS (日本語 CAD の既定・自分の出力もこれ) で読む */
+function decodeDxfText(buf) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+  catch (e) {
+    try { return new TextDecoder("shift_jis").decode(buf); }
+    catch (e2) { return new TextDecoder().decode(buf); }
+  }
+}
+/** DXF 全文 → 保存用バイト列 (ASCII + CP932)。dxfEscape 済みの前提 */
+function dxfBytes(text) {
+  const map = sjisMap();
+  const bytes = [];
+  for (const ch of String(text)) {
+    const c = ch.codePointAt(0);
+    if (c < 128) bytes.push(c);
+    else { const b = map.get(ch); if (b) bytes.push(...b); else bytes.push(63); }
+  }
+  return new Uint8Array(bytes);
 }
 function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}) {
   if (!text) return "";
@@ -480,7 +529,11 @@ function pageToDXF(page) {
   // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {
     ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED");
-    if (z.label) ents += dxfText(z.x + C(2.5), z.y - C(1.8), C(TEXT_H.normal), z.label, "TEXT");
+    if (z.label) {
+      // コメントの位置と文字高は画面と同じ (つまんで動かした lx/ly・labelSize に追従)
+      const lp = zoneLabelPos(z);
+      ents += dxfText(lp.x, lp.y, lp.size, z.label, "TEXT");
+    }
   });
 
   // ── 配線 + ジャンクション + 線番 + 電線仕様 ──

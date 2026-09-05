@@ -196,7 +196,7 @@ UI.runRelease = async (opt) => {
     out.push({ name: `${base}.ecad.json`, data: JSON.stringify(App.project, null, 1) });
   }
   if (opt.dxf) {
-    pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: pageToDXF(pg) }));
+    pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: dxfBytes(pageToDXF(pg)) }));
     applySheet(curPage());
   }
   /* PDF は 2 通り。社内保存用はすべての図面、顧客提出用は仕様のページを外したもの。
@@ -355,7 +355,7 @@ UI.openReleaseHistory = () => {
       App.project = p; App.pageIdx = 0;
       const base = `${(r.project || "図面").replace(/[\\/:*?"<>|]/g, "_")}_rev${r.rev}`;
       p.pages.forEach((pg, i) => {
-        const text = pageToDXF(pg);
+        const text = dxfBytes(pageToDXF(pg));
         setTimeout(() => downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`.replace(/[\\/:*?"<>|]/g, "_"), text, "application/dxf"), i * 350);
       });
       App.project = keep; App.pageIdx = keepIdx;

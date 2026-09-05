@@ -1557,11 +1557,13 @@ UI.importDXF = () => {
     const rd = new FileReader();
     rd.onload = () => {
       let ents;
-      try { ents = parseDXF(rd.result); } catch (e) { alert("DXF の解析に失敗しました: " + e.message); return; }
+      // 文字コードは自動判別 (UTF-8 → だめなら Shift-JIS)。日本語 CAD の
+      // DXF は CP932 が普通で、UTF-8 固定だと和文が化けていた
+      try { ents = parseDXF(decodeDxfText(rd.result)); } catch (e) { alert("DXF の解析に失敗しました: " + e.message); return; }
       if (!ents.length) { alert("作図要素が見つかりませんでした。\n対応: LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC / TEXT / MTEXT / SOLID / INSERT (ブロック展開)\nブロックの定義が別ファイルにある場合は、元のCADで EXPLODE してから出力してください。"); return; }
       UI.dxfImportDialog(ents, file.name);
     };
-    rd.readAsText(file, "utf-8");
+    rd.readAsArrayBuffer(file);
   });
   inp.click();
 };
@@ -1808,7 +1810,7 @@ UI.exportDXF = () => {
   App.project.pages.forEach((pg, i) => {
     // 連続ダウンロードのブロックを避けるため少しずつ間隔を空ける
     setTimeout(() => {
-      downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`, pageToDXF(pg), "application/dxf");
+      downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`, dxfBytes(pageToDXF(pg)), "application/dxf");
       applySheet(curPage());      // 図枠を現在ページに戻す
     }, i * 400);
   });
