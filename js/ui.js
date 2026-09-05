@@ -99,12 +99,13 @@ UI.renumberPages = () => {
   const auto = meta.dwgNoAuto !== false;
   App.project.pages.forEach((p, k) => {
     p.no = k + 1;
-    // 図番はページ順に自動採番。書式は「接頭辞-連番」(既定 E-001)
+    // 図番はページ順に自動採番。基準 (先頭ページの図番) を入れればその連番、
+    // 空欄なら 表紙・目次・仕様 = A-001〜 / 回路図面 = B-001〜 の 2 系列
     // 手入力した図番 (dwgNoManual) と、自動採番を切った場合は書き換えない
     if (!auto || p.dwgNoManual) return;
     const m = /^(.*?)(\d+)\s*$/.exec(base);
     p.dwgNo = m ? m[1] + String(parseInt(m[2], 10) + k).padStart(m[2].length, "0")
-                : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : "E-" + String(k + 1).padStart(3, "0"));
+                : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : defaultDwgNo(p));
   });
 };
 UI.dwgNoOf = pageDwgNo;
@@ -157,7 +158,7 @@ UI.reorderPages = () => {
       if (!pg.dwgNoManual && projectMeta().dwgNoAuto !== false) {
         const mm = /^(.*?)(\d+)\s*$/.exec(base);
         dwg = mm ? mm[1] + String(parseInt(mm[2], 10) + k).padStart(mm[2].length, "0")
-                 : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : "E-" + String(k + 1).padStart(3, "0"));
+                 : (base ? `${base}-${String(k + 1).padStart(3, "0")}` : defaultDwgNo(pg));
       }
       return `<div class="rp-row" draggable="true" data-k="${k}">
         <span class="mono rp-no">${k + 1}</span>
@@ -2141,7 +2142,7 @@ UI.sheetSetup = () => {
     <div class="prop-grid2">
       <div class="prop-row"><label>プロジェクト</label><input id="tbProj" value="${escAttr(App.project.name)}"/></div>
       <div class="prop-row"><label>ページ名</label><input id="tbPage" value="${escAttr(page.name)}"/></div>
-      <div class="prop-row"><label>図番 (先頭ページ)</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="E-001"/></div>
+      <div class="prop-row"><label>図番 (先頭ページ)</label><input id="tbDwg" class="mono" value="${escAttr(meta.dwgNo || "")}" placeholder="空欄 = 表紙・仕様 A / 図面 B"/></div>
       <div class="prop-row"><label>このページの図番</label><input id="tbDwgPage" class="mono" value="${page.dwgNoManual ? escAttr(page.dwgNo || "") : ""}" placeholder="${escAttr(pageDwgNo(page))} (自動)"/></div>
       <div class="prop-row"><label class="chk"><input type="checkbox" id="tbDwgFix" ${page.dwgNoManual ? "checked" : ""}/><span>このページの図番を固定する</span></label></div>
       <div class="prop-row"><label>改訂</label><input id="tbRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>

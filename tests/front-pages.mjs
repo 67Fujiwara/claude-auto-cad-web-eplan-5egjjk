@@ -212,8 +212,24 @@ R.rest = await p.evaluate(async () => {
   return out;
 });
 
+/* ── 図番の既定 2 系列: 表紙・目次・仕様 = A-001〜 / 回路図面 = B-001〜 ── */
+const DWG = await p.evaluate(() => {
+  App.project = newProject("図番AB"); UI.renumberPages();
+  const nos1 = App.project.pages.map(pg => pageDwgNo(pg));
+  const q = newPage("回路2", App.project.pages.length + 1);
+  App.project.pages.push(q); UI.renumberPages();
+  const nos2 = App.project.pages.map(pg => pageDwgNo(pg));
+  projectMeta().dwgNo = "E-001"; UI.renumberPages();      // 基準を入れたら従来どおり 1 系列
+  const nosBase = App.project.pages.map(pg => pageDwgNo(pg));
+  projectMeta().dwgNo = ""; UI.renumberPages();
+  return { nos1, nos2, nosBase };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
+  dwgAB: JSON.stringify(DWG.nos1) === JSON.stringify(["A-001", "A-002", "A-003", "A-004", "B-001"]) &&
+    JSON.stringify(DWG.nos2) === JSON.stringify(["A-001", "A-002", "A-003", "A-004", "B-001", "B-002"]) &&
+    JSON.stringify(DWG.nosBase) === JSON.stringify(["E-001", "E-002", "E-003", "E-004", "E-005", "E-006"]),
   defaultPages: JSON.stringify(R.defaultPages) ===
     JSON.stringify([["cover", "表紙"], ["toc", "目次"], ["spec", "仕様"], ["spec", "仕様 (2)"],
       ["draw", "メイン回路"]]),

@@ -2396,8 +2396,22 @@ function sheetRow(y) {
   return SHEET_ROW_LETTERS[i] || "Z";
 }
 /** このページに印字される図番 (表題欄・DXF・印刷で共通) */
+/** 既定の図番 (表題欄で基準の図番を入れない場合)。
+    表紙・目次・仕様 = A 系列 / 回路図面 = B 系列で、それぞれ 1 から数える */
+const DWG_FRONT_KINDS = new Set(["cover", "toc", "spec"]);
+function defaultDwgNo(page) {
+  const pages = (App.project && App.project.pages) || [page];
+  const front = DWG_FRONT_KINDS.has(page.kind);
+  let n = 0, found = false;
+  for (const pg of pages) {
+    if (DWG_FRONT_KINDS.has(pg.kind) === front) n++;
+    if (pg === page) { found = true; break; }
+  }
+  if (!found) n = page.no || 1;
+  return (front ? "A-" : "B-") + String(n).padStart(3, "0");
+}
 function pageDwgNo(page) {
-  return page.dwgNo || projectMeta().dwgNo || "E-" + String(page.no).padStart(3, "0");
+  return page.dwgNo || projectMeta().dwgNo || defaultDwgNo(page);
 }
 function devLocation(dev) {
   const f = findDevice(dev.id);
