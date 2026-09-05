@@ -272,6 +272,18 @@ function dxfSolid(x0, y0, x1, y1, layer) {
     [12, x0.toFixed(3)], [22, dxfY(y1)],
     [13, x1.toFixed(3)], [23, dxfY(y1)]]);
 }
+/** 任意の四角形の塗りつぶし (SOLID)。pts = [A,B,C,D] (外周順)。色は ACI */
+function dxfSolidQuad(pts, layer, color) {
+  const [a2, b2, c2, d2] = pts;
+  const p = [[0, "SOLID"], [8, layer]];
+  if (color) p.push([62, color]);
+  // SOLID の頂点はジグザグ順 (3 点目と 4 点目が入れ替わる)
+  p.push([10, a2[0].toFixed(3)], [20, dxfY(a2[1])],
+    [11, b2[0].toFixed(3)], [21, dxfY(b2[1])],
+    [12, d2[0].toFixed(3)], [22, dxfY(d2[1])],
+    [13, c2[0].toFixed(3)], [23, dxfY(c2[1])]);
+  return dxfEntity(p);
+}
 /** 円弧。画面 (y 下向き) の開始角 t1・回転角 dt を DXF (y 上向き・反時計回り)
     に直して書き出す。y を反転すると角度は符号が反転し、回る向きも逆になる */
 function dxfArc(cx, cy, r, t1, dt, layer, ltype) {
@@ -365,6 +377,7 @@ function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}
   const al = anchor === "middle" ? 1 : anchor === "end" ? 2 : 0;
   return dxfEntity([[0, "TEXT"], [8, layer], [7, "JP"], [10, ax.toFixed(3)], [20, dxfY(ay)],
     [40, size.toFixed(2)], [1, dxfEscape(text)], [50, angle]]
+    .concat(opts.color ? [[62, opts.color]] : [])
     .concat(al ? [[72, al], [11, x.toFixed(3)], [21, dxfY(y)]] : []));
 }
 
@@ -650,8 +663,10 @@ function pageToDXF(page) {
       const th = textHeight(t) * contentScale();
       const lh = th * TEXT_LINE_K;
       const a = textRot(t) * Math.PI / 180;
-      /* 白抜き文字 (黒地に白) — DXF の塗りつぶし色は受け側の背景設定に依存して
-         反転してしまうため、画面の帯と同じ寸法の囲み枠で強調を伝える */
+      /* 白抜き文字 (黒地に白) — 画面と同じく塗りの帯 + 白文字で描く。
+         色は背景で反転する 7 番を避け、濃灰 (ACI 250) の帯 + ほぼ白
+         (ACI 255) の文字で固定 — 黒画面でも白い紙でも画面と同じに読める。
+         下敷きの図形は帯 (先に書く = 下に敷かれる) が隠す */
       if (t.inv) {
         const lines0 = textLines(t);
         const hEff = t.noMin ? th : textHeightMM(t.text || "", th);
@@ -663,13 +678,14 @@ function pageToDXF(page) {
         const w2 = wMax + 2 * pad, h2 = hEff * 1.25 + (lines0.length - 1) * lh + 2 * pad;
         const cs = Math.cos(a), sn = Math.sin(a);
         const rp = (px, py) => { const dx = px - t.x, dy = py - t.y; return [t.x + dx * cs - dy * sn, t.y + dx * sn + dy * cs]; };
-        ents += dxfPoly([[x0, y0], [x0 + w2, y0], [x0 + w2, y0 + h2], [x0, y0 + h2], [x0, y0]]
-          .map(p2 => rp(p2[0], p2[1])), "TEXT");
+        ents += dxfSolidQuad([[x0, y0], [x0 + w2, y0], [x0 + w2, y0 + h2], [x0, y0 + h2]]
+          .map(p2 => rp(p2[0], p2[1])), "TEXT", 250);
       }
       textLines(t).forEach((ln, i) => {
         if (!ln) return;
         const ox = -lh * i * Math.sin(a), oy = lh * i * Math.cos(a);
-        ents += dxfText(t.x + ox, t.y + oy, th, ln, "TEXT", t.anchor || "middle", -textRot(t), { mono: false });
+        ents += dxfText(t.x + ox, t.y + oy, th, ln, "TEXT", t.anchor || "middle", -textRot(t),
+          { mono: false, ...(t.inv ? { color: 255 } : {}) });
       });
     }
   });

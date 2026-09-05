@@ -5,7 +5,8 @@
    ・render   : inv の注記は文字より先に黒帯 (fill=INK) が敷かれ、文字は白。
                通常の注記には帯が無く、文字は INK 色
    ・bounds   : 外接箱 (検図・ラベルよけ) は黒帯の余白ぶん広くなる
-   ・dxf      : DXF には文字を囲む枠 (TEXT レイヤの LINE ×4) が出る */
+   ・dxf      : DXF には画面と同じ塗りの帯 (SOLID 濃灰 ACI250) が文字の
+               下に敷かれ、文字は白 (ACI255)。通常の注記には出ない */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -62,13 +63,18 @@ const R = await p.evaluate(async () => {
   out.bounds = { wider: bi.w > bp.w + 1, taller: bi.h > bp.h + 1,
     shifted: bi.x < bp.x - 0.5 && bi.y < bp.y - 0.5 };
 
-  // ── DXF: 囲み枠 (TEXT レイヤの LINE が 4 本増える) ──
-  const lineOnText = d => (d.match(/0\nLINE\n8\nTEXT\n/g) || []).length;
+  // ── DXF: 塗りの帯 (SOLID ACI250) + 白文字 (ACI255) ──
+  const solids = d => (d.match(/0\nSOLID\n8\nTEXT\n62\n250\n/g) || []).length;
   const dxfInv = pageToDXF(pg); applySheet(pg);
   delete t.inv;
   const dxfPlain = pageToDXF(pg); applySheet(pg);
-  out.dxf = { plain: lineOnText(dxfPlain), inv: lineOnText(dxfInv),
-    box4: lineOnText(dxfInv) === lineOnText(dxfPlain) + 4 };
+  const iSolid = dxfInv.indexOf("0\nSOLID\n8\nTEXT");
+  const iText = dxfInv.indexOf("1\n" + dxfEscape("注意"));
+  out.dxf = { plain: solids(dxfPlain), inv: solids(dxfInv),
+    band: solids(dxfInv) === 1 && solids(dxfPlain) === 0,
+    under: iSolid >= 0 && iText > iSolid,                   // 帯が文字より先 = 下敷き
+    white: /1\n注意\n50\n[\d.-]+\n62\n255\n/.test(dxfInv),
+    plainInkText: !/62\n255/.test(dxfPlain) };
   App.selection.clear();
   return out;
 });
@@ -80,7 +86,7 @@ const checks = {
   render: R.render.band === true && R.render.bandUnderText === true && R.render.whiteText === true &&
           R.render.plainNoBand === true && R.render.plainInk === true,
   bounds: R.bounds.wider === true && R.bounds.taller === true && R.bounds.shifted === true,
-  dxf: R.dxf.box4 === true,
+  dxf: R.dxf.band === true && R.dxf.under === true && R.dxf.white === true && R.dxf.plainInkText === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
