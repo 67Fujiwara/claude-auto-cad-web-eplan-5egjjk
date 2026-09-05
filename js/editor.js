@@ -839,12 +839,32 @@ function specSheetSVG(page, k, record) {
           }
           out += numCell(x0, yy, NW, RH, i + 1, on, blk.k, i);
           out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, label);
+          if (blk.sub && i === blk.sub.at) {
+            /* 行内の小 2 択 (AC200V の単相/3相)。選んだ語を小さな ◯ で囲む */
+            const sw2 = S(14);
+            blk.sub.opts.forEach((so, j) => {
+              const sx = x0 + colW - sw2 * (blk.sub.opts.length - j);
+              out += txt(sx, yy + RH / 2 + TH * 0.36 * f, sw2, so);
+              if (sel[blk.sub.k] === j)
+                out += `<ellipse cx="${sx + sw2 / 2}" cy="${yy + RH / 2}" rx="${sw2 * 0.32}" ry="${RH * 0.36}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
+              if (record) Editor.specBoxes.push({ x: sx, y: yy, w: sw2, h: RH, k: blk.sub.k, i: j });
+            });
+          }
           if (i === blk.memoAt && blk.memoK && record) {
             Editor.specBoxes.push({ x: x0 + NW, y: yy, w: ow, h: RH,
               memo: blk.memoK, memo2: blk.memo2K, label: blk.memoLabel || blk.t || "記入" });
           }
         });
         y += RH * blk.opts.length;
+        if (blk.noteK) {
+          // 表の下の備考欄 (クリックで記入)。空でも行は出す — 紙の様式と同じ
+          const v = memo[blk.noteK];
+          out += box(x0, y, colW, RH) +
+            txt(x0, y + RH / 2 + TH * 0.36 * f, colW, `備考: ${v || "(クリックして記入)"}`, "start", v ? TH : TH * 0.8);
+          if (record) Editor.specBoxes.push({ x: x0, y, w: colW, h: RH,
+            memo: blk.noteK, label: blk.noteLabel || "備考" });
+          y += RH;
+        }
       } else if (blk.kind === "bullets") {
         /* 箇条書きの記入欄。上のチェック (複数選択) で選んだ項目だけ行が出る。
            行をクリックするとその項目の内容を書き込める */
@@ -1331,6 +1351,16 @@ function onMouseDown(e) {
           return;
         }
         pg.spec.sel[box.k] = box.i;
+        const at = specBlockOf(box.k) || {};
+        if (at.g && at.b.one) {
+          // どれかのみの組 (材質): 選んだ群以外の ◯ を消す
+          (at.b.groups || []).forEach(g2 => { if (g2.k !== box.k) pg.spec.sel[g2.k] = -1; });
+        }
+        if (at.b && !at.sub && at.b.sub) {
+          // 小 2 択つきの行以外を選んだら、小 2 択 (単相/3相) は外す
+          if (box.i !== at.b.sub.at) pg.spec.sel[at.b.sub.k] = -1;
+        }
+        if (at.sub) pg.spec.sel[at.b.k] = at.b.sub.at;   // 単相/3相を押したら AC200V も選ぶ
         requestRender();
         UI.setMsg("仕様を選びました (クリックで ◯ が移ります)");
         return;

@@ -2003,7 +2003,9 @@ const SPEC_SHEET = [
       opts: ["IP40", "IP41", "IP42", "IP43", "IP44", "IP54", "その他", "指定無し"] },
     /* memoAt = 記入がその選択肢の括弧に入る (指定色は 2 番の括弧)。
        選んだ行に書き込むと、標準色の行にまで指定色が出てしまう */
-    { t: "材質", kind: "pair", heads: ["鉄", "ステンレス"], groups: [
+    /* one = 左右あわせて 1 つだけ選べる (筐体の材質はどちらか)。
+       片方を選ぶと、もう片方の ◯ は消える */
+    { t: "材質", kind: "pair", one: true, heads: ["鉄", "ステンレス"], groups: [
       { k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色 (      )"], memoK: "mat_fe", memoAt: 1 },
       { k: "mat_sus", opts: ["無処理 (購入標準)", "鏡面", "ヘアライン"] },
     ] },
@@ -2031,7 +2033,12 @@ const SPEC_SHEET = [
    ・fields … ラベルと記入欄の行 (定常時の温度レンジなど) */
 const SPEC_SHEET2 = [
   { title: "電源・環境仕様", blocks: [
+    /* sub = 選択肢の行の中の小さな 2 択 (AC200V の単相/3相)。
+       小さい ◯ で囲む — 単相か 3相を押すと AC200V も選ばれる。
+       noteK = 表の下の備考欄 (クリックで記入) */
     { t: "供給電源電圧", kind: "opts", k: "sup_v", memoK: "sup_v", memoAt: 2,
+      sub: { at: 1, k: "sup_v_ph", opts: ["単相", "3相"] },
+      noteK: "sup_v_note", noteLabel: "備考",
       opts: ["AC100V", "AC200V", "その他 (      )"] },
   ] },
   { title: "冷却・外部接続", blocks: [
@@ -2093,6 +2100,7 @@ function specMemoFields(sheet) {
   (sheet ? [sheet] : SPEC_SHEETS).forEach(sh => sh.forEach(sec => sec.blocks.forEach(b => {
     add(b.memoK, b.memoLabel || "指定内容", b.t || b.head || sec.title);
     add(b.memo2K, "理由", b.t || b.head || sec.title);
+    add(b.noteK, b.noteLabel || "備考", b.t || b.head || sec.title);
     (b.rows || []).forEach(r => add(r.memoK, r.label || "記入", b.t || sec.title));
     (b.groups || []).forEach(g => add(g.memoK, "指定色", b.t || sec.title));
   })));
@@ -2103,6 +2111,7 @@ function specGroups() {
   const out = [];
   SPEC_SHEETS.forEach(sh => sh.forEach(sec => sec.blocks.forEach(b => {
     if (b.k) out.push({ k: b.k, multi: !!b.multi });
+    if (b.sub) out.push({ k: b.sub.k, multi: false });
     (b.groups || []).forEach(g => out.push({ k: g.k, multi: false }));
     (b.rows || []).forEach(r => { if (r.k) out.push({ k: r.k, multi: false }); });
   })));
@@ -2113,7 +2122,21 @@ function defaultSpec() {
   const sel = {};
   specGroups().forEach(g => { sel[g.k] = g.multi ? [] : 0; });
   sel.ip = 5;                    // IP54 (盤の実務でいちばん多い)
+  // どれかのみの組 (材質) は先頭の群だけ・行内の小 2 択 (単相/3相) は未選択で始める
+  SPEC_SHEETS.forEach(sh => sh.forEach(sec => sec.blocks.forEach(b => {
+    if (b.one) (b.groups || []).slice(1).forEach(g => { sel[g.k] = -1; });
+    if (b.sub) sel[b.sub.k] = -1;
+  })));
   return { sel, memo: {} };
+}
+/** 選択キー k を持つブロック定義。pair の群・sub (行内の小 2 択) も引ける */
+function specBlockOf(k) {
+  for (const sh of SPEC_SHEETS) for (const sec of sh) for (const b of sec.blocks) {
+    if (b.k === k) return { b };
+    if (b.sub && b.sub.k === k) return { b, sub: true };
+    for (const g of b.groups || []) if (g.k === k) return { b, g };
+  }
+  return null;
 }
 /** 複数選べる組の選択状態 (配列で持つ) */
 function specMultiSel(spec, k) {

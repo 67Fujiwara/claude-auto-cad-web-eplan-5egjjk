@@ -15,7 +15,12 @@
                 外すとその行も消える
    ・ifGrow   : 1 行書き込むと追記用の空き行が増える — 同じ I/F が複数あっても
                 続けて書ける
-   ・ifCompact: 途中の行を消すと後ろの行が詰まる (空きの枠が残らない) */
+   ・ifCompact: 途中の行を消すと後ろの行が詰まる (空きの枠が残らない)
+   ・matOne   : 材質は鉄・ステンレスのどれか 1 つ — 片方を選ぶと
+                もう片方の ◯ が消える。新規図面はステンレス側が未選択
+   ・supPhase : AC200V の行に単相/3相の小 2 択。3相を押すと ◯ が付き
+                AC200V も選ばれる。AC100V に移すと単相/3相は外れる
+   ・supNote  : 供給電源電圧の表の下に備考欄 — クリックで書き込め、図面に出る */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -196,6 +201,49 @@ R.ifDetail.afterUncheck = await p.evaluate(() => {
   return { has: svg.includes("・他装置:"), rows: (svg.match(/・(上流|下流|他装置):/g) || []).length };
 });
 
+/* ── 材質どれかのみ / AC200V 単相・3相 / 供給電源電圧の備考 ── */
+const goSpec = async (i) => {
+  await p.evaluate((i2) => {
+    const sp = App.project.pages.filter(q => q.kind === "spec")[i2];
+    App.pageIdx = App.project.pages.indexOf(sp); applySheet(sp); UI.refresh(true); zoomFit();
+  }, i);
+  await p.waitForTimeout(250);
+  const st = await p.evaluate(() => {
+    const bb = Editor.svg.getBoundingClientRect();
+    return { bb: [bb.left, bb.top], view: [Editor.view.tx, Editor.view.ty, Editor.view.s] };
+  });
+  return async (find) => {
+    const c = await p.evaluate((f) => {
+      const o = (Editor.specBoxes || []).find(new Function("o", `return ${f}`));
+      return o ? { x: o.x + o.w / 2, y: o.y + o.h / 2 } : null;
+    }, find);
+    if (!c) return false;
+    await p.mouse.click(st.bb[0] + st.view[0] + c.x * st.view[2], st.bb[1] + st.view[1] + c.y * st.view[2]);
+    await p.waitForTimeout(150);
+    return true;
+  };
+};
+const clickS1 = await goSpec(0);
+R.matOne = { def: await p.evaluate(() => {
+  const d = defaultSpec().sel; return { fe: d.mat_fe, sus: d.mat_sus }; }) };
+R.matOne.pickSus = await clickS1('o.k === "mat_sus" && o.i === 2');
+R.matOne.afterSus = await p.evaluate(() => ({ fe: curPage().spec.sel.mat_fe, sus: curPage().spec.sel.mat_sus }));
+R.matOne.pickFe = await clickS1('o.k === "mat_fe" && o.i === 0');
+R.matOne.afterFe = await p.evaluate(() => ({ fe: curPage().spec.sel.mat_fe, sus: curPage().spec.sel.mat_sus }));
+
+const clickS2 = await goSpec(1);
+R.supPhase = { def: await p.evaluate(() => defaultSpec().sel.sup_v_ph) };
+R.supPhase.pick3 = await clickS2('o.k === "sup_v_ph" && o.i === 1');
+R.supPhase.after = await p.evaluate(() => ({ v: curPage().spec.sel.sup_v, ph: curPage().spec.sel.sup_v_ph,
+  drawn: kindSVG(curPage()).includes("3相") }));
+R.supPhase.pick100 = await clickS2('o.k === "sup_v" && o.i === 0');
+R.supPhase.off = await p.evaluate(() => ({ v: curPage().spec.sel.sup_v, ph: curPage().spec.sel.sup_v_ph }));
+
+await p.evaluate(() => { window.prompt = () => "主幹 30A・漏電遮断器指定"; });
+R.supNote = { clicked: await clickS2('o.memo === "sup_v_note"') };
+R.supNote.after = await p.evaluate(() => ({ memo: curPage().spec.memo.sup_v_note,
+  drawn: kindSVG(curPage()).includes("主幹 30A・漏電遮断器指定") }));
+
 const checks = {
   noPageErrors: errs.length === 0,
   ipNone: R.form.ipOpts[7] === "指定無し" && R.ipNone.picked === true && R.ipNone.sel === 7,
@@ -218,6 +266,14 @@ const checks = {
     && R.ifGrow.after.drawn === true,
   ifCompact: R.ifCompact.clicked === true && R.ifCompact.after.first === "PLC リンク (2 台目)"
     && R.ifCompact.after.second === null && R.ifCompact.after.rows === 2,
+  matOne: R.matOne.def.fe === 0 && R.matOne.def.sus === -1 &&
+    R.matOne.pickSus === true && R.matOne.afterSus.fe === -1 && R.matOne.afterSus.sus === 2 &&
+    R.matOne.pickFe === true && R.matOne.afterFe.fe === 0 && R.matOne.afterFe.sus === -1,
+  supPhase: R.supPhase.def === -1 && R.supPhase.pick3 === true &&
+    R.supPhase.after.v === 1 && R.supPhase.after.ph === 1 && R.supPhase.after.drawn === true &&
+    R.supPhase.pick100 === true && R.supPhase.off.v === 0 && R.supPhase.off.ph === -1,
+  supNote: R.supNote.clicked === true && R.supNote.after.memo === "主幹 30A・漏電遮断器指定" &&
+    R.supNote.after.drawn === true,
   multi: JSON.stringify(R.multi.on) === JSON.stringify([0, 2])
     && JSON.stringify(R.multi.off) === JSON.stringify([2]) && R.multi.drawn >= 1,
 };
