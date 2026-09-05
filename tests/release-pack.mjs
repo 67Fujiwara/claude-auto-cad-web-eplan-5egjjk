@@ -12,7 +12,10 @@
    ・relNo     : 用紙右下の「n / N」はその版の通し。図番は両方で同じ
    ・relKeep   : 出図しても元の図面のページ番号・ページ数は変わらない
    ・relOut    : 設計完了で PDF が 2 本 (社内保存用 / 顧客提出用) 出る。
-                 顧客提出用の中身は仕様のページぶん少ない */
+                 顧客提出用の中身は仕様のページぶん少ない
+   ・dupFs     : 記号編集が保存した body (data-h と font-size を両方持つ) を
+                 置いたページも、出力 SVG が正しい XML で PDF 化できる —
+                 font-size が二重に付くと画面は平気でも PDF が失敗していた */
 import { chromium } from "playwright-core";
 import { writeFileSync, rmSync } from "fs";
 import { execFileSync } from "child_process";
@@ -148,8 +151,30 @@ const menuHas = await p.evaluate(() => {
   return items.join(" / ");
 });
 
+/* ── data-h + font-size 両持ちの記号 → PDF 化 (二重属性の回帰) ── */
+const DUP = await p.evaluate(async () => {
+  App.project = newProject("二重FS"); UI.renumberPages();
+  const pg = App.project.pages.find(isDrawingPage);
+  App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
+  const sym = { id: "usr_dupfs", db: true, group: "自作", cat: "db", letter: "U",
+    name: "二重fs試験", nameEn: "dupfs", desc: "", pins: [{ x: 0, y: 0, n: "1" }],
+    sim: "none", bounds: [-10, -2, 20, 14], imported: true, custom: true, nonstd: true,
+    body: '<rect x="-8" y="2" width="16" height="10"/>' +
+      '<text x="0" y="9" data-h="3.5" font-size="4.766" text-anchor="middle" ' +
+      'fill="currentColor" stroke="none" font-family="sans-serif">DUP</text>' };
+  DB_SYMBOLS.push(sym); SYMBOLS_BY_ID[sym.id] = sym;
+  addDevice(pg, "usr_dupfs", 100, 100, { tag: "-U1" });
+  const svg = exportSheetSVG(pg).replace(/^<\?xml[^>]*\?>\s*/, "");
+  const perr = new DOMParser().parseFromString(svg, "image/svg+xml").querySelector("parsererror");
+  const dbl = (svg.match(/<text[^>]*font-size="[^"]*"[^>]*font-size=/g) || []).length;
+  let img = false;
+  try { await pageToImage(pg, 60); img = true; } catch (e) { }
+  return { xmlOk: !perr, dbl, img, hasText: svg.includes(">DUP<") };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
+  dupFs: DUP.xmlOk === true && DUP.dbl === 0 && DUP.img === true && DUP.hasText === true,
   newBtn: R.newBtn.exists === true && /新規/.test(R.newBtn.label || ""),
   pdfOne: R.pdfOne.type === "application/pdf" && R.pdfOne.pages === R.pdfOne.want && R.pdfOne.want >= 4,
   pdfValid: R.pdfValid.head && R.pdfValid.eof && R.pdfValid.xrefAt && R.pdfValid.objs && R.pdfValid.size > 10000,

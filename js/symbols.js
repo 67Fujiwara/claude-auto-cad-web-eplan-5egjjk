@@ -529,7 +529,12 @@ function symResolveTextSize(body, f) {
     const h = parseFloat(hm[1]) * (f || 1);
     const fs = svgFontSizeFor(txt.trim(), h, fam === "monospace",
       { bold, serif: fam === "serif" });
-    return `<text${attrs.replace(hm[0], `font-size="${fs}"`)}>${txt}</text>`;
+    /* 記号編集の body は data-h と確定済みの font-size を両方持つ。元の
+       font-size を残したまま足すと属性が二重になり、XML として不正 —
+       画面 (HTML) は黙って通すが、PDF の画像化 (厳格な XML) が失敗する。
+       data-h が正なので、元の font-size は捨ててから入れ替える */
+    const a2 = attrs.replace(/\s*font-size="[^"]*"/g, "");
+    return `<text${a2.replace(hm[0], `font-size="${fs}"`)}>${txt}</text>`;
   });
 }
 
