@@ -8,7 +8,13 @@
    ・zonePos    : 破線枠のコメントは、つまんで動かした位置 (lx/ly) と
                   文字高 (labelSize) が DXF にもそのまま出る
    ・jpRead     : 取り込みの文字コード自動判別 — CP932 の DXF (自分の
-                  出力も日本語 CAD も) と UTF-8 の DXF の両方で和文が読める */
+                  出力も日本語 CAD も) と UTF-8 の DXF の両方で和文が読める
+   ・formPage   : 表紙・目次・仕様 (フォームページ) の中身が DXF に出る —
+                  見出し・表の枠線・選択の ◯。文字の取り落としが無い
+   ・jpAlias    : 波ダッシュ 〜 (U+301C) やダッシュ — (U+2014) など、JIS と
+                  CP932 で対応が割れる字も \U+ に逃げず実バイトで出る
+   ・jpFont     : STYLE は SHX + ビッグフォント (extfont2.shx) — TTC 直接
+                  参照は受け側で解決できず全和文が ? になることがあった */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -59,6 +65,25 @@ const R = await p.evaluate(async () => {
   out.zonePos.match = !!got && Math.abs(got.x - lp.x) < 0.01 &&
     Math.abs(got.y - (SHEET.h - lp.y)) < 0.01 && Math.abs(got.h - lp.size) < 0.01;
 
+  // ── フォームページ (仕様) の中身が DXF に出る ──
+  const specPg = App.project.pages.find(q => q.kind === "spec");
+  App.pageIdx = App.project.pages.indexOf(specPg); applySheet(specPg);
+  const dSpec = pageToDXF(specPg);
+  App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
+  out.formPage = { title: dSpec.includes("制御盤筐体仕様"), env: dSpec.includes("使用環境"),
+    texts: (dSpec.match(/0\nTEXT\n/g) || []).length,
+    lines: (dSpec.match(/0\nLINE\n/g) || []).length,
+    circles: (dSpec.match(/0\nCIRCLE\n/g) || []).length,
+    wave: dSpec.includes("10℃〜40℃") };
+
+  // ── JIS/CP932 の異体字も実バイトで ──
+  const waveBytes = [...dxfBytes("〜—")].map(v => v.toString(16).padStart(2, "0")).join("");
+  out.jpAlias = { noEsc: !/\\U\+301C|\\U\+2014/.test(dSpec), bytes: waveBytes };
+
+  // ── STYLE はビッグフォント ──
+  out.jpFont = { shx: dSpec.includes("romans.shx"), big: dSpec.includes("extfont2.shx"),
+    noTtc: !dSpec.includes("msgothic.ttc") };
+
   // ── 取り込みの文字コード自動判別 ──
   const sjisBuf = dxfBytes(d2).buffer;
   const utf8Buf = new TextEncoder().encode(d2).buffer;
@@ -74,6 +99,10 @@ const checks = {
   jpSjis: R.jpSjis.raw === true && R.jpSjis.noEsc === true && R.jpSjis.sjis === true && R.jpSjis.ascii === true,
   zonePos: R.zonePos.match === true,
   jpRead: R.jpRead.sjis === true && R.jpRead.utf8 === true,
+  formPage: R.formPage.title === true && R.formPage.env === true && R.formPage.wave === true &&
+    R.formPage.texts > 100 && R.formPage.lines > 300 && R.formPage.circles >= 5,
+  jpAlias: R.jpAlias.noEsc === true && R.jpAlias.bytes === "8160815c",   // 〜=8160 / —=815C
+  jpFont: R.jpFont.shx === true && R.jpFont.big === true && R.jpFont.noTtc === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

@@ -328,6 +328,15 @@ function sjisMap() {
       }
     }
   } catch (e) { }                                  // shift_jis 非対応環境は空 (全部 \U+ へ)
+  /* Windows (CP932) と JIS で対応が割れる字の別名 — デコーダはどちらか
+     片方しか返さないので、相方も同じバイト列で引けるようにする
+     (波ダッシュ 〜 U+301C ↔ 全角チルダ U+FF5E、ダッシュ U+2014 ↔ U+2015、
+      負符号 U+2212 ↔ 全角ハイフンマイナス U+FF0D、双柱 U+2016 ↔ U+2225) */
+  [["\u301C", "\uFF5E"], ["\u2014", "\u2015"], ["\u2212", "\uFF0D"], ["\u2016", "\u2225"]]
+    .forEach(([a2, b2]) => {
+      if (map.has(a2) && !map.has(b2)) map.set(b2, map.get(a2));
+      if (map.has(b2) && !map.has(a2)) map.set(a2, map.get(b2));
+    });
   _SJIS_MAP = map;
   return map;
 }
@@ -340,6 +349,47 @@ function dxfEscape(text) {
       : "\\U+" + c.toString(16).toUpperCase().padStart(4, "0");
   }
   return out;
+}
+/** フォームページの SVG (自前生成) を DXF エンティティへ読み替える */
+function formSVGToDXF(svg) {
+  let ents = "";
+  const unesc = t => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  const attrsOf = a => { const o = {}; for (const t of a.matchAll(/([\w-]+)="([^"]*)"/g)) o[t[1]] = t[2]; return o; };
+  /* text は閉じタグまで、図形は開きタグだけ — 1 本の選択肢に分けて読む
+     (図形側に任意の閉じタグ探索を付けると、次の </text> まで飲み込んで
+     間の text を取り落とす) */
+  for (const m of svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>|<(rect|path|ellipse|circle)\b([^>]*?)\/?>/g)) {
+    const tag = m[3] || "text", a = attrsOf(m[3] ? m[4] : m[1]);
+    if (tag === "rect") {
+      const x = +a.x, y = +a.y, w2 = +a.width, h2 = +a.height;
+      if ([x, y, w2, h2].every(Number.isFinite))
+        ents += dxfPoly([[x, y], [x + w2, y], [x + w2, y + h2], [x, y + h2], [x, y]], "FRAME_THIN");
+    } else if (tag === "path") {
+      let cx = 0, cy = 0;
+      for (const t of (a.d || "").matchAll(/([MLHV])\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?/g)) {
+        const c = t[1], v1 = +t[2], v2 = t[3] !== undefined ? +t[3] : null;
+        if (c === "M") { cx = v1; cy = v2; }
+        else if (c === "L") { ents += dxfLine(cx, cy, v1, v2, "FRAME_THIN"); cx = v1; cy = v2; }
+        else if (c === "H") { ents += dxfLine(cx, cy, v1, cy, "FRAME_THIN"); cx = v1; }
+        else if (c === "V") { ents += dxfLine(cx, cy, cx, v1, "FRAME_THIN"); cy = v1; }
+      }
+    } else if (tag === "ellipse") {
+      if (Number.isFinite(+a.cx)) ents += dxfCircle(+a.cx, +a.cy, ((+a.rx) + (+a.ry)) / 2, "TEXT");
+    } else if (tag === "circle") {
+      if (Number.isFinite(+a.cx)) ents += dxfCircle(+a.cx, +a.cy, +a.r, "TEXT");
+    } else if (tag === "text") {
+      const t = unesc((m[2] || "").replace(/<[^>]+>/g, ""));
+      if (!t.trim()) continue;
+      const fs = parseFloat(a["font-size"] || "3.5");
+      const bold = a["font-weight"] === "bold";
+      // svgFontSizeFor の逆変換 (フォームは noMin の線形変換なので比を掛け戻す)
+      const h2 = +(fs * capRatio((hasCJK(t) ? "cjk" : "sans") + (bold ? "+b" : ""))).toFixed(3);
+      ents += dxfText(+a.x, +a.y, h2, t, "TEXT", a["text-anchor"] || "start", 0,
+        { mono: false, noMin: true, bold });
+    }
+  }
+  return ents;
 }
 /** DXF ファイルのバイト列 → 文字列。UTF-8 として正しければそれ、
     壊れていれば Shift-JIS (日本語 CAD の既定・自分の出力もこれ) で読む */
@@ -364,7 +414,8 @@ function dxfBytes(text) {
 function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}) {
   if (!text) return "";
   // 和文は JIS Z 8313-10 の最小呼び (3.5mm) に合わせる。画面と同じ判定を使う
-  size = textHeightMM(text, size);
+  // (noMin = 画面の寸法に忠実であるべき文字 — フォームページの縮小文字など)
+  if (!opts.noMin) size = textHeightMM(text, size);
   // 幅は画面と同じ書体で測る (中央寄せの位置が画面とずれないように)
   const w = textWidthMM(String(text), size, !!opts.bold, opts.mono !== false);
   const rad = angle * Math.PI / 180;
@@ -539,6 +590,11 @@ function pageToDXF(page) {
     });
   }
 
+  // ── 表紙・目次・仕様 (フォームページ) の中身 ──
+  // 画面の SVG は自前生成で語彙が決まっている (rect / path M,L,H,V / text /
+  // ellipse / circle のみ) ので、それを読み替えて DXF に出す
+  if (!isDrawingPage(page)) ents += formSVGToDXF(kindSVG(page));
+
   // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {
     ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED");
@@ -712,7 +768,7 @@ function pageToDXF(page) {
     "0", "SECTION", "2", "TABLES",
     "0", "TABLE", "2", "STYLE", "70", "1",
     "0", "STYLE", "2", "JP", "70", "0", "40", "0.0", "41", "1.0", "50", "0.0",
-    "71", "0", "42", "2.5", "3", "msgothic.ttc", "4", "",
+    "71", "0", "42", "2.5", "3", "romans.shx", "4", "extfont2.shx",
     "0", "ENDTAB",
     "0", "TABLE", "2", "LTYPE", "70", String(dxfLtypeList().length),
   ].join("\n") + "\n" + dxfLtypeTable() +
