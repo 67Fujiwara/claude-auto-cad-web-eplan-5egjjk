@@ -2398,7 +2398,8 @@ function sheetRow(y) {
 /** このページに印字される図番 (表題欄・DXF・印刷で共通) */
 /** 既定の図番 (表題欄で基準の図番を入れない場合)。
     表紙・目次・仕様 = A 系列 / 回路図面 = B 系列で、それぞれ 1 から数える */
-const DWG_FRONT_KINDS = new Set(["cover", "toc", "spec"]);
+// panel = Panel Studio の盤配置図。回路ではなく書類側の A 系列で数える
+const DWG_FRONT_KINDS = new Set(["cover", "toc", "spec", "panel"]);
 function defaultDwgNo(page) {
   const pages = (App.project && App.project.pages) || [page];
   const front = DWG_FRONT_KINDS.has(page.kind);
@@ -4719,6 +4720,8 @@ function downloadFile(filename, content, mime = "application/json") {
    既存のものを使い、Panel Studio 側の JSON は書き換えない (写しを持つ)。 */
 const PANEL_FORMAT = "panel-studio/electracad-sheets";
 const PANEL_STD_SCALES = [1, 2, 2.5, 5, 10, 20, 50];
+// プロパティで選び直すときの細かい刻み (自動選択は standardScales のまま)
+const PANEL_FINE_SCALES = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12.5, 15, 20, 25, 30, 40, 50];
 const PANEL_SHEET_IDS = ["cabinet_full", "cabinet_holes", "plate_full", "plate_holes"];
 
 /** 図を置ける領域 (作図領域から表題欄・改訂履歴欄の帯と余白を除く)。

@@ -332,7 +332,7 @@ UI.showProps = (focusTag = false) => {
   if (page.kind === "panel" && page.panel) {
     const pg2 = page, pn = pg2.panel;
     const n0 = panelScaleN(pg2);
-    const cand = [...new Set([...PANEL_STD_SCALES, n0])].sort((a2, b2) => a2 - b2);
+    const cand = [...new Set([...PANEL_FINE_SCALES, n0])].sort((a2, b2) => a2 - b2);
     pane.innerHTML = `
       <div class="prop-head"><div class="prop-head-txt"><div class="t1">Panel Studio の図面</div><div class="t2">${escXML(pn.title)}</div></div></div>
       <div class="prop-row"><label>案件 / 型式</label><div class="rp-dim mono">${escXML(pn.jobNo || "—")} / ${escXML(pn.model || "—")}</div></div>
@@ -341,7 +341,8 @@ UI.showProps = (focusTag = false) => {
         ${cand.map(v => `<option value="${v}"${v === n0 ? " selected" : ""}>1:${v}</option>`).join("")}
       </select></div>
       <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnMono"${pg2.panelMono ? " checked" : ""}/><span>白黒で描く (印刷用 — 色を全部黒に)</span></label></div>
-      <div class="prop-note">図は作図領域の中央に置かれます。縮尺は読み込み時に標準縮尺から自動で選んでいます。</div>`;
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnText"${pg2.panelText ? " checked" : ""}/><span>文字も描く (機器の型式など — 既定は出さない)</span></label></div>
+      <div class="prop-note">図は作図領域の中央に置かれます。縮尺は読み込み時に標準縮尺から自動で選んでいます (ここでは細かい刻みで選び直せます)。</div>`;
     pane.querySelector("#pPnScale").addEventListener("change", e => {
       commit();
       pg2.scale = "1:" + parseFloat(e.target.value);
@@ -352,6 +353,11 @@ UI.showProps = (focusTag = false) => {
     pane.querySelector("#pPnMono").addEventListener("change", e => {
       commit();
       if (e.target.checked) pg2.panelMono = true; else delete pg2.panelMono;
+      UI.refresh(false);
+    });
+    pane.querySelector("#pPnText").addEventListener("change", e => {
+      commit();
+      if (e.target.checked) pg2.panelText = true; else delete pg2.panelText;
       UI.refresh(false);
     });
     return;

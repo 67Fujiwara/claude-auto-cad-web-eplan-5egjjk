@@ -2,9 +2,10 @@
 
    ・reject   : format / version が違う JSON はエラーにする (黙って読まない)
    ・insert   : 4 シートが仕様ページの直後に 4 ページで入り、既存の順序は
-                崩れない。図番も振り直される
+                崩れない。図番は書類側の A 系列 (A-005〜) で振り直される
    ・scale    : 540×740 の中板は A3 横の図枠で 1:5 になる (標準縮尺の最小)
-   ・draw     : ページに図形が出る — 文字 "S-T12"・円・円弧 (反時計回り)。
+   ・draw     : ページに図形が出る — 円・円弧 (反時計回り)。文字は既定では
+                出さず (図が読みにくいため)、「文字も描く」で出る。
                 表題欄には job/panel の値 (会社・担当・日付・型式・寸法) が入る
    ・reimport : 同じ案件の JSON をもう一度読んでも 4 ページのまま (置き換え)
    ・zip      : ZIP のまま渡されたら中の *_electracad.json を探して読む
@@ -85,6 +86,10 @@ const R = await p.evaluate(async () => {
 
   // ── 描画と表題欄 ──
   App.pageIdx = pages.indexOf(plate); applySheet(plate);
+  // 文字は既定で出ない (kindSVG = 表題欄なしで見る)。extent の破線枠も無い
+  const svgOff = kindSVG(plate);
+  out.textOff = { noText: !svgOff.includes("S-T12"), noDash: !svgOff.includes("stroke-dasharray") };
+  plate.panelText = true;                      // 以降は「文字も描く」で検査
   const svg = exportSheetSVG(plate);
   // 座標系: 左下原点 Y 上向き → 画面では cy=30 の穴は「下」= oy + (extent.h - 30)
   const area2 = panelAreaRect();
@@ -103,7 +108,12 @@ const R = await p.evaluate(async () => {
   out.draw.mono = !svgM.includes("#4ac0ff");
   delete plate.panelMono;
 
-  // ── DXF ──
+  // ── DXF (文字も描く ON のまま / OFF で消えることも見る) ──
+  delete plate.panelText;
+  const dxfOff = pageToDXF(plate); applySheet(plate);
+  out.textOff.dxf = !/1\nS-T12\n/.test(dxfOff.split("ENTITIES")[1].split("表題欄")[0] || dxfOff) ||
+    !new RegExp("0\\nTEXT\\n8\\nPANEL\\n").test(dxfOff);
+  plate.panelText = true;
   const dxf = pageToDXF(plate); applySheet(plate);
   out.dxf = { text: dxf.includes("S-T12"),
     arc: /0\nARC\n8\nPANEL\n62\n2\n[\s\S]{0,120}?50\n30\.000\n51\n300\.000/.test(dxf),
@@ -130,9 +140,10 @@ const R = await p.evaluate(async () => {
 const checks = {
   noPageErrors: errs.length === 0,
   reject: R.reject.fmt === true && R.reject.ver === true && R.reject.untouched === true,
+  textOff: R.textOff.noText === true && R.textOff.noDash === true && R.textOff.dxf === true,
   insert: R.insert.added === 4 && R.insert.afterSpec === true && R.insert.four === true &&
     R.insert.titles === "筐体 全体図|筐体 穴あけ図|中板 全体図|中板 穴あけ図" &&
-    R.insert.dwg === "B-001|B-002|B-003|B-004" && R.insert.tailKept === true,
+    R.insert.dwg === "A-005|A-006|A-007|A-008" && R.insert.tailKept === true,
   scale: R.scale.plate === "1:5" && R.scale.paper === "A3/landscape" && R.scale.cab === "1:5",
   draw: Object.entries(R.draw).every(([, v]) => v === true),
   bounds: R.insert.badCoords === 1,

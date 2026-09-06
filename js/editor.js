@@ -973,8 +973,6 @@ function panelSVG(page) {
   const X = v => ox + v, Y = v => oy + (pn.extent.h - v);
   const sw = LINE_W.thin * f;            // 紙の上で 0.25mm になる線幅
   let out = `<g data-panel="1">`;
-  // 外形の枠 (extent) を捨て線で
-  out += `<rect x="${ox}" y="${oy}" width="${w}" height="${h}" fill="none" stroke="${INK_SOFT}" stroke-width="${sw}" stroke-dasharray="${2 * f} ${1.5 * f}"/>`;
   (pn.entities || []).forEach(e => {
     const c = colOf(e);
     if (e.t === "line") {
@@ -988,6 +986,9 @@ function panelSVG(page) {
       // 反時計回り (見た目) = 画面 (y 下向き) では sweep-flag 0
       out += `<path d="M${x1},${y1} A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
     } else if (e.t === "text") {
+      // 機器の型式などの文字は既定で出さない (図が読みにくくなるため)。
+      // プロパティ「文字も描く」で戻せる
+      if (!page.panelText) return;
       const rot = e.rot ? ` transform="rotate(${-e.rot} ${X(e.x)} ${Y(e.y)})"` : "";
       out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}>${escXML(e.s)}</text>`;
     }
