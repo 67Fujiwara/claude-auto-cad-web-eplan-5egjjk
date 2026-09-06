@@ -6,6 +6,8 @@
                1 行目は全列を結合したタイトル行 (太字・全幅の中央)
    ・merge    : 1 行目には列の仕切り線が無く、どこを突いても 0_0 の記入。
                表に注記の文字が重なっていても間口の記入が開く
+   ・clickEdit: 選択済みの表を動かさず単クリックしても間口の記入が開く
+               (タイトル行も同じ — ダブルクリックが拾われない環境の保険)
    ・resize   : 選択中に列の仕切りの■をつまんで動かすと、その列の幅が変わる
    ・addDel   : プロパティから行・列を追加/削除できる (消えた列の文字も消える)
    ・move     : 表をつかんで動かせる
@@ -87,6 +89,28 @@ await p.waitForTimeout(150);
   await p.waitForTimeout(150);
 }
 
+// ── 選択済みの表を単クリック → 間口の記入が開く (タイトル行でも) ──
+await p.evaluate(() => { const tb = pageTables(curPage())[0]; App.selection.clear(); App.selection.add(tb.id); UI.refresh(false); });
+await p.waitForTimeout(150);
+{
+  const cc = at(T.x + 45, T.y + 12);        // 2 行目の間口
+  await p.mouse.click(cc.x, cc.y);
+  await p.waitForTimeout(250);
+  R.clickEdit = { cell: await p.evaluate(() => !!document.querySelector("#overlay-root input")) };
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(150);
+  await p.evaluate(() => { const tb = pageTables(curPage())[0]; App.selection.clear(); App.selection.add(tb.id); UI.refresh(false); });
+  const ct = at(T.x + 45, T.y + 4);         // タイトル行
+  await p.mouse.click(ct.x, ct.y);
+  await p.waitForTimeout(250);
+  R.clickEdit.title = await p.evaluate(() => {
+    const inp = document.querySelector("#overlay-root input");
+    return !!inp && inp.value === "タイトル";
+  });
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(150);
+}
+
 // ── 列の仕切り (列 0 の右端・上辺の■) をつまんで +10mm ──
 await p.evaluate(() => { const tb = pageTables(curPage())[0]; App.selection.clear(); App.selection.add(tb.id); UI.refresh(false); });
 await p.waitForTimeout(200);
@@ -150,6 +174,7 @@ const checks = {
     R.cellEdit.boldTitle === true && R.cellEdit.drawn === true,
   merge: R.merge.divFromRow2 === true && R.merge.noTopDiv === true &&
     R.merge.titleAnywhere === true && R.overlap === true,
+  clickEdit: R.clickEdit.cell === true && R.clickEdit.title === true,
   resize: Math.abs(R.resize.col0 - 40) <= 0.5 && R.resize.others === true,   // マウス丸めで ±0.5mm
   addDel: R.addDel.has === true && R.addDel.grew === true && R.addDel.colDel === true && R.addDel.rows === 3,
   move: R.move === true,

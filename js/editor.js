@@ -1611,17 +1611,20 @@ function onMouseDown(e) {
   const hit = hitTest(w.x, w.y);
   if (hit) {
     const id = hit.obj.id;
+    const wasSelected = App.selection.has(id);
     if (e.shiftKey) {
       if (App.selection.has(id)) App.selection.delete(id); else App.selection.add(id);
     } else if (!App.selection.has(id)) {
       App.selection.clear();
       App.selection.add(id);
     }
-    // 移動ドラッグ準備
+    // 移動ドラッグ準備。選択済みの表を動かさずに放したら間口の記入を開く
+    // (Excel と同じ流儀 — ダブルクリックが環境で拾われないときの保険にもなる)
     Editor.drag = {
       type: "move", startW: w, moved: false,
       snapshot: snapshotProject(),
       attach: buildMoveAttachment(),
+      tableClick: (!e.shiftKey && wasSelected && hit.type === "table") ? hit.obj : null,
     };
     UI.showProps();
     requestRender();
@@ -2020,6 +2023,12 @@ function onMouseUp(e) {
     }
     requestRender();
     return;
+  }
+  if (d.type === "move" && !d.moved && d.tableClick) {
+    // 選択済みの表をクリックしただけ → その間口の記入を開く
+    const w2 = screenToWorld(e.clientX, e.clientY);
+    const cell = tableCellAt(d.tableClick, w2.x, w2.y);
+    if (cell) { UI.openTableCellInput(e.clientX, e.clientY, d.tableClick, cell); return; }
   }
   if (d.type === "move" && d.moved) {
     // 移動確定 → Undo 履歴。commit() を通らないパスなので、ラベル配置
