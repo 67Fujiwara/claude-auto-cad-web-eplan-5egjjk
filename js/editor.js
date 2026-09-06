@@ -1060,7 +1060,7 @@ function overlaySVG(page) {
       if (d.ax != null && d.lock !== "v") out += guide(`M${d.ax},${b2.y} V${b2.y + b2.h}`);
       if (d.ay != null && d.lock !== "h") out += guide(`M${b2.x},${d.ay} H${b2.x + b2.w}`);
     }
-    const pts = [...d.pts, ...(d.cur ? routeOrtho(d.pts[d.pts.length - 1], d.cur) : [])];
+    const pts = [...d.pts, ...(d.cur ? (d.curDiag ? [d.cur] : routeOrtho(d.pts[d.pts.length - 1], d.cur)) : [])];
     if (pts.length >= 2) {
       out += `<path d="M${pts.map(p => p[0] + "," + p[1]).join(" L")}" stroke="${SEL}" stroke-width="0.55" fill="none" stroke-dasharray="2 1.4"/>`;
     }
@@ -1110,11 +1110,30 @@ function nearestAxis(list, v, tol) {
   list.forEach(q => { const d = Math.abs(q - v); if (d < bd) { bd = d; best = q; } });
   return best;
 }
-function wireDraftPoint(wx, wy, shift) {
+/** 線の先端 (最初と最後の点) の近くならその点 (斜め直結の吸着先) */
+function wireTipNear(page, wx, wy, tol = 2.5) {
+  let best = null, bd = tol;
+  (page.wires || []).forEach(w2 => {
+    [w2.pts[0], w2.pts[w2.pts.length - 1]].forEach(p2 => {
+      const d2 = Math.hypot(p2[0] - wx, p2[1] - wy);
+      if (d2 < bd) { bd = d2; best = p2; }
+    });
+  });
+  return best ? [best[0], best[1]] : null;
+}
+function wireDraftPoint(wx, wy, shift, diag) {
   const pin = findPinNear(wx, wy);
   const d = Editor.wireDraft;
   const last = d && d.pts.length ? d.pts[d.pts.length - 1] : null;
   if (pin) return { x: pin.x, y: pin.y, pin, lock: null, ax: null, ay: null };
+  if (diag) {
+    /* Alt = 斜め (直結)。直角に折らず、クリックした点へまっすぐ引く。
+       軸ロック・行列吸着はせず、近くの線の先端にだけ吸着する —
+       「先端と先端を斜めでつなぐ」ための操作 */
+    const tip = wireTipNear(curPage(), wx, wy);
+    if (tip) return { x: tip[0], y: tip[1], pin: null, lock: null, ax: null, ay: null, diag: true };
+    return { x: snap(wx), y: snap(wy), pin: null, lock: null, ax: null, ay: null, diag: true };
+  }
   let x = snap(wx), y = snap(wy), lock = null;
   const tol = wireAxisTol();
   if (last) {
@@ -1444,13 +1463,14 @@ function onMouseDown(e) {
     return;
   }
   if (App.tool === "wire") {
-    const q = wireDraftPoint(w.x, w.y, e.shiftKey);
+    const q = wireDraftPoint(w.x, w.y, e.shiftKey, e.altKey);
     const pin = q.pin, px = q.x, py = q.y;
     if (!Editor.wireDraft) {
       Editor.wireDraft = { pts: [[px, py]], cur: null };
     } else {
       const last = Editor.wireDraft.pts[Editor.wireDraft.pts.length - 1];
-      const seg = routeOrtho(last, [px, py]);
+      // Alt = 斜め直結 (直角に折らずそのまま結ぶ)
+      const seg = q.diag ? [[px, py]] : routeOrtho(last, [px, py]);
       Editor.wireDraft.pts.push(...seg);
       // ピン上 or 既存ワイヤ上でクリックしたら完了
       const onWire = curPage().wires.some(wr => {
@@ -1575,9 +1595,10 @@ function onMouseMove(e) {
     return;
   }
   if (Editor.wireDraft) {
-    const q = wireDraftPoint(w.x, w.y, e.shiftKey);
+    const q = wireDraftPoint(w.x, w.y, e.shiftKey, e.altKey);
     Editor.hover.pin = q.pin || null;
     Editor.wireDraft.cur = [q.x, q.y];
+    Editor.wireDraft.curDiag = !!q.diag;     // Alt = 斜め直結の下見
     Editor.wireDraft.lock = q.lock;          // 補助線を出すため覚えておく
     Editor.wireDraft.ax = q.ax; Editor.wireDraft.ay = q.ay;
     requestRender();
