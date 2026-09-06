@@ -3,7 +3,9 @@
    ・insert   : 挿入メニュー相当 (UI.insertTable) で 3×3 の表が置かれ、
                1 行目の左上に「タイトル」が入って選択状態になる
    ・cellEdit : 間口をダブルクリックすると入力欄が出て、Enter で確定。
-               1 行目は太字 (タイトル行) で描かれる
+               1 行目は全列を結合したタイトル行 (太字・全幅の中央)
+   ・merge    : 1 行目には列の仕切り線が無く、どこを突いても 0_0 の記入。
+               表に注記の文字が重なっていても間口の記入が開く
    ・resize   : 選択中に列の仕切りの■をつまんで動かすと、その列の幅が変わる
    ・addDel   : プロパティから行・列を追加/削除できる (消えた列の文字も消える)
    ・move     : 表をつかんで動かせる
@@ -51,17 +53,48 @@ await p.waitForTimeout(200);
 Object.assign(R, await p.evaluate(() => {
   const tb = pageTables(curPage())[0];
   const svg = tablesSVG(curPage(), { print: true });
+  // 1 行目 (結合タイトル行): 仕切り縦線は 2 行目 (y + rows[0]) から始まる
+  const rc = tableRect(tb);
+  const divTop = new RegExp("M" + (tb.x + tb.cols[0]) + "," + (tb.y + tb.rows[0]) + " V");
+  // タイトル行のどこ (右端の列の位置) を突いても 0_0
+  const cTitle = tableCellAt(tb, tb.x + rc.w - 3, tb.y + 2);
   return { cellEdit: { saved: tb.cells["1_1"] === "W600",
-    boldTitle: /font-weight="bold">タイトル</.test(svg), drawn: svg.includes("W600") } };
+    boldTitle: /font-weight="bold">タイトル</.test(svg), drawn: svg.includes("W600") },
+    merge: { divFromRow2: divTop.test(svg), noTopDiv: !svg.includes("M" + (tb.x + tb.cols[0]) + "," + tb.y + " V"),
+      titleAnywhere: !!cTitle && cTitle.r === 0 && cTitle.c === 0 && cTitle.w === rc.w } };
 }));
+// 表に重なる注記の文字があっても、間口のダブルクリックが開く
+await p.evaluate(() => {
+  const tb = pageTables(curPage())[0];
+  curPage().texts.push({ id: "tov", x: tb.x + 45, y: tb.y + 14, text: "重なる注記", size: 5 });
+  UI.refresh(false);
+});
+await p.waitForTimeout(150);
+{
+  const c2 = at(T.x + 45, T.y + 12);
+  await p.mouse.dblclick(c2.x, c2.y);
+  await p.waitForTimeout(250);
+  R.overlap = await p.evaluate(() => {
+    const inp = document.querySelector("#overlay-root input");
+    const ok = !!inp && inp.value !== "重なる注記";   // 文字編集ではなく間口の記入
+    if (inp) { inp.blur(); }
+    const pg2 = curPage();
+    pg2.texts = pg2.texts.filter(t2 => t2.id !== "tov");
+    UI.refresh(false);
+    return ok;
+  });
+  await p.keyboard.press("Escape");
+  await p.waitForTimeout(150);
+}
 
 // ── 列の仕切り (列 0 の右端・上辺の■) をつまんで +10mm ──
 await p.evaluate(() => { const tb = pageTables(curPage())[0]; App.selection.clear(); App.selection.add(tb.id); UI.refresh(false); });
 await p.waitForTimeout(200);
-const g0 = at(T.x + 30, T.y);
+// 列のつまみは 2 行目の上端 (1 行目は結合タイトル行で仕切りが無い)
+const g0 = at(T.x + 30, T.y + 8);
 await p.mouse.move(g0.x, g0.y);
 await p.mouse.down();
-const g1 = at(T.x + 40, T.y);
+const g1 = at(T.x + 40, T.y + 8);
 await p.mouse.move(g1.x, g1.y, { steps: 4 });
 await p.mouse.up();
 await p.waitForTimeout(200);
@@ -115,6 +148,8 @@ const checks = {
     R.insert.title === "タイトル" && R.insert.selected === true,
   cellEdit: R.cellInput === true && R.cellEdit.saved === true &&
     R.cellEdit.boldTitle === true && R.cellEdit.drawn === true,
+  merge: R.merge.divFromRow2 === true && R.merge.noTopDiv === true &&
+    R.merge.titleAnywhere === true && R.overlap === true,
   resize: Math.abs(R.resize.col0 - 40) <= 0.5 && R.resize.others === true,   // マウス丸めで ±0.5mm
   addDel: R.addDel.has === true && R.addDel.grew === true && R.addDel.colDel === true && R.addDel.rows === 3,
   move: R.move === true,

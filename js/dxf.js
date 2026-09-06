@@ -664,20 +664,29 @@ function pageToDXF(page) {
     ents += dxfPoly([[rc.x, rc.y], [rc.x + rc.w, rc.y], [rc.x + rc.w, rc.y + rc.h], [rc.x, rc.y + rc.h], [rc.x, rc.y]], "FRAME");
     let yy = tb.y;
     tb.rows.forEach((rh, i) => { if (i) ents += dxfLine(tb.x, yy, tb.x + rc.w, yy, "FRAME_THIN"); yy += rh; });
+    // 列の仕切りは 2 行目から (1 行目は全列結合のタイトル行)
     let xx = tb.x;
-    tb.cols.forEach((cw, i) => { if (i) ents += dxfLine(xx, tb.y, xx, tb.y + rc.h, "FRAME_THIN"); xx += cw; });
-    let cy = tb.y;
+    tb.cols.forEach((cw, i) => { if (i) ents += dxfLine(xx, tb.y + tb.rows[0], xx, tb.y + rc.h, "FRAME_THIN"); xx += cw; });
+    const title = tb.cells && tb.cells["0_0"];
+    if (title) {
+      const size0 = fitTextSize(title, rc.w - 2, Math.min(TEXT_H.normal, tb.rows[0] - 1.6), true);
+      const shown0 = truncateToWidth(title, rc.w - 2, size0, true);
+      const fw0 = Math.min(textWidthMM(shown0, size0, true, false), rc.w - 2);
+      ents += dxfText(tb.x + rc.w / 2, tb.y + tb.rows[0] / 2 + size0 * 0.36, size0, shown0, "TEXT", "middle", 0,
+        { mono: false, bold: true, fitTo: fw0 });
+    }
+    let cy = tb.y + tb.rows[0];
     tb.rows.forEach((rh, r) => {
+      if (r === 0) return;
       let cx = tb.x;
       tb.cols.forEach((cw, c) => {
         const t = tb.cells && tb.cells[r + "_" + c];
         if (t) {
-          const bold = r === 0;
-          const size = fitTextSize(t, cw - 2, Math.min(TEXT_H.normal, rh - 1.6), bold);
-          const shown = truncateToWidth(t, cw - 2, size, bold);
-          const fw = Math.min(textWidthMM(shown, size, bold, false), cw - 2);
+          const size = fitTextSize(t, cw - 2, Math.min(TEXT_H.normal, rh - 1.6), false);
+          const shown = truncateToWidth(t, cw - 2, size, false);
+          const fw = Math.min(textWidthMM(shown, size, false, false), cw - 2);
           ents += dxfText(cx + cw / 2, cy + rh / 2 + size * 0.36, size, shown, "TEXT", "middle", 0,
-            { mono: false, bold, fitTo: fw });
+            { mono: false, fitTo: fw });
         }
         cx += cw;
       });

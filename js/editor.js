@@ -337,21 +337,29 @@ function tablesSVG(page, opts = {}) {
     let grid = "";
     let yy = tb.y;
     tb.rows.forEach((rh, i) => { if (i) grid += `M${tb.x},${yy} H${tb.x + rc.w} `; yy += rh; });
+    // 列の仕切りは 2 行目から (1 行目は全列結合のタイトル行)
     let xx = tb.x;
-    tb.cols.forEach((cw, i) => { if (i) grid += `M${xx},${tb.y} V${tb.y + rc.h} `; xx += cw; });
+    tb.cols.forEach((cw, i) => { if (i) grid += `M${xx},${tb.y + tb.rows[0]} V${tb.y + rc.h} `; xx += cw; });
     out += `<path d="${grid}" stroke="${INK}" stroke-width="${LINE_W.thin}" fill="none"/>`;
     out += `<rect x="${tb.x}" y="${tb.y}" width="${rc.w}" height="${rc.h}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thick}"/>`;
     // 文字 (間口に収める。1 行目は太字)
-    let cy = tb.y;
+    // タイトル (1 行目・全幅の結合間口・太字中央)
+    const title = tb.cells && tb.cells["0_0"];
+    if (title) {
+      const size0 = fitTextSize(title, rc.w - 2, Math.min(TEXT_H.normal, tb.rows[0] - 1.6), true);
+      const shown0 = truncateToWidth(title, rc.w - 2, size0, true);
+      out += `<text x="${tb.x + rc.w / 2}" y="${tb.y + tb.rows[0] / 2 + size0 * 0.36}" font-size="${svgFontSizeFor(shown0, size0, false, { bold: true })}" text-anchor="middle" fill="${INK}" font-family="sans-serif" font-weight="bold">${escXML(shown0)}</text>`;
+    }
+    let cy = tb.y + tb.rows[0];
     tb.rows.forEach((rh, r) => {
+      if (r === 0) return;
       let cx = tb.x;
       tb.cols.forEach((cw, c) => {
         const t = tb.cells && tb.cells[r + "_" + c];
         if (t) {
-          const bold = r === 0;
-          const size = fitTextSize(t, cw - 2, Math.min(TEXT_H.normal, rh - 1.6), bold);
-          const shown = truncateToWidth(t, cw - 2, size, bold);
-          out += `<text x="${cx + cw / 2}" y="${cy + rh / 2 + size * 0.36}" font-size="${svgFontSizeFor(shown, size, false, { bold })}" text-anchor="middle" fill="${INK}" font-family="sans-serif"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text>`;
+          const size = fitTextSize(t, cw - 2, Math.min(TEXT_H.normal, rh - 1.6), false);
+          const shown = truncateToWidth(t, cw - 2, size, false);
+          out += `<text x="${cx + cw / 2}" y="${cy + rh / 2 + size * 0.36}" font-size="${svgFontSizeFor(shown, size, false, {})}" text-anchor="middle" fill="${INK}" font-family="sans-serif">${escXML(shown)}</text>`;
         }
         cx += cw;
       });
@@ -372,7 +380,7 @@ function tableGrips(tb) {
   const rc = tableRect(tb);
   const out = [];
   let x = tb.x;
-  tb.cols.forEach((cw, i) => { x += cw; out.push({ kind: "col", i, x, y: tb.y }); });
+  tb.cols.forEach((cw, i) => { x += cw; out.push({ kind: "col", i, x, y: tb.y + tb.rows[0] }); });
   let y = tb.y;
   tb.rows.forEach((rh, i) => { y += rh; out.push({ kind: "row", i, x: tb.x, y }); });
   return out;
@@ -2036,6 +2044,12 @@ function onDblClick(e) {
     finishWireDraft();
     return;
   }
+  /* 表の間口はダブルクリックの最優先 — 表の上に注記の文字が重なっていても
+     間口の記入が開く (文字の当たり判定は広めで、間口を覆ってしまうため) */
+  for (const tb0 of pageTables(curPage())) {
+    const cell0 = tableCellAt(tb0, w.x, w.y);
+    if (cell0) { UI.openTableCellInput(e.clientX, e.clientY, tb0, cell0); return; }
+  }
   const hit = hitTest(w.x, w.y);
   if (hit && hit.type === "text") {
     UI.openTextInput(e.clientX, e.clientY, hit.obj.x, hit.obj.y, hit.obj);
@@ -2046,10 +2060,6 @@ function onDblClick(e) {
     if (isWireConductive(hit.obj)) UI.openWireNumInput(e.clientX, e.clientY, hit.obj);
     else UI.showProps();
     requestRender();
-  } else if (hit && hit.type === "table") {
-    // 間口をダブルクリックで文字を書く (1 行目はタイトル行)
-    const cell = tableCellAt(hit.obj, w.x, w.y);
-    if (cell) UI.openTableCellInput(e.clientX, e.clientY, hit.obj, cell);
   } else if (hit && hit.type === "device" || hit && hit.type === "zone") {
     App.selection.clear();
     App.selection.add(hit.obj.id);

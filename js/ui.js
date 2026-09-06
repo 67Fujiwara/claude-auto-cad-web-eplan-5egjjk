@@ -329,7 +329,9 @@ UI.showProps = (focusTag = false) => {
   const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
   /* Panel Studio の図面ページ: 縮尺の選び直しと白黒設定 */
-  if (page.kind === "panel" && page.panel) {
+  /* 何か選んでいるとき (置いた文字など) は通常のプロパティを出す —
+     ここで打ち切ると文字高の変更などに届かなくなる */
+  if (page.kind === "panel" && page.panel && !App.selection.size) {
     const pg2 = page, pn = pg2.panel;
     const n0 = panelScaleN(pg2);
     const cand = [...new Set([...PANEL_FINE_SCALES, n0])].sort((a2, b2) => a2 - b2);
@@ -363,8 +365,9 @@ UI.showProps = (focusTag = false) => {
     return;
   }
   /* 表紙・目次・仕様のページは回路を選ばないので、ページの内容そのものを
-     プロパティに出す (表紙の 2 行・仕様の記入欄) */
-  if (page.kind) {
+     プロパティに出す (表紙の 2 行・仕様の記入欄)。panel は上で処理済み —
+     何か選んでいるときは通常の選択プロパティ (文字高など) へ流す */
+  if (page.kind && page.kind !== "panel") {
     const sp = page.spec || {};
     const memo = sp.memo || {};
     const cov = page.cover || {};

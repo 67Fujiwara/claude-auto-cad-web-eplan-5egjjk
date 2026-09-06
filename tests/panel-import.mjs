@@ -12,7 +12,8 @@
    ・bounds   : 0〜extent の外の座標は数えて知らせる (読み込みは続ける)
    ・dxf      : DXF にも実体が出る (S-T12 / 円 / 円弧は a0→a1 のまま)
    ・textEdit : パネルページでも文字ツールで注記を書ける (Enter で確定)。
-                書いた文字は画面・PDF・DXF に出る
+                書いた文字は画面・PDF・DXF に出る。文字を選ぶと通常の
+                文字プロパティが出て、文字高も変えられる
    ・light    : 重いデータ (entities) はページから分離して持ち、編集の
                 たびに再直列化しない — 2 回 commit しても 1MB 超の
                 JSON.stringify が走らない。undo しても図は生きている */
@@ -191,7 +192,21 @@ Object.assign(TE, await p.evaluate(() => {
   const svg2 = exportSheetSVG(pg2);
   const dxf2 = pageToDXF(pg2); applySheet(pg2);
   UI.setTool("select");
-  return { made: !!t, drawn: svg2.includes("盤内注記A"), dxf: dxf2.includes("盤内注記A") };
+  // 文字を選ぶと通常の文字プロパティ (文字高の欄) が出て、変更が効く
+  let sized = false, propShown = false;
+  if (t) {
+    App.selection.clear(); App.selection.add(t.id); UI.showProps();
+    const el = document.getElementById("pTsz");
+    propShown = !!el;
+    if (el) {
+      el.value = "7";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      sized = t.size === 7;
+    }
+    App.selection.clear(); UI.showProps();
+  }
+  return { made: !!t, drawn: svg2.includes("盤内注記A"), dxf: dxf2.includes("盤内注記A"),
+    propShown, sized };
 }));
 
 const checks = {
@@ -207,7 +222,8 @@ const checks = {
   reimport: R.reimport.replaced === 4 && R.reimport.still4 === true && R.reimport.total === true,
   zip: R.zip.found === true && R.zip.parses === true,
   light: R.light.big === 0 && R.light.split === true && R.light.undoAlive === true,
-  textEdit: TE.inputShown === true && TE.made === true && TE.drawn === true && TE.dxf === true,
+  textEdit: TE.inputShown === true && TE.made === true && TE.drawn === true && TE.dxf === true &&
+    TE.propShown === true && TE.sized === true,
   dxf: R.dxf.text === true && R.dxf.arc === true && R.dxf.circle === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);

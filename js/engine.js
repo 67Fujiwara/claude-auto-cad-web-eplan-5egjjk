@@ -2261,10 +2261,14 @@ function tableRect(tb) {
   return { x: tb.x, y: tb.y,
     w: tb.cols.reduce((a, b) => a + b, 0), h: tb.rows.reduce((a, b) => a + b, 0) };
 }
-/** 表の間口 (セル)。wx/wy がどの間口かを返す */
+/** 表の間口 (セル)。wx/wy がどの間口かを返す。
+    1 行目は全列を結合したタイトル行 — どこを突いても 0_0 */
 function tableCellAt(tb, wx, wy) {
-  let y = tb.y;
-  for (let r = 0; r < tb.rows.length; r++) {
+  const rc0 = tableRect(tb);
+  if (wx >= tb.x && wx <= tb.x + rc0.w && wy >= tb.y && wy <= tb.y + tb.rows[0])
+    return { r: 0, c: 0, x: tb.x, y: tb.y, w: rc0.w, h: tb.rows[0] };
+  let y = tb.y + tb.rows[0];
+  for (let r = 1; r < tb.rows.length; r++) {
     let x = tb.x;
     for (let c = 0; c < tb.cols.length; c++) {
       if (wx >= x && wx <= x + tb.cols[c] && wy >= y && wy <= y + tb.rows[r])
