@@ -2247,6 +2247,40 @@ function syncProjectSymbols() {
   App.project.symbols = keep;
 }
 
+/* ══════════════ 図面上の表 ══════════════
+   自由に置ける表。cols/rows は各列の幅・各行の高さ (mm)。cells は
+   "行_列" → 文字。1 行目はタイトル行 (太字・薄い下地)。
+   列の仕切り・外周をつまんで幅と高さを変えられ、間口をダブルクリックで
+   文字を書ける。行・列の追加はプロパティから */
+const TABLE_MIN_CW = 8, TABLE_MIN_RH = 5;
+function pageTables(page) {
+  if (!page.tables) page.tables = [];
+  return page.tables;
+}
+function tableRect(tb) {
+  return { x: tb.x, y: tb.y,
+    w: tb.cols.reduce((a, b) => a + b, 0), h: tb.rows.reduce((a, b) => a + b, 0) };
+}
+/** 表の間口 (セル)。wx/wy がどの間口かを返す */
+function tableCellAt(tb, wx, wy) {
+  let y = tb.y;
+  for (let r = 0; r < tb.rows.length; r++) {
+    let x = tb.x;
+    for (let c = 0; c < tb.cols.length; c++) {
+      if (wx >= x && wx <= x + tb.cols[c] && wy >= y && wy <= y + tb.rows[r])
+        return { r, c, x, y, w: tb.cols[c], h: tb.rows[r] };
+      x += tb.cols[c];
+    }
+    y += tb.rows[r];
+  }
+  return null;
+}
+function insertTableAt(page, x, y) {
+  const tb = { id: uid("tb"), x: r1(x), y: r1(y),
+    cols: [30, 30, 30], rows: [8, 8, 8], cells: { "0_0": "タイトル" } };
+  pageTables(page).push(tb);
+  return tb;
+}
 /** 旧データ互換: zones が無いページに追加 */
 function pageZones(page) {
   if (!page.zones) page.zones = [];

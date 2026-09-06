@@ -658,6 +658,33 @@ function pageToDXF(page) {
   // ellipse / circle のみ) ので、それを読み替えて DXF に出す
   if (!isDrawingPage(page)) ents += formSVGToDXF(kindSVG(page));
 
+  // ── 図面上の表 (罫線 + 間口の文字。1 行目 = タイトル) ──
+  pageTables(page).forEach(tb => {
+    const rc = tableRect(tb);
+    ents += dxfPoly([[rc.x, rc.y], [rc.x + rc.w, rc.y], [rc.x + rc.w, rc.y + rc.h], [rc.x, rc.y + rc.h], [rc.x, rc.y]], "FRAME");
+    let yy = tb.y;
+    tb.rows.forEach((rh, i) => { if (i) ents += dxfLine(tb.x, yy, tb.x + rc.w, yy, "FRAME_THIN"); yy += rh; });
+    let xx = tb.x;
+    tb.cols.forEach((cw, i) => { if (i) ents += dxfLine(xx, tb.y, xx, tb.y + rc.h, "FRAME_THIN"); xx += cw; });
+    let cy = tb.y;
+    tb.rows.forEach((rh, r) => {
+      let cx = tb.x;
+      tb.cols.forEach((cw, c) => {
+        const t = tb.cells && tb.cells[r + "_" + c];
+        if (t) {
+          const bold = r === 0;
+          const size = fitTextSize(t, cw - 2, Math.min(TEXT_H.normal, rh - 1.6), bold);
+          const shown = truncateToWidth(t, cw - 2, size, bold);
+          const fw = Math.min(textWidthMM(shown, size, bold, false), cw - 2);
+          ents += dxfText(cx + cw / 2, cy + rh / 2 + size * 0.36, size, shown, "TEXT", "middle", 0,
+            { mono: false, bold, fitTo: fw });
+        }
+        cx += cw;
+      });
+      cy += rh;
+    });
+  });
+
   // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {
     ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED");

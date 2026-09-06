@@ -861,6 +861,35 @@ UI.showProps = (focusTag = false) => {
     zbind("#zY", v => z.y = num(v, z.y));
     zbind("#zW", v => z.w = Math.max(20, num(v, z.w)));
     zbind("#zH", v => z.h = Math.max(20, num(v, z.h)));
+  } else if ((() => { const st2 = pageTables(page).filter(t2 => App.selection.has(t2.id));
+      return st2.length === 1 && App.selection.size === 1; })()) {
+    // 表: 行・列の追加と削除
+    const tb = pageTables(page).find(t2 => App.selection.has(t2.id));
+    const rc = tableRect(tb);
+    pane.innerHTML = `
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">表</div><div class="t2">${tb.cols.length} 列 × ${tb.rows.length} 行 (${r1(rc.w)}×${r1(rc.h)}mm)</div></div></div>
+      <div class="prop-grid2">
+        <div class="prop-row"><button class="btn-solid" id="tbAddCol">列を追加</button></div>
+        <div class="prop-row"><button class="btn-solid" id="tbAddRow">行を追加</button></div>
+        <div class="prop-row"><button class="btn-solid" id="tbDelCol"${tb.cols.length <= 1 ? " disabled" : ""}>右端の列を削除</button></div>
+        <div class="prop-row"><button class="btn-solid" id="tbDelRow"${tb.rows.length <= 1 ? " disabled" : ""}>最下行を削除</button></div>
+      </div>
+      <div class="prop-note">1 行目はタイトル行 (太字)。間口をダブルクリックで記入、選択中に仕切りの■をつまむと幅・高さを変えられます。</div>`;
+    const act = (id2, fn2) => pane.querySelector(id2) && pane.querySelector(id2).addEventListener("click", () => {
+      commit(); fn2(); UI.refresh(false); UI.showProps();
+    });
+    act("#tbAddCol", () => tb.cols.push(tb.cols[tb.cols.length - 1] || 30));
+    act("#tbAddRow", () => tb.rows.push(tb.rows[tb.rows.length - 1] || 8));
+    act("#tbDelCol", () => {
+      const c = tb.cols.length - 1;
+      tb.cols.pop();
+      Object.keys(tb.cells || {}).forEach(k => { if (+k.split("_")[1] === c) delete tb.cells[k]; });
+    });
+    act("#tbDelRow", () => {
+      const r = tb.rows.length - 1;
+      tb.rows.pop();
+      Object.keys(tb.cells || {}).forEach(k => { if (+k.split("_")[0] === r) delete tb.cells[k]; });
+    });
   } else if (selTexts.length === 1 && only1) {
     // テキスト単体: 内容とサイズ
     const t = selTexts[0];
@@ -1129,6 +1158,7 @@ const MENUS = {
     { label: "仕様を追加", key: "", fn: () => UI.addSpecialPage("spec") },
     { label: "テキスト", key: "T", fn: () => UI.setTool("text") },
     { label: "破線枠 (盤外/グループ)", key: "", fn: () => UI.insertZone() },
+    { label: "表 (行・列は後から追加)", key: "", fn: () => UI.insertTable() },
   ],
   project: [
     { label: "ページの並べ替え…", key: "", fn: () => UI.reorderPages() },
@@ -1605,6 +1635,53 @@ UI.importDXF = () => {
     rd.readAsArrayBuffer(file);
   });
   inp.click();
+};
+
+/* ── 図面上の表 ── */
+UI.insertTable = () => {
+  const pg = curPage();
+  if (pg.kind && pg.kind !== "panel") { UI.setMsg("表は回路のページか盤配置のページに置けます"); return; }
+  if (App.sim.running) { UI.setMsg("シミュレーション中は編集できません"); return; }
+  commit();
+  // 見えている範囲の真ん中へ
+  const bb = Editor.svg.getBoundingClientRect();
+  const cx = (bb.width / 2 - Editor.view.tx) / Editor.view.s;
+  const cy = (bb.height / 2 - Editor.view.ty) / Editor.view.s;
+  const tb = insertTableAt(pg, snap(cx - 45), snap(cy - 12));
+  App.selection.clear(); App.selection.add(tb.id);
+  UI.setTool("select");
+  UI.refresh(false);
+  UI.showProps();
+  UI.setMsg("表を置きました — 間口をダブルクリックで記入 / 選択して仕切りをつまむと幅・高さを変えられます");
+};
+/** 間口の文字入力 (テキストと同じインライン入力)。1 行目 = タイトル */
+UI.openTableCellInput = (clientX, clientY, tb, cell) => {
+  const root = document.getElementById("overlay-root");
+  const cur = (tb.cells && tb.cells[cell.r + "_" + cell.c]) || "";
+  const inp = h(`<input style="position:fixed;left:${clientX}px;top:${clientY - 14}px;z-index:300;
+    background:var(--panel-2);border:1px solid var(--accent);border-radius:6px;color:var(--text);
+    font-size:13px;padding:5px 9px;outline:none;min-width:120px" placeholder="${cell.r === 0 ? "タイトル…" : "文字を入力…"} (Enterで確定)"/>`);
+  inp.value = cur;
+  root.appendChild(inp);
+  requestAnimationFrame(() => { inp.focus(); inp.select(); });
+  let closed = false;
+  const done = (save) => {
+    if (closed) return;
+    closed = true;
+    const v = inp.value.trim();
+    inp.remove();
+    if (!save) return;
+    commit();
+    tb.cells = tb.cells || {};
+    if (v) tb.cells[cell.r + "_" + cell.c] = v; else delete tb.cells[cell.r + "_" + cell.c];
+    UI.refresh(false);
+  };
+  inp.addEventListener("keydown", e => {
+    if (e.key === "Enter") done(true);
+    else if (e.key === "Escape") done(false);
+    e.stopPropagation();
+  });
+  inp.addEventListener("blur", () => done(true));
 };
 
 /* ── 仕様ページの備考欄 (複数行) の編集 — Enter で改行できる ── */

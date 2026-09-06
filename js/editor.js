@@ -74,7 +74,7 @@ function renderAll() {
   const { tx, ty, s } = Editor.view;
   const world = svg.querySelector("#world");
   world.setAttribute("transform", `translate(${tx},${ty}) scale(${s})`);
-  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page) + kindSVG(page);
+  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page) + tablesSVG(page) + kindSVG(page);
   Editor.layers.wires.innerHTML = wiresSVG(page);
   Editor.layers.devices.innerHTML = devicesSVG(page);
   Editor.layers.texts.innerHTML = textsSVG(page);
@@ -319,6 +319,69 @@ function zoneHandleAt(page, wx, wy) {
     if (!App.selection.has(z.id)) continue;
     for (const h of zoneHandles(z)) {
       if (Math.abs(wx - h.x) < 2.2 && Math.abs(wy - h.y) < 2.2) return { z, h };
+    }
+  }
+  return null;
+}
+
+/* ── 図面上の表 ── */
+function tablesSVG(page, opts = {}) {
+  let out = "";
+  const print = !!opts.print;
+  pageTables(page).forEach(tb => {
+    const rc = tableRect(tb);
+    const selected = !print && App.selection.has(tb.id);
+    // タイトル行の薄い下地
+    out += `<rect x="${tb.x}" y="${tb.y}" width="${rc.w}" height="${tb.rows[0]}" fill="#eef1f5" stroke="none"/>`;
+    // 罫線 (外周は太く・中は細く)
+    let grid = "";
+    let yy = tb.y;
+    tb.rows.forEach((rh, i) => { if (i) grid += `M${tb.x},${yy} H${tb.x + rc.w} `; yy += rh; });
+    let xx = tb.x;
+    tb.cols.forEach((cw, i) => { if (i) grid += `M${xx},${tb.y} V${tb.y + rc.h} `; xx += cw; });
+    out += `<path d="${grid}" stroke="${INK}" stroke-width="${LINE_W.thin}" fill="none"/>`;
+    out += `<rect x="${tb.x}" y="${tb.y}" width="${rc.w}" height="${rc.h}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thick}"/>`;
+    // 文字 (間口に収める。1 行目は太字)
+    let cy = tb.y;
+    tb.rows.forEach((rh, r) => {
+      let cx = tb.x;
+      tb.cols.forEach((cw, c) => {
+        const t = tb.cells && tb.cells[r + "_" + c];
+        if (t) {
+          const bold = r === 0;
+          const size = fitTextSize(t, cw - 2, Math.min(TEXT_H.normal, rh - 1.6), bold);
+          const shown = truncateToWidth(t, cw - 2, size, bold);
+          out += `<text x="${cx + cw / 2}" y="${cy + rh / 2 + size * 0.36}" font-size="${svgFontSizeFor(shown, size, false, { bold })}" text-anchor="middle" fill="${INK}" font-family="sans-serif"${bold ? ' font-weight="bold"' : ""}>${escXML(shown)}</text>`;
+        }
+        cx += cw;
+      });
+      cy += rh;
+    });
+    if (selected) {
+      out += `<rect x="${tb.x - 1}" y="${tb.y - 1}" width="${rc.w + 2}" height="${rc.h + 2}" fill="none" stroke="${SEL}" stroke-width="${LINE_W.thin}" stroke-dasharray="2 1.4"/>`;
+      // つまみ: 列の仕切り (上辺)・行の仕切り (左辺)・右端・下端
+      tableGrips(tb).forEach(g => {
+        out += `<rect x="${g.x - 1.4}" y="${g.y - 1.4}" width="2.8" height="2.8" fill="#fff" stroke="${SEL}" stroke-width="0.35"/>`;
+      });
+    }
+  });
+  return out;
+}
+/** つまみの位置。col i = 列 i の右端 (幅を変える) / row i = 行 i の下端 (高さを変える) */
+function tableGrips(tb) {
+  const rc = tableRect(tb);
+  const out = [];
+  let x = tb.x;
+  tb.cols.forEach((cw, i) => { x += cw; out.push({ kind: "col", i, x, y: tb.y }); });
+  let y = tb.y;
+  tb.rows.forEach((rh, i) => { y += rh; out.push({ kind: "row", i, x: tb.x, y }); });
+  return out;
+}
+function tableGripAt(page, wx, wy) {
+  for (const tb of pageTables(page)) {
+    if (!App.selection.has(tb.id)) continue;
+    for (const g of tableGrips(tb)) {
+      if (Math.abs(wx - g.x) < 2.2 && Math.abs(wy - g.y) < 2.2) return { tb, g };
     }
   }
   return null;
@@ -1201,6 +1264,12 @@ function hitTest(wx, wy) {
       cands.push({ type: "zone", obj: z });
     }
   }
+  // 図面上の表 (外周 + 中身のどこでもつかめる)
+  for (const tb of pageTables(page)) {
+    const rc = tableRect(tb);
+    if (wx >= rc.x - 1 && wx <= rc.x + rc.w + 1 && wy >= rc.y - 1 && wy <= rc.y + rc.h + 1)
+      cands.push({ type: "table", obj: tb });
+  }
   // デバイス
   for (let i = page.devices.length - 1; i >= 0; i--) {
     const d = page.devices[i];
@@ -1506,6 +1575,15 @@ function onMouseDown(e) {
     requestRender();
     return;
   }
+  const tg = tableGripAt(curPage(), w.x, w.y);
+  if (tg) {
+    // 表の仕切りつまみ: 列の幅 / 行の高さを変える
+    Editor.drag = { type: "tableGrip", tb: tg.tb, g: tg.g,
+      v0: tg.g.kind === "col" ? tg.tb.cols[tg.g.i] : tg.tb.rows[tg.g.i],
+      wx0: w.x, wy0: w.y, snapshot: snapshotProject() };
+    requestRender();
+    return;
+  }
   const zh = zoneHandleAt(curPage(), w.x, w.y);
   if (zh) {
     Editor.drag = { type: "zoneResize", z: zh.z, hx: zh.h.hx, hy: zh.h.hy,
@@ -1571,6 +1649,7 @@ function buildMoveAttachment() {
     endpoints: map,
     textIds: page.texts.filter(t => App.selection.has(t.id)).map(t => ({ id: t.id, x0: t.x, y0: t.y })),
     zoneIds: pageZones(page).filter(z => App.selection.has(z.id)).map(z => ({ id: z.id, x0: z.x, y0: z.y })),
+    tableIds: pageTables(page).filter(t2 => App.selection.has(t2.id)).map(t2 => ({ id: t2.id, x0: t2.x, y0: t2.y })),
   };
 }
 
@@ -1601,6 +1680,15 @@ function onMouseMove(e) {
     Editor.wireDraft.curDiag = !!q.diag;     // Alt = 斜め直結の下見
     Editor.wireDraft.lock = q.lock;          // 補助線を出すため覚えておく
     Editor.wireDraft.ax = q.ax; Editor.wireDraft.ay = q.ay;
+    requestRender();
+    return;
+  }
+
+  const d0 = Editor.drag;
+  if (d0 && d0.type === "tableGrip") {
+    const dv = d0.g.kind === "col" ? w.x - d0.wx0 : w.y - d0.wy0;
+    const v = Math.max(d0.g.kind === "col" ? TABLE_MIN_CW : TABLE_MIN_RH, r1(d0.v0 + dv));
+    if (d0.g.kind === "col") d0.tb.cols[d0.g.i] = v; else d0.tb.rows[d0.g.i] = v;
     requestRender();
     return;
   }
@@ -1773,6 +1861,10 @@ function applyMove(attach, dx, dy) {
     const z = pageZones(page).find(z => z.id === id);
     if (z) { z.x = x0 + dx; z.y = y0 + dy; }
   });
+  (attach.tableIds || []).forEach(({ id, x0, y0 }) => {
+    const t2 = pageTables(page).find(t3 => t3.id === id);
+    if (t2) { t2.x = r1(x0 + dx); t2.y = r1(y0 + dy); }
+  });
   attach.wireIds.forEach(({ id, pts0 }) => {
     const wr = page.wires.find(w => w.id === id);
     if (wr) wr.pts = pts0.map(p => [p[0] + dx, p[1] + dy]);
@@ -1808,6 +1900,16 @@ function applyMove(attach, dx, dy) {
 }
 
 function onMouseUp(e) {
+  if (Editor.drag && Editor.drag.type === "tableGrip") {
+    const d2 = Editor.drag;
+    Editor.drag = null;
+    App.undoStack.push(d2.snapshot);            // つまむ前の姿を控えに
+    if (App.undoStack.length > 100) App.undoStack.shift();
+    App.redoStack.length = 0;
+    saveLocal();
+    requestRender();
+    return;
+  }
   const d = Editor.drag;
   if (!d) return;
   Editor.drag = null;
@@ -1944,6 +2046,10 @@ function onDblClick(e) {
     if (isWireConductive(hit.obj)) UI.openWireNumInput(e.clientX, e.clientY, hit.obj);
     else UI.showProps();
     requestRender();
+  } else if (hit && hit.type === "table") {
+    // 間口をダブルクリックで文字を書く (1 行目はタイトル行)
+    const cell = tableCellAt(hit.obj, w.x, w.y);
+    if (cell) UI.openTableCellInput(e.clientX, e.clientY, hit.obj, cell);
   } else if (hit && hit.type === "device" || hit && hit.type === "zone") {
     App.selection.clear();
     App.selection.add(hit.obj.id);
@@ -2018,6 +2124,7 @@ function deleteSelection() {
   page.wires = page.wires.filter(w => !App.selection.has(w.id));
   page.texts = page.texts.filter(t => !App.selection.has(t.id));
   page.zones = pageZones(page).filter(z => !App.selection.has(z.id));
+  page.tables = pageTables(page).filter(t2 => !App.selection.has(t2.id));
   // リンク切れ解消
   App.project.pages.forEach(pg => pg.devices.forEach(d => {
     if (d.linkTo && !findDevice(d.linkTo)) d.linkTo = null;
@@ -2316,7 +2423,7 @@ function exportSheetSVG(page = null) {
   page = page || curPage();
   applySheet(page);          // ページごとの用紙・尺度で図枠を張る
   const body =
-    `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page, { print: true })}</g>` +
+    `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page, { print: true })}</g><g>${tablesSVG(page, { print: true })}</g>` +
     // 表紙・目次・仕様の中身。画面と同じものを出す (入れ忘れると出図が白紙になる)
     `<g>${kindSVG(page)}</g>` +
     `<g>${wiresSVG(page, { print: true })}</g><g>${devicesSVG(page, { print: true })}</g><g>${textsSVG(page, { print: true })}</g>`;
