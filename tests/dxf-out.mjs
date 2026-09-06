@@ -14,7 +14,10 @@
    ・jpAlias    : 波ダッシュ 〜 (U+301C) やダッシュ — (U+2014) など、JIS と
                   CP932 で対応が割れる字も \U+ に逃げず実バイトで出る
    ・jpFont     : STYLE は SHX + ビッグフォント (extfont2.shx) — TTC 直接
-                  参照は受け側で解決できず全和文が ? になることがあった */
+                  参照は受け側で解決できず全和文が ? になることがあった
+   ・tbFit      : 表題欄・フォームページの文字は Fit 整列 (72=5) で
+                  アプリ実測の幅ぴったりに出す — 受け側書体の幅差で
+                  欄からはみ出さない */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -84,6 +87,24 @@ const R = await p.evaluate(async () => {
   out.jpFont = { shx: dSpec.includes("romans.shx"), big: dSpec.includes("extfont2.shx"),
     noTtc: !dSpec.includes("msgothic.ttc") };
 
+  // ── 表題欄とフォーム文字の Fit 整列 ──
+  const fitOf = (d, text) => {
+    const i = d.indexOf("1\n" + dxfEscape(text) + "\n");
+    if (i < 0) return null;
+    const seg = d.slice(i, i + 200);
+    const m2 = /72\n5\n11\n([\d.-]+)\n21\n([\d.-]+)/.exec(seg);
+    if (!m2) return null;
+    // 直前の 10 (このエンティティの挿入点) は「最後の一致」を取る
+    const pre = d.slice(Math.max(0, i - 160), i);
+    const all10 = [...pre.matchAll(/10\n([\d.-]+)/g)];
+    const m10 = all10.length ? all10[all10.length - 1] : null;
+    return m10 ? +( +m2[1] - +m10[1]).toFixed(2) : null;
+  };
+  const projW = fitOf(pageToDXF(pg), App.project.name); applySheet(pg);
+  const specW = fitOf(dSpec, "制御盤筐体仕様");
+  out.tbFit = { proj: projW, projOk: projW !== null && Math.abs(projW - textWidthMM(App.project.name, 3.5, false, false)) < 1.2,
+    spec: specW, specOk: specW !== null && specW > 5 };
+
   // ── 取り込みの文字コード自動判別 ──
   const sjisBuf = dxfBytes(d2).buffer;
   const utf8Buf = new TextEncoder().encode(d2).buffer;
@@ -103,6 +124,7 @@ const checks = {
     R.formPage.texts > 100 && R.formPage.lines > 300 && R.formPage.circles >= 5,
   jpAlias: R.jpAlias.noEsc === true && R.jpAlias.bytes === "8160815c",   // 〜=8160 / —=815C
   jpFont: R.jpFont.shx === true && R.jpFont.big === true && R.jpFont.noTtc === true,
+  tbFit: R.tbFit.projOk === true && R.tbFit.specOk === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

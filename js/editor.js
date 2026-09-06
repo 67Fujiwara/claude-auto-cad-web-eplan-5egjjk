@@ -165,15 +165,15 @@ function sheetSVG(page, opts = {}) {
     <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="${S(LINE_W.thick)}"/>
     <path d="M${c1},${r2} H${tbX + tbW} M${c1},${r3} H${tbX + tbW} M${c2},${r1} V${r4} M${c3},${r1} V${r4} M${c4},${r1} V${r4}"
       stroke="${INK}" stroke-width="${S(LINE_W.thin)}"/>
-    ${cell(c1, r1, 0, "図名 (プロジェクト)", App.project.name, TEXT_H.normal, true)}
+    ${cell(c1, r1, 0, "図名 (プロジェクト)", (page.tb && page.tb.proj) || App.project.name, TEXT_H.normal, true)}
     ${cell(c2, r1, 1, "ページ名", page.name, TEXT_H.normal, true)}
     ${cell(c3, r1, 2, "図面番号", pageDwgNo(page))}
     ${cell(c4, r1, 3, "改訂", meta.rev || "0")}
-    ${cell(c1, r2, 0, "設計 (署名)", meta.designer || "—")}
+    ${cell(c1, r2, 0, "設計 (署名)", (page.tb && page.tb.designer) || meta.designer || "—")}
     ${cell(c2, r2, 1, "検図 (署名)", meta.checker || "—")}
-    ${cell(c3, r2, 2, "日付", meta.date || todayStr())}
+    ${cell(c3, r2, 2, "日付", (page.tb && page.tb.date) || meta.date || todayStr())}
     ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
-    ${cell(c1, r3, 0, "企業 (団体) 名", meta.author || "—")}
+    ${cell(c1, r3, 0, "企業 (団体) 名", (page.tb && page.tb.author) || meta.author || "—")}
     ${cell(c2, r3, 1, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || PROJ_DEFAULT}`)}
     <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSizeFor("ページ", S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
     <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large), false, true)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
@@ -948,7 +948,63 @@ function kindSVG(page) {
   if (page.kind === "cover") return coverSVG(page);
   if (page.kind === "toc") return tocSVG(page);
   if (page.kind === "spec") return specSVG(page);
+  if (page.kind === "panel") return panelSVG(page);
   return "";
+}
+
+/* ── Panel Studio の図面ページ (entities を自前で描く) ──
+   座標系は mm・左下原点・Y 上向き → 画面へは y' = extent.h - y。
+   円弧は a0→a1 反時計回り (見た目も反時計)。文字は左下基準・高さ h mm */
+function panelSVG(page) {
+  /* この CAD は中身を常に実寸で描き、縮尺 1:n は図枠を n 倍に広げて表す。
+     Panel Studio の座標 (実寸 mm) をそのまま置き、ページの scale が縮尺になる */
+  const pn = page.panel;
+  if (!pn) return "";
+  const f = sheetScale();
+  const area = panelAreaRect();
+  const w = pn.extent.w, h = pn.extent.h;
+  const ox = area.x + (area.w - w) / 2, oy = area.y + (area.h - h) / 2;
+  const mono = !!page.panelMono;
+  const colOf = e => {
+    if (mono) return INK;
+    const ly = pn.layers && pn.layers[e.layer];
+    return (ly && ly.color) || INK;
+  };
+  const X = v => ox + v, Y = v => oy + (pn.extent.h - v);
+  const sw = LINE_W.thin * f;            // 紙の上で 0.25mm になる線幅
+  let out = `<g data-panel="1">`;
+  // 外形の枠 (extent) を捨て線で
+  out += `<rect x="${ox}" y="${oy}" width="${w}" height="${h}" fill="none" stroke="${INK_SOFT}" stroke-width="${sw}" stroke-dasharray="${2 * f} ${1.5 * f}"/>`;
+  (pn.entities || []).forEach(e => {
+    const c = colOf(e);
+    if (e.t === "line") {
+      out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
+    } else if (e.t === "circle") {
+      out += `<circle cx="${X(e.cx)}" cy="${Y(e.cy)}" r="${e.r}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
+    } else if (e.t === "arc") {
+      const da = ((e.a1 - e.a0) % 360 + 360) % 360;
+      const P = a2 => [X(e.cx + e.r * Math.cos(a2 * Math.PI / 180)), Y(e.cy + e.r * Math.sin(a2 * Math.PI / 180))];
+      const [x1, y1] = P(e.a0), [x2, y2] = P(e.a1);
+      // 反時計回り (見た目) = 画面 (y 下向き) では sweep-flag 0
+      out += `<path d="M${x1},${y1} A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
+    } else if (e.t === "text") {
+      const rot = e.rot ? ` transform="rotate(${-e.rot} ${X(e.x)} ${Y(e.y)})"` : "";
+      out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}>${escXML(e.s)}</text>`;
+    }
+  });
+  // 外形寸法と備考 (job.note) は図枠の左下へ (紙の上で 2.5mm の文字)
+  {
+    const parts = [];
+    if (pn.outer && pn.outer.w) parts.push(`外形 W${pn.outer.w}×H${pn.outer.h}×D${pn.outer.d}`);
+    if (pn.note) parts.push(`備考: ${pn.note}`);
+    if (parts.length) {
+      const fr = frameRect();
+      const line = parts.join("　");
+      out += `<text x="${fr.x + 3 * f}" y="${fr.y + fr.h - 2 * f}" font-size="${svgFontSizeFor(line, TEXT_H.small * f)}" fill="${INK}" font-family="sans-serif">${escXML(line)}</text>`;
+    }
+  }
+  out += `</g>`;
+  return out;
 }
 
 function overlaySVG(page) {

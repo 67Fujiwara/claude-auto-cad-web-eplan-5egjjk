@@ -13,6 +13,8 @@
    ・relKeep   : 出図しても元の図面のページ番号・ページ数は変わらない
    ・relOut    : 設計完了で PDF が 2 本 (社内保存用 / 顧客提出用) 出る。
                  顧客提出用の中身は仕様のページぶん少ない
+   ・relNew    : 「設計完了して出図」が済むと新規作成へ移る — 出図した
+                 図面は「作業中」の枠と設計完了履歴に残る
    ・dupFs     : 記号編集が保存した body (data-h と font-size を両方持つ) を
                  置いたページも、出力 SVG が正しい XML で PDF 化できる —
                  font-size が二重に付くと画面は平気でも PDF が失敗していた */
@@ -151,6 +153,20 @@ const menuHas = await p.evaluate(() => {
   return items.join(" / ");
 });
 
+/* ── 出図後は新規作成へ (元の図面は作業中に確保) ── */
+const RN = await p.evaluate(async () => {
+  App.project = newProject("出図遷移テスト"); UI.renumberPages();
+  App.project.name = "出図遷移テスト";
+  window.showDirectoryPicker = undefined;   // ZIP へ落とす
+  const nWip0 = wipList().length;
+  await UI.runRelease({ dxf: false, pdfIn: false, pdfCus: false, json: true, pack: "zip",
+    rev: "0", by: "", errs: 0, warns: 0, devs: 0, wires: 0, seq: 1 });
+  await new Promise(r => setTimeout(r, 300));
+  const list = wipList();
+  return { newName: App.project.name, moved: App.project.name !== "出図遷移テスト",
+    wipKept: list.length === nWip0 + 1 && list.some(r2 => r2.name === "出図遷移テスト") };
+});
+
 /* ── data-h + font-size 両持ちの記号 → PDF 化 (二重属性の回帰) ── */
 const DUP = await p.evaluate(async () => {
   App.project = newProject("二重FS"); UI.renumberPages();
@@ -175,6 +191,7 @@ const DUP = await p.evaluate(async () => {
 const checks = {
   noPageErrors: errs.length === 0,
   dupFs: DUP.xmlOk === true && DUP.dbl === 0 && DUP.img === true && DUP.hasText === true,
+  relNew: RN.moved === true && RN.wipKept === true,
   newBtn: R.newBtn.exists === true && /新規/.test(R.newBtn.label || ""),
   pdfOne: R.pdfOne.type === "application/pdf" && R.pdfOne.pages === R.pdfOne.want && R.pdfOne.want >= 4,
   pdfValid: R.pdfValid.head && R.pdfValid.eof && R.pdfValid.xrefAt && R.pdfValid.objs && R.pdfValid.size > 10000,

@@ -4712,6 +4712,162 @@ function downloadFile(filename, content, mime = "application/json") {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
+/* ══════════════ Panel Studio (制御盤配置) の図面差し込み ══════════════
+   Panel Studio が書き出す JSON (format "panel-studio/electracad-sheets"
+   version 1) を読み、4 シート (筐体全体 / 筐体穴 / 中板全体 / 中板穴) を
+   仕様ページの直後に図面ページとして差し込む。図枠・表題欄はこちらの
+   既存のものを使い、Panel Studio 側の JSON は書き換えない (写しを持つ)。 */
+const PANEL_FORMAT = "panel-studio/electracad-sheets";
+const PANEL_STD_SCALES = [1, 2, 2.5, 5, 10, 20, 50];
+const PANEL_SHEET_IDS = ["cabinet_full", "cabinet_holes", "plate_full", "plate_holes"];
+
+/** 図を置ける領域 (作図領域から表題欄・改訂履歴欄の帯と余白を除く)。
+    用紙は applySheet 済みの前提 */
+function panelAreaRect() {
+  /* 作図領域は「用紙 × 尺度」で広がる (この CAD は中身を常に実寸で描き、
+     尺度は図枠だけを広げる方式)。余白・表題欄の帯も用紙上の寸法 × 尺度 */
+  const fr = frameRect();
+  const f = sheetScale();
+  const band = 35 * f;                   // 表題欄 30 + 余白 (KV と同じ帯)
+  return { x: fr.x + 5 * f, y: fr.y + 5 * f, w: fr.w - 10 * f, h: fr.h - 10 * f - band };
+}
+/** 標準縮尺から「収まる最小の 1:n」を選ぶ。どれも収まらなければ 0.1 刻み */
+function panelPickScale(extent, area) {
+  for (const nn of PANEL_STD_SCALES)
+    if (extent.w / nn <= area.w && extent.h / nn <= area.h) return nn;
+  return Math.ceil(Math.max(extent.w / area.w, extent.h / area.h) * 10) / 10;
+}
+/** ページの縮尺 1:n の n (page.scale "1:5" → 5) */
+function panelScaleN(page) {
+  const m = /^1:([\d.]+)$/.exec(String(page.scale || ""));
+  return m ? parseFloat(m[1]) : 1;
+}
+/** entities の座標が 0〜extent に収まっているか (はみ出しの数を返す) */
+function panelBoundsCheck(sheet) {
+  const { w, h } = sheet.extent || { w: 0, h: 0 };
+  const eps = 0.5;
+  const ok = (x, y) => x >= -eps && x <= w + eps && y >= -eps && y <= h + eps;
+  let bad = 0;
+  (sheet.entities || []).forEach(e => {
+    if (e.t === "line") { if (!ok(e.x1, e.y1) || !ok(e.x2, e.y2)) bad++; }
+    else if (e.t === "circle" || e.t === "arc") {
+      if (!ok(e.cx - e.r, e.cy - e.r) || !ok(e.cx + e.r, e.cy + e.r)) bad++;
+    } else if (e.t === "text") { if (!ok(e.x, e.y)) bad++; }
+  });
+  return bad;
+}
+/** JSON の検証。だめなら理由の文字列を返す (受け付けるなら null) */
+function panelValidate(data) {
+  if (!data || typeof data !== "object") return "JSON が読めません";
+  if (data.format !== PANEL_FORMAT)
+    return `format が違います (「${PANEL_FORMAT}」のみ受け付け。読んだ値: ${JSON.stringify(data.format)})`;
+  if (data.version !== 1)
+    return `version が違います (1 のみ受け付け。読んだ値: ${JSON.stringify(data.version)})`;
+  const sh = data.sheets;
+  if (!Array.isArray(sh) || sh.length !== 4 ||
+      PANEL_SHEET_IDS.some((id, i) => !sh[i] || sh[i].id !== id))
+    return `sheets は ${PANEL_SHEET_IDS.join(" / ")} の順の 4 枚が必要です`;
+  for (const s2 of sh) {
+    if (!s2.extent || !(s2.extent.w > 0) || !(s2.extent.h > 0)) return `シート ${s2.id} の extent がありません`;
+  }
+  return null;
+}
+/** 取り込み本体: 4 ページを仕様ページの直後へ差し込む。
+    同じ案件 (job.jobNo × sheet.id) の既存ページは置き換える。
+    返り値 { added, replaced, badCoords } */
+function panelInsertPages(data) {
+  const err = panelValidate(data);
+  if (err) throw new Error(err);
+  const job = data.job || {};
+  const panel = data.panel || {};
+  const jobNo = String(job.jobNo || "");
+  // 縮尺は A3 横 (既定の用紙) の作図領域で選ぶ
+  const keepPage = curPage();
+  const probe = { paper: "A3", orient: "landscape", scale: "1:1" };
+  applySheet(probe);
+  const area = panelAreaRect();
+  let badCoords = 0;
+  const pagesNew = data.sheets.map(sh => {
+    badCoords += panelBoundsCheck(sh);
+    const n = panelPickScale(sh.extent, area);
+    const outer = panel.outer || {};
+    return {
+      id: uid("p"), no: 0, kind: "panel", name: sh.title || sh.id,
+      devices: [], wires: [], texts: [], zones: [],
+      paper: "A3", orient: "landscape", scale: "1:" + n,
+      panel: {
+        jobNo, sheetId: sh.id, title: sh.title || sh.id,
+        extent: { w: sh.extent.w, h: sh.extent.h },
+        layers: deepCopy(sh.layers || {}),
+        entities: deepCopy(sh.entities || []),
+        job: deepCopy(job), model: panel.model || "",
+        outer: deepCopy(outer), note: job.note || "",
+      },
+      /* 表題欄の書き換え (このページだけ) */
+      /* 図名セルは幅が 58mm しかないので、外形寸法は紙の下の備考行に出す */
+      tb: {
+        proj: [jobNo, "制御盤", panel.model].filter(Boolean).join(" "),
+        designer: job.owner || "", date: String(job.completedAt || "").slice(0, 10),
+        author: job.company || "",
+      },
+    };
+  });
+  applySheet(keepPage);
+  const pages = App.project.pages;
+  // 置き換え: 同じ案件の既存 panel ページを除く
+  const before = pages.length;
+  App.project.pages = pages.filter(p2 => !(p2.kind === "panel" && p2.panel &&
+    p2.panel.jobNo === jobNo && PANEL_SHEET_IDS.includes(p2.panel.sheetId)));
+  const replaced = before - App.project.pages.length;
+  // 仕様ページの直後 (無ければ表紙・目次の後、それも無ければ先頭) へ
+  let at = -1;
+  App.project.pages.forEach((p2, i) => {
+    if (p2.kind === "spec" || p2.kind === "toc" || p2.kind === "cover") at = i;
+  });
+  App.project.pages.splice(at + 1, 0, ...pagesNew);
+  return { added: pagesNew.length, replaced, badCoords };
+}
+
+/* ── ZIP の読み出し (store / deflate)。設計完了 ZIP のまま渡されたとき用 ── */
+async function zipEntries(buf) {
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(buf);
+  // EOCD (末尾から探す)
+  let eo = -1;
+  for (let i = u8.length - 22; i >= 0 && i > u8.length - 22 - 65536; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eo = i; break; }
+  }
+  if (eo < 0) throw new Error("ZIP として読めません (End of central directory が見つかりません)");
+  const count = dv.getUint16(eo + 10, true);
+  let off = dv.getUint32(eo + 16, true);
+  const out = [];
+  const dec = new TextDecoder("utf-8");
+  for (let k = 0; k < count; k++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) break;
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const nlen = dv.getUint16(off + 28, true);
+    const elen = dv.getUint16(off + 30, true);
+    const clen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    const name = dec.decode(u8.subarray(off + 46, off + 46 + nlen));
+    // ローカルヘッダから実データ位置を出す
+    const lnlen = dv.getUint16(lho + 26, true), lelen = dv.getUint16(lho + 28, true);
+    const dataOff = lho + 30 + lnlen + lelen;
+    const raw = u8.subarray(dataOff, dataOff + csize);
+    let bytes;
+    if (method === 0) bytes = raw.slice();
+    else if (method === 8) {
+      const ds = new DecompressionStream("deflate-raw");
+      const stream = new Blob([raw]).stream().pipeThrough(ds);
+      bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else { off += 46 + nlen + elen + clen; continue; }   // 未対応の圧縮は飛ばす
+    out.push({ name, bytes });
+    off += 46 + nlen + elen + clen;
+  }
+  return out;
+}
+
 /* ══════════════ 出図のまとめ (PDF / ZIP) ══════════════
    外部ライブラリを使わずに、図面一式を 1 つのファイルにまとめる。
    ・buildPDF … 各ページを紙の大きさどおりに並べた 1 本の PDF

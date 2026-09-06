@@ -247,6 +247,9 @@ UI.runRelease = async (opt) => {
   const saved = await relPutSnapshot(id, App.project);
   relSaveList(relList().map(r => (r.id === id ? { ...r, saved } : r)));
   if (!saved) UI.setMsg("設計完了しました (図面本体は保存できませんでした。履歴からの再出力はできません)");
+  /* 出図が済んだら次の案件へ — 今の図面を「作業中」に確保して新規作成画面へ移る */
+  await UI.newProject({ fromRelease: true });
+  UI.toast(`出図した「${entry.project}」は作業中と設計完了履歴に残しました — 新しい図面から始められます`, 6000);
 };
 
 /** 出図したファイルの保存先。フォルダ / ZIP / 個別 の 3 通り */

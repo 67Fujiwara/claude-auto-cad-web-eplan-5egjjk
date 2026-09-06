@@ -328,6 +328,34 @@ UI.showProps = (focusTag = false) => {
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
   const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
+  /* Panel Studio の図面ページ: 縮尺の選び直しと白黒設定 */
+  if (page.kind === "panel" && page.panel) {
+    const pg2 = page, pn = pg2.panel;
+    const n0 = panelScaleN(pg2);
+    const cand = [...new Set([...PANEL_STD_SCALES, n0])].sort((a2, b2) => a2 - b2);
+    pane.innerHTML = `
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">Panel Studio の図面</div><div class="t2">${escXML(pn.title)}</div></div></div>
+      <div class="prop-row"><label>案件 / 型式</label><div class="rp-dim mono">${escXML(pn.jobNo || "—")} / ${escXML(pn.model || "—")}</div></div>
+      <div class="prop-row"><label>実寸 (mm)</label><div class="rp-dim mono">${pn.extent.w} × ${pn.extent.h}</div></div>
+      <div class="prop-row"><label>縮尺</label><select id="pPnScale">
+        ${cand.map(v => `<option value="${v}"${v === n0 ? " selected" : ""}>1:${v}</option>`).join("")}
+      </select></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnMono"${pg2.panelMono ? " checked" : ""}/><span>白黒で描く (印刷用 — 色を全部黒に)</span></label></div>
+      <div class="prop-note">図は作図領域の中央に置かれます。縮尺は読み込み時に標準縮尺から自動で選んでいます。</div>`;
+    pane.querySelector("#pPnScale").addEventListener("change", e => {
+      commit();
+      pg2.scale = "1:" + parseFloat(e.target.value);
+      applySheet(pg2);
+      UI.refresh(true);
+      UI.setMsg(`縮尺を ${pg2.scale} にしました`);
+    });
+    pane.querySelector("#pPnMono").addEventListener("change", e => {
+      commit();
+      if (e.target.checked) pg2.panelMono = true; else delete pg2.panelMono;
+      UI.refresh(false);
+    });
+    return;
+  }
   /* 表紙・目次・仕様のページは回路を選ばないので、ページの内容そのものを
      プロパティに出す (表紙の 2 行・仕様の記入欄) */
   if (page.kind) {
@@ -1050,6 +1078,7 @@ const MENUS = {
     { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
     { sep: true },
     { label: "DXF取り込み (図面に作図)…", key: "", fn: () => UI.importDXF() },
+    { label: "Panel Studio の図面を差し込む… (JSON / ZIP)", key: "", fn: () => UI.importPanelStudio() },
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
     
     { label: "PDF出力 (全ページを1ファイル)", key: "", fn: () => UI.exportPDF() },
@@ -1228,10 +1257,13 @@ UI.addSpecialPage = (kind) => {
   zoomFit();
   UI.setMsg(`${nm}のページを ${at + 1} ページ目に追加しました`);
 };
-UI.newProject = async () => {
-  // 作業中に入れてある図面は、新しく作る前に取っておく (取りこぼさない)
-  if (wipCurrent()) await UI.wipSave();
-  if (!confirm(`「${App.project.name}」を閉じて新しい図面を作ります。\n` +
+UI.newProject = async (opts = {}) => {
+  // 作業中に入れてある図面は、新しく作る前に取っておく (取りこぼさない)。
+  // 出図直後 (fromRelease) は枠が無くても必ず作業中へ確保してから移る —
+  // 図面は設計完了履歴と作業中の両方に残るので、確認は出さない
+  if (opts.fromRelease) { try { await UI.wipSave(); } catch (e) { } }
+  else if (wipCurrent()) await UI.wipSave();
+  if (!opts.fromRelease && !confirm(`「${App.project.name}」を閉じて新しい図面を作ります。\n` +
     "保存していない変更は失われます (ブラウザの自動保存も新しい図面で上書きされます)。\nよろしいですか？")) return;
   if (App.sim.running) UI.toggleSim(); // 確定後にのみ停止 (キャンセルは完全な無操作)
   App.project = newProject();
@@ -1565,6 +1597,47 @@ UI.importDXF = () => {
       UI.dxfImportDialog(ents, file.name);
     };
     rd.readAsArrayBuffer(file);
+  });
+  inp.click();
+};
+
+/* ── Panel Studio (制御盤配置) の図面差し込み ──
+   JSON (<案件番号>_electracad.json) か、それが入った設計完了 ZIP を受ける */
+UI.importPanelStudio = () => {
+  if (App.sim.running) { UI.setMsg("シミュレーション中は取り込みできません"); return; }
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = ".json,.zip,.JSON,.ZIP";
+  inp.addEventListener("change", async () => {
+    const file = inp.files[0];
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const u8 = new Uint8Array(buf);
+      let text;
+      if (u8[0] === 0x50 && u8[1] === 0x4b) {          // "PK" = ZIP
+        const hits = (await zipEntries(buf)).filter(f => /_electracad\.json$/i.test(f.name));
+        if (!hits.length) { alert("ZIP の中に *_electracad.json が見つかりませんでした"); return; }
+        text = new TextDecoder("utf-8").decode(hits[0].bytes);
+      } else {
+        text = new TextDecoder("utf-8").decode(u8);
+      }
+      let data;
+      try { data = JSON.parse(text); } catch (e) { alert("JSON が読めません: " + e.message); return; }
+      commit();
+      const r = panelInsertPages(data);
+      UI.renumberPages();
+      // 差し込んだ最初のページへ移動
+      const first = App.project.pages.findIndex(p2 => p2.kind === "panel");
+      if (first >= 0) { App.pageIdx = first; applySheet(curPage()); }
+      UI.refresh(true);
+      saveLocal();
+      UI.toast(`Panel Studio の図面 ${r.added} ページを差し込みました` +
+        (r.replaced ? ` (前の ${r.replaced} ページを置き換え)` : "") +
+        (r.badCoords ? `。座標が 0〜extent の外の要素が ${r.badCoords} 件あります (そのまま描いています)` : ""), 6000);
+    } catch (e) {
+      alert("Panel Studio の図面を差し込めませんでした:\n" + e.message);
+    }
   });
   inp.click();
 };

@@ -8,7 +8,7 @@
    ═══════════════════════════════════════════════════════════════ */
 "use strict";
 
-const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "SYMBOL_THIN", "TEXT", "WIRENUM", "XREF", "PIN"];
+const DXF_LAYERS = ["FRAME", "FRAME_THIN", "WIRE", "AUXLINE", "SYMBOL", "SYMBOL_THIN", "TEXT", "WIRENUM", "XREF", "PIN", "PANEL"];
 /* R12 は線幅を持たないため、太さの区分はレイヤと色 (ペン) で伝える。
    FRAME=輪郭 0.7 / FRAME_THIN=区分線・仕切り 0.25 / WIRE=0.5 / AUXLINE=0.25 */
 
@@ -385,8 +385,10 @@ function formSVGToDXF(svg) {
       const bold = a["font-weight"] === "bold";
       // svgFontSizeFor の逆変換 (フォームは noMin の線形変換なので比を掛け戻す)
       const h2 = +(fs * capRatio((hasCJK(t) ? "cjk" : "sans") + (bold ? "+b" : ""))).toFixed(3);
+      // 幅もアプリの実測に固定 (表の欄に収めた縮小文字がはみ出さない)
+      const fw = textWidthMM(t, h2, bold, false);
       ents += dxfText(+a.x, +a.y, h2, t, "TEXT", a["text-anchor"] || "start", 0,
-        { mono: false, noMin: true, bold });
+        { mono: false, noMin: true, bold, fitTo: fw });
     }
   }
   return ents;
@@ -425,6 +427,17 @@ function dxfText(x, y, size, text, layer, anchor = "start", angle = 0, opts = {}
   /* 寄せは 72 (水平位置合わせ) + 11/21 (位置合わせ点) でも渡す。10/20 だけだと
      受け側 CAD が別の書体に置き換えた瞬間に中心がずれる (幅はこちらの実測値なので)。
      72 を読まない古いビューアのために 10/20 の左端も従来どおり入れておく */
+  /* fitTo (mm) を渡すと 72=5 (Fit) — 文字列の幅を必ずその幅に合わせる。
+     受け側 CAD の書体 (SHX など) はこちらの実測より幅が違うことがあり、
+     表題欄・仕様の表のような「欄に収めた文字」がはみ出す。Fit なら
+     アプリで測った幅ぴったりに伸縮され、画面と同じ収まりになる (角度 0 のみ) */
+  if (opts.fitTo > 0 && !angle) {
+    const fx0 = anchor === "middle" ? x - opts.fitTo / 2 : anchor === "end" ? x - opts.fitTo : x;
+    return dxfEntity([[0, "TEXT"], [8, layer], [7, "JP"],
+      [10, fx0.toFixed(3)], [20, dxfY(y)], [40, size.toFixed(2)], [1, dxfEscape(text)], [50, 0]]
+      .concat(opts.color ? [[62, opts.color]] : [])
+      .concat([[72, 5], [11, (fx0 + opts.fitTo).toFixed(3)], [21, dxfY(y)]]));
+  }
   const al = anchor === "middle" ? 1 : anchor === "end" ? 2 : 0;
   return dxfEntity([[0, "TEXT"], [8, layer], [7, "JP"], [10, ax.toFixed(3)], [20, dxfY(ay)],
     [40, size.toFixed(2)], [1, dxfEscape(text)], [50, angle]]
@@ -545,19 +558,22 @@ function pageToDXF(page) {
     const cx = cxmm[ci], cwv = cwmm[ci] - 3.4;
     const size = fitTextSize(String(value), cwv, TEXT_H.normal);
     const text = truncateToWidth(String(value), cwv, size);
-    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(3.6), S(TEXT_H.small), label, "FRAME", "start", 0, { mono: false });
-    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(size), text, "TEXT", "start", 0, { mono: false });
+    // 幅はアプリの実測に固定 (Fit) — 受け側書体の幅差で欄からはみ出さない
+    const lw = Math.min(textWidthMM(label, TEXT_H.small, false, false), cwv);
+    const vw = Math.min(textWidthMM(text, size, false, false), cwv);
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(3.6), S(TEXT_H.small), label, "FRAME", "start", 0, { mono: false, fitTo: S(lw) });
+    ents += dxfText(tbX + S(cx) + S(2), tbY + S(ry) + S(8.4), S(size), text, "TEXT", "start", 0, { mono: false, fitTo: S(vw) });
   };
   const R = TITLE_BLOCK.rowH;
-  tbCell(0, 0, "図名 (プロジェクト)", App.project.name);
+  tbCell(0, 0, "図名 (プロジェクト)", (page.tb && page.tb.proj) || App.project.name);
   tbCell(1, 0, "ページ名", page.name);
   tbCell(2, 0, "図面番号", pageDwgNo(page));
   tbCell(3, 0, "改訂", meta.rev || "0");
-  tbCell(0, R, "設計 (署名)", meta.designer || "—");
+  tbCell(0, R, "設計 (署名)", (page.tb && page.tb.designer) || meta.designer || "—");
   tbCell(1, R, "検図 (署名)", meta.checker || "—");
-  tbCell(2, R, "日付", meta.date || todayStr());
+  tbCell(2, R, "日付", (page.tb && page.tb.date) || meta.date || todayStr());
   tbCell(3, R, "尺度", pm.scale || "1:1");
-  tbCell(0, R * 2, "企業 (団体) 名", meta.author || "—");
+  tbCell(0, R * 2, "企業 (団体) 名", (page.tb && page.tb.author) || meta.author || "—");
   tbCell(1, R * 2, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || PROJ_DEFAULT}`);
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
@@ -588,6 +604,51 @@ function pageToDXF(page) {
         ents += dxfText(xs[i] + S(1.6), y + rh - S(1.6), S(size), truncateToWidth(String(v), cwv, size), "TEXT");
       });
     });
+  }
+
+  // ── Panel Studio の図面ページ (entities をそのまま DXF へ) ──
+  /* 元データは mm・左下原点・Y 上向き・角度は反時計回り — DXF と同じ向き
+     なので、置き位置と縮尺だけ掛けて素直に写す。色はレイヤの ACI を
+     エンティティに付ける (白黒設定なら付けない = PANEL レイヤの 7 番) */
+  if (page.kind === "panel" && page.panel) {
+    const pn = page.panel;
+    const area = panelAreaRect();
+    const w2 = pn.extent.w, h2 = pn.extent.h;         // 実寸のまま (縮尺は図枠の拡大で表す)
+    const ox = area.x + (area.w - w2) / 2, oyTop = area.y + (area.h - h2) / 2;
+    const oyBot = SHEET.h - oyTop - h2;               // DXF (y 上向き) での下端
+    const X = v => (ox + v).toFixed(3), Yd = v => (oyBot + v).toFixed(3);
+    const aciOf = e => {
+      if (page.panelMono) return null;
+      const ly = pn.layers && pn.layers[e.layer];
+      return ly && ly.aci ? [[62, ly.aci]] : null;
+    };
+    (pn.entities || []).forEach(e => {
+      const col = aciOf(e) || [];
+      if (e.t === "line") {
+        ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col,
+          [10, X(e.x1)], [20, Yd(e.y1)], [11, X(e.x2)], [21, Yd(e.y2)]]);
+      } else if (e.t === "circle") {
+        ents += dxfEntity([[0, "CIRCLE"], [8, "PANEL"], ...col,
+          [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)]]);
+      } else if (e.t === "arc") {
+        ents += dxfEntity([[0, "ARC"], [8, "PANEL"], ...col,
+          [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)],
+          [50, (+e.a0).toFixed(3)], [51, (+e.a1).toFixed(3)]]);
+      } else if (e.t === "text") {
+        ents += dxfEntity([[0, "TEXT"], [8, "PANEL"], ...col, [7, "JP"],
+          [10, X(e.x)], [20, Yd(e.y)], [40, (+e.h).toFixed(3)],
+          [1, dxfEscape(e.s)], [50, e.rot || 0]]);
+      }
+    });
+    {
+      const parts = [];
+      if (pn.outer && pn.outer.w) parts.push(`外形 W${pn.outer.w}×H${pn.outer.h}×D${pn.outer.d}`);
+      if (pn.note) parts.push(`備考: ${pn.note}`);
+      if (parts.length) {
+        const fr2 = frameRect();
+        ents += dxfText(fr2.x + 3 * f, fr2.y + fr2.h - 2 * f, S(TEXT_H.small), parts.join("　"), "TEXT", "start", 0, { mono: false });
+      }
+    }
   }
 
   // ── 表紙・目次・仕様 (フォームページ) の中身 ──
@@ -749,7 +810,7 @@ function pageToDXF(page) {
   // ── DXF 全体 (R12) ──
   /* R12 は線幅を持たないため、太さの区分は色番号 (ペン) で伝える。
      7=太線 0.5mm / 6=中間 / 8=細線 0.25mm / 5=輪郭 0.7mm */
-  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, XREF: 8, PIN: 8 };
+  const LAYER_COLOR = { FRAME: 5, FRAME_THIN: 8, WIRE: 7, AUXLINE: 8, SYMBOL: 7, SYMBOL_THIN: 8, TEXT: 7, WIRENUM: 6, XREF: 8, PIN: 8, PANEL: 7 };
   const layers = DXF_LAYERS.map(l =>
     dxfEntity([[0, "LAYER"], [2, l], [70, 0], [62, LAYER_COLOR[l] || 7], [6, "CONTINUOUS"]])).join("");
   return [
