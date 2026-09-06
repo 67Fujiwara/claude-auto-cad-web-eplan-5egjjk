@@ -2314,11 +2314,12 @@ function copySelection() {
   const wires = page.wires.filter(w => App.selection.has(w.id));
   const texts = page.texts.filter(t => App.selection.has(t.id));
   const zones = pageZones(page).filter(z => App.selection.has(z.id));
-  if (!devs.length && !wires.length && !texts.length && !zones.length) return;
-  App.clipboard = deepCopy({ devs, wires, texts, zones });
+  const tables = pageTables(page).filter(t2 => App.selection.has(t2.id));
+  if (!devs.length && !wires.length && !texts.length && !zones.length && !tables.length) return;
+  App.clipboard = deepCopy({ devs, wires, texts, zones, tables });
   // 貼り付け先の尺度が違うときに配置を合わせられるよう、コピー元の尺度を控える
   App.clipboard.scale = pageSheetMeta(page).scale;
-  UI.setMsg(`${devs.length + wires.length + texts.length + zones.length} 個をコピーしました`);
+  UI.setMsg(`${devs.length + wires.length + texts.length + zones.length + tables.length} 個をコピーしました`);
 }
 
 function pasteClipboard() {
@@ -2340,6 +2341,7 @@ function pasteClipboard() {
   cb.wires.forEach(w => w.pts.forEach(p => { minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]); }));
   cb.texts.forEach(t => { minX = Math.min(minX, t.x); minY = Math.min(minY, t.y); });
   (cb.zones || []).forEach(z => { minX = Math.min(minX, z.x); minY = Math.min(minY, z.y); });
+  (cb.tables || []).forEach(t2 => { minX = Math.min(minX, t2.x); minY = Math.min(minY, t2.y); });
   if (!isFinite(minX)) { minX = 0; minY = 0; }
   let dx, dy;
   const lw = Editor.lastWorld;
@@ -2403,6 +2405,13 @@ function pasteClipboard() {
     z.x = z.x + dx; z.y = z.y + dy;
     pageZones(page).push(z);
     App.selection.add(z.id);
+  });
+  (cb.tables || []).forEach(t0 => {
+    const t2 = deepCopy(t0);
+    t2.id = uid("tb");
+    t2.x = t2.x + dx; t2.y = t2.y + dy;
+    pageTables(page).push(t2);
+    App.selection.add(t2.id);
   });
   UI.setMsg("カーソル位置に貼り付けました");
   // 黙って行き先を消すと気づけないので知らせる

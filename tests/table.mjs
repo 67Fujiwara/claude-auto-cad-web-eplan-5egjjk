@@ -8,6 +8,8 @@
                表に注記の文字が重なっていても間口の記入が開く
    ・clickEdit: 選択済みの表を動かさず単クリックしても間口の記入が開く
                (タイトル行も同じ — ダブルクリックが拾われない環境の保険)
+   ・copyPaste: Ctrl+C / Ctrl+V で表を複製できる。中身の文字・列幅も写り、
+               id は新しく振られる。別ページへも貼れる
    ・resize   : 選択中に列の仕切りの■をつまんで動かすと、その列の幅が変わる
    ・addDel   : プロパティから行・列を追加/削除できる (消えた列の文字も消える)
    ・move     : 表をつかんで動かせる
@@ -159,6 +161,36 @@ Object.assign(R, await p.evaluate(() => {
   return { move: moved, dxf: dxfOk, print: prt };
 }));
 
+// ── コピペ (同ページ → 別ページ) ──
+R.copyPaste = await p.evaluate(() => {
+  const pg = curPage();
+  const tb = pageTables(pg)[0];
+  App.selection.clear(); App.selection.add(tb.id);
+  copySelection();
+  Editor.lastWorld = null;                    // 位置ずらし貼り付けの経路
+  pasteClipboard();
+  const same = pageTables(pg).length === 2;
+  const cp = pageTables(pg)[1];
+  // 表が貼られていない (壊れている) ときもクラッシュせず判定を落とす
+  const okSame = same && !!cp && cp.id !== tb.id && cp.cells["0_0"] === tb.cells["0_0"] &&
+    JSON.stringify(cp.cols) === JSON.stringify(tb.cols) && cp.x === tb.x + 10;
+  // 別ページへ
+  const q = newPage("表の貼り先", App.project.pages.length + 1);
+  App.project.pages.push(q); UI.renumberPages();
+  App.pageIdx = App.project.pages.indexOf(q); applySheet(q);
+  pasteClipboard();
+  const qc = pageTables(q)[0];
+  const cross = pageTables(q).length === 1 && !!qc && qc.cells["1_1"] === tb.cells["1_1"];
+  App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
+  // 片付け (Delete 判定は元の 1 枚に戻してから)。コピーが無くても落ちない
+  if (pageTables(pg).length > 1) pageTables(pg).pop();
+  App.selection.clear();
+  if (pageTables(pg)[0]) App.selection.add(pageTables(pg)[0].id);
+  UI.refresh(false);
+  return { okSame, cross };
+});
+await p.waitForTimeout(150);
+
 // ── Delete で消える ──
 c = at(0, 0); // 適当な場所は不要 — キーで消す
 await p.evaluate(() => { UI.refresh(false); Editor.svg.focus(); });
@@ -175,6 +207,7 @@ const checks = {
   merge: R.merge.divFromRow2 === true && R.merge.noTopDiv === true &&
     R.merge.titleAnywhere === true && R.overlap === true,
   clickEdit: R.clickEdit.cell === true && R.clickEdit.title === true,
+  copyPaste: R.copyPaste.okSame === true && R.copyPaste.cross === true,
   resize: Math.abs(R.resize.col0 - 40) <= 0.5 && R.resize.others === true,   // マウス丸めで ±0.5mm
   addDel: R.addDel.has === true && R.addDel.grew === true && R.addDel.colDel === true && R.addDel.rows === 3,
   move: R.move === true,
