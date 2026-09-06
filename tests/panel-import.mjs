@@ -10,7 +10,12 @@
    ・reimport : 同じ案件の JSON をもう一度読んでも 4 ページのまま (置き換え)
    ・zip      : ZIP のまま渡されたら中の *_electracad.json を探して読む
    ・bounds   : 0〜extent の外の座標は数えて知らせる (読み込みは続ける)
-   ・dxf      : DXF にも実体が出る (S-T12 / 円 / 円弧は a0→a1 のまま) */
+   ・dxf      : DXF にも実体が出る (S-T12 / 円 / 円弧は a0→a1 のまま)
+   ・textEdit : パネルページでも文字ツールで注記を書ける (Enter で確定)。
+                書いた文字は画面・PDF・DXF に出る
+   ・light    : 重いデータ (entities) はページから分離して持ち、編集の
+                たびに再直列化しない — 2 回 commit しても 1MB 超の
+                JSON.stringify が走らない。undo しても図は生きている */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -48,7 +53,10 @@ const R = await p.evaluate(async () => {
     sheets: [
       mkSheet("cabinet_full", "筐体 全体図", 600, 800),
       mkSheet("cabinet_holes", "筐体 穴あけ図", 600, 800),
-      mkSheet("plate_full", "中板 全体図", 540, 740),
+      mkSheet("plate_full", "中板 全体図", 540, 740,
+        // 重い盤 (実案件は数万要素) を模す — 直列化 1MB 超のかたまり
+        Array.from({ length: 20000 }, (_, i) => (
+          { t: "line", layer: "holes", x1: (i % 500) + 0.125, y1: 10 + (i % 7), x2: (i % 500) + 3.875, y2: 12 + (i % 7) }))),
       mkSheet("plate_holes", "中板 穴あけ図", 540, 740,
         [{ t: "circle", layer: "holes", cx: 900, cy: 30, r: 3 }]),   // はみ出し 1 件
     ],
@@ -126,6 +134,24 @@ const R = await p.evaluate(async () => {
   out.reimport = { replaced: r2.replaced, still4: App.project.pages.filter(q => q.kind === "panel").length === 4,
     total: App.project.pages.length === n0 };
 
+  // ── 軽量化: panelData は分離され、commit で再直列化されない ──
+  serializeProject();                           // 直列化を温める
+  const orig = JSON.stringify; let big = 0;
+  JSON.stringify = function (...a2) {
+    const r2 = orig.apply(JSON, a2);
+    if (typeof r2 === "string" && r2.length > 1e6) big++;
+    return r2;
+  };
+  commit();
+  App.project.pages.find(q => q.kind === "panel").name += "!";
+  commit();
+  JSON.stringify = orig;
+  const split = !App.project.pages.some(q => q.panel && q.panel.entities);
+  undo(); undo();
+  const afterUndo = panelDataOf(App.project.pages.find(q => q.kind === "panel" && q.panel.sheetId === "plate_full"));
+  out.light = { big, split, undoAlive: afterUndo.entities.length > 20000 };
+  App.redoStack.length = 0;
+
   // ── ZIP 経由 (store の ZIP を作って読み戻す) ──
   const jsonBytes = new TextEncoder().encode(JSON.stringify(FIX));
   const zip = buildZIP([{ name: "release/J123_electracad.json", data: jsonBytes },
@@ -136,6 +162,37 @@ const R = await p.evaluate(async () => {
     parses: !!hit && JSON.parse(new TextDecoder().decode(hit.bytes)).format === "panel-studio/electracad-sheets" };
   return out;
 });
+
+/* ── パネルページで文字 (注記) を書く — 実マウス + 文字ツール ── */
+const TE = { };
+await p.evaluate(() => {
+  const plate2 = App.project.pages.find(q => q.kind === "panel" && q.panel.sheetId === "plate_full");
+  App.pageIdx = App.project.pages.indexOf(plate2); applySheet(plate2);
+  UI.refresh(true); zoomFit(); UI.setTool("text");
+});
+await p.waitForTimeout(300);
+const spot = await p.evaluate(() => {
+  const bb = Editor.svg.getBoundingClientRect();
+  const fr = frameRect();
+  return { x: bb.left + Editor.view.tx + (fr.x + 40) * Editor.view.s,
+           y: bb.top + Editor.view.ty + (fr.y + 40) * Editor.view.s };
+});
+await p.mouse.click(spot.x, spot.y);
+await p.waitForTimeout(300);
+TE.inputShown = await p.evaluate(() => !!document.querySelector('#overlay-root input'));
+if (TE.inputShown) {
+  await p.keyboard.type("盤内注記A");
+  await p.keyboard.press("Enter");
+  await p.waitForTimeout(250);
+}
+Object.assign(TE, await p.evaluate(() => {
+  const pg2 = curPage();
+  const t = (pg2.texts || []).find(t2 => t2.text === "盤内注記A");
+  const svg2 = exportSheetSVG(pg2);
+  const dxf2 = pageToDXF(pg2); applySheet(pg2);
+  UI.setTool("select");
+  return { made: !!t, drawn: svg2.includes("盤内注記A"), dxf: dxf2.includes("盤内注記A") };
+}));
 
 const checks = {
   noPageErrors: errs.length === 0,
@@ -149,6 +206,8 @@ const checks = {
   bounds: R.insert.badCoords === 1,
   reimport: R.reimport.replaced === 4 && R.reimport.still4 === true && R.reimport.total === true,
   zip: R.zip.found === true && R.zip.parses === true,
+  light: R.light.big === 0 && R.light.split === true && R.light.undoAlive === true,
+  textEdit: TE.inputShown === true && TE.made === true && TE.drawn === true && TE.dxf === true,
   dxf: R.dxf.text === true && R.dxf.arc === true && R.dxf.circle === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);

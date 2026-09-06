@@ -960,25 +960,31 @@ function kindSVG(page) {
 /* ── Panel Studio の図面ページ (entities を自前で描く) ──
    座標系は mm・左下原点・Y 上向き → 画面へは y' = extent.h - y。
    円弧は a0→a1 反時計回り (見た目も反時計)。文字は左下基準・高さ h mm */
+const _panelSvgCache = new Map();
 function panelSVG(page) {
   /* この CAD は中身を常に実寸で描き、縮尺 1:n は図枠を n 倍に広げて表す。
-     Panel Studio の座標 (実寸 mm) をそのまま置き、ページの scale が縮尺になる */
+     Panel Studio の座標 (実寸 mm) をそのまま置き、ページの scale が縮尺になる。
+     entities は不変・数万要素になり得るので、描画条件が同じ間は SVG を使い回す */
   const pn = page.panel;
   if (!pn) return "";
+  const ck = `${pn.dataKey || page.id}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}`;
+  const hit = _panelSvgCache.get(ck);
+  if (hit !== undefined) return hit;
   const f = sheetScale();
   const area = panelAreaRect();
   const w = pn.extent.w, h = pn.extent.h;
   const ox = area.x + (area.w - w) / 2, oy = area.y + (area.h - h) / 2;
   const mono = !!page.panelMono;
+  const pd = panelDataOf(page);
   const colOf = e => {
     if (mono) return INK;
-    const ly = pn.layers && pn.layers[e.layer];
+    const ly = pd.layers && pd.layers[e.layer];
     return (ly && ly.color) || INK;
   };
   const X = v => ox + v, Y = v => oy + (pn.extent.h - v);
   const sw = LINE_W.thin * f;            // 紙の上で 0.25mm になる線幅
   let out = `<g data-panel="1">`;
-  (pn.entities || []).forEach(e => {
+  (pd.entities || []).forEach(e => {
     const c = colOf(e);
     if (e.t === "line") {
       out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
@@ -1010,6 +1016,8 @@ function panelSVG(page) {
     }
   }
   out += `</g>`;
+  if (_panelSvgCache.size > 12) _panelSvgCache.clear();
+  _panelSvgCache.set(ck, out);
   return out;
 }
 
@@ -1371,8 +1379,11 @@ function onMouseDown(e) {
   }
 
   /* 仕様ページ: 選択肢の枠をクリックすると ◯ が移る (選ぶだけの様式)。
-     回路は描かないページなので、作図ツールはここで打ち切る */
-  if (curPage().kind) {
+     回路は描かないページなので、作図ツールはここで打ち切る。
+     Panel Studio の図面ページは文字 (注記) だけ描ける — 選択・文字ツールと
+     パンは下の通常処理へ流す (配線・機器はこのページでは使わない) */
+  if (curPage().kind && !(curPage().kind === "panel" &&
+      (App.tool === "select" || App.tool === "text" || App.tool === "pan"))) {
     if (curPage().kind === "spec") {
       const box = (Editor.specBoxes || []).find(o =>
         w.x >= o.x && w.x <= o.x + o.w && w.y >= o.y && w.y <= o.y + o.h);

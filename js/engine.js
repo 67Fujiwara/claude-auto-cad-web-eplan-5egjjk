@@ -1921,6 +1921,16 @@ function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 let _symSer = { key: "", text: "[]" };
 let _symSerEpoch = 0;
 function symSerTouch() { _symSerEpoch++; }
+let _pdSer = { key: "", text: "null" };
+let _pdEpoch = 0;
+function panelSerTouch() { _pdEpoch++; }
+/** パネルデータの直列化 (キー一覧が同じなら前回の文字列を使い回す) */
+function serializePanelData(pd) {
+  if (!pd) return "null";
+  const key = _pdEpoch + "|" + Object.keys(pd).join(",");
+  if (_pdSer.key !== key) _pdSer = { key, text: JSON.stringify(pd) };
+  return _pdSer.text;
+}
 function serializeSymbols(list) {
   const arr = Array.isArray(list) ? list : [];
   const key = _symSerEpoch + "|" + arr.map(s2 => s2.id + (s2.retired ? "~R" : "")).join(",");
@@ -1929,23 +1939,31 @@ function serializeSymbols(list) {
 }
 function serializeProject(project = App.project) {
   const snap = snapshotProject(project);
-  return snap.rest === "{}" ? '{"symbols":' + snap.syms + "}"
-    : '{"symbols":' + snap.syms + "," + snap.rest.slice(1);
+  let head = '{"symbols":' + snap.syms;
+  if (snap.pd !== "null") head += ',"panelData":' + snap.pd;
+  return snap.rest === "{}" ? head + "}" : head + "," + snap.rest.slice(1);
 }
 /** undo 控え用の分割スナップショット。シンボル文字列は参照共有なので、
     100 段の undo でも重いシンボルはメモリに 1 つしか持たない */
 function snapshotProject(project = App.project) {
   const rest = { ...project };
   delete rest.symbols;
-  return { syms: serializeSymbols(project.symbols), rest: JSON.stringify(rest) };
+  delete rest.panelData;
+  return { syms: serializeSymbols(project.symbols),
+    pd: serializePanelData(project.panelData), rest: JSON.stringify(rest) };
 }
 let _symParse = { text: "", arr: null };
+let _pdParse = { text: "", obj: null };
 function restoreSnapshot(snap) {
   if (typeof snap === "string") return JSON.parse(snap);   // 旧形式 (丸ごと文字列) の控え
   const proj = JSON.parse(snap.rest);
-  // シンボルは不変なので、直前と同じ文字列なら同じオブジェクトを使い回す
+  // シンボル・パネルデータは不変なので、直前と同じ文字列なら同じものを使い回す
   if (_symParse.text !== snap.syms) _symParse = { text: snap.syms, arr: JSON.parse(snap.syms) };
   proj.symbols = _symParse.arr;
+  if (snap.pd !== undefined && snap.pd !== "null") {
+    if (_pdParse.text !== snap.pd) _pdParse = { text: snap.pd, obj: JSON.parse(snap.pd) };
+    proj.panelData = _pdParse.obj;
+  }
   return proj;
 }
 
@@ -3115,6 +3133,7 @@ function autoNumberWires() {
    直す。古い版で保存した図面や、途中の操作で表示フラグが落ちた図面でも
    「入力したのに出ない」を残さない (番号そのものは変えない) */
 function normalizeWireNumbers() {
+  panelNormalize(App.project);   // 旧形式のパネルデータを分離置き場へ (読込経路で必ず通る)
   (App.project ? App.project.pages : []).forEach(page => {
     if (!isDrawingPage(page)) return;
     // 旧仕様 (尺度違いコピペの伸縮) が残した線の太さ倍率を消す —
@@ -4740,6 +4759,40 @@ function panelPickScale(extent, area) {
     if (extent.w / nn <= area.w && extent.h / nn <= area.h) return nn;
   return Math.ceil(Math.max(extent.w / area.w, extent.h / area.h) * 10) / 10;
 }
+/* パネルの重いデータ (entities/layers) はページから分離して
+   project.panelData[dataKey] に持つ — シンボルと同じ発想。中身は不変なので
+   直列化文字列を使い回し、undo の控えと自動保存を軽くする */
+function panelDataOf(page) {
+  const pn = page && page.panel;
+  if (!pn) return null;
+  if (pn.entities) return pn;                       // 旧形式 (ページ内に直書き)
+  const pd = App.project && App.project.panelData;
+  return (pd && pd[pn.dataKey]) || { entities: [], layers: {} };
+}
+/** 旧形式 (ページ内直書き) を panelData へ移し、参照されないデータを捨てる */
+function panelNormalize(project) {
+  if (!project || !Array.isArray(project.pages)) return;
+  const used = new Set();
+  project.pages.forEach(pg => {
+    const pn = pg.panel;
+    if (!pn) return;
+    if (pn.entities) {
+      project.panelData = project.panelData || {};
+      const key = `${pn.jobNo}/${pn.sheetId}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      project.panelData[key] = { entities: pn.entities, layers: pn.layers || {} };
+      delete pn.entities; delete pn.layers; delete pn.svg;
+      pn.dataKey = key;
+      panelSerTouch();
+    }
+    if (pn.dataKey) used.add(pn.dataKey);
+  });
+  if (project.panelData) {
+    Object.keys(project.panelData).forEach(k => {
+      if (!used.has(k)) { delete project.panelData[k]; panelSerTouch(); }
+    });
+    if (!Object.keys(project.panelData).length) delete project.panelData;
+  }
+}
 /** ページの縮尺 1:n の n (page.scale "1:5" → 5) */
 function panelScaleN(page) {
   const m = /^1:([\d.]+)$/.exec(String(page.scale || ""));
@@ -4790,19 +4843,25 @@ function panelInsertPages(data) {
   applySheet(probe);
   const area = panelAreaRect();
   let badCoords = 0;
+  const stamp = Date.now().toString(36);
   const pagesNew = data.sheets.map(sh => {
     badCoords += panelBoundsCheck(sh);
     const n = panelPickScale(sh.extent, area);
     const outer = panel.outer || {};
+    /* 重い中身 (entities/layers) は panelData へ。ページには参照キーだけ持つ —
+       編集のたびに丸ごと直列化されるのを避ける (undo 控え・自動保存が軽くなる) */
+    const dataKey = `${jobNo}/${sh.id}/${stamp}`;
+    App.project.panelData = App.project.panelData || {};
+    App.project.panelData[dataKey] = {
+      entities: deepCopy(sh.entities || []), layers: deepCopy(sh.layers || {}) };
+    panelSerTouch();
     return {
       id: uid("p"), no: 0, kind: "panel", name: sh.title || sh.id,
       devices: [], wires: [], texts: [], zones: [],
       paper: "A3", orient: "landscape", scale: "1:" + n,
       panel: {
-        jobNo, sheetId: sh.id, title: sh.title || sh.id,
+        jobNo, sheetId: sh.id, title: sh.title || sh.id, dataKey,
         extent: { w: sh.extent.w, h: sh.extent.h },
-        layers: deepCopy(sh.layers || {}),
-        entities: deepCopy(sh.entities || []),
         job: deepCopy(job), model: panel.model || "",
         outer: deepCopy(outer), note: job.note || "",
       },
@@ -4828,6 +4887,7 @@ function panelInsertPages(data) {
     if (p2.kind === "spec" || p2.kind === "toc" || p2.kind === "cover") at = i;
   });
   App.project.pages.splice(at + 1, 0, ...pagesNew);
+  panelNormalize(App.project);           // 置き換えで参照が切れたデータを捨てる
   return { added: pagesNew.length, replaced, badCoords };
 }
 

@@ -617,12 +617,13 @@ function pageToDXF(page) {
     const ox = area.x + (area.w - w2) / 2, oyTop = area.y + (area.h - h2) / 2;
     const oyBot = SHEET.h - oyTop - h2;               // DXF (y 上向き) での下端
     const X = v => (ox + v).toFixed(3), Yd = v => (oyBot + v).toFixed(3);
+    const pd = panelDataOf(page);
     const aciOf = e => {
       if (page.panelMono) return null;
-      const ly = pn.layers && pn.layers[e.layer];
+      const ly = pd.layers && pd.layers[e.layer];
       return ly && ly.aci ? [[62, ly.aci]] : null;
     };
-    (pn.entities || []).forEach(e => {
+    (pd.entities || []).forEach(e => {
       const col = aciOf(e) || [];
       if (e.t === "line") {
         ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col,
