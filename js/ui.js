@@ -1607,6 +1607,32 @@ UI.importDXF = () => {
   inp.click();
 };
 
+/* ── 仕様ページの備考欄 (複数行) の編集 — Enter で改行できる ── */
+UI.editSpecNote = (pg, box) => {
+  const h = html => { const d = document.createElement("div"); d.innerHTML = html; return d; };
+  const cur = (pg.spec && pg.spec.memo && pg.spec.memo[box.memo]) || "";
+  const body = h(`<div class="prop-row"><label>${escXML(box.label)} <span class="rp-dim">(Enter で改行 — 行のぶんだけ枠が伸びます)</span></label>
+    <textarea id="snTxt" rows="5" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:12.5px;padding:6px 8px;outline:none;resize:vertical">${escXML(cur)}</textarea></div>`);
+  const foot = h(`<div style="display:flex;gap:10px;width:100%">
+    <span style="flex:1"></span>
+    <button class="btn-solid" id="snCancel">キャンセル</button>
+    <button class="btn-solid primary" id="snOk">書き込む</button></div>`);
+  const m = UI.openModal({ title: box.label, sub: "図面と PDF・DXF にそのまま出ます", body, foot });
+  const ta = body.querySelector("#snTxt");
+  ta.focus();
+  foot.querySelector("#snCancel").addEventListener("click", m.close);
+  foot.querySelector("#snOk").addEventListener("click", () => {
+    commit();
+    pg.spec.memo = pg.spec.memo || {};
+    const t = ta.value.replace(/\n+$/, "").trim() ? ta.value.replace(/\n+$/, "") : "";
+    if (t) pg.spec.memo[box.memo] = t; else delete pg.spec.memo[box.memo];
+    m.close();
+    requestRender();
+    UI.showProps();
+    UI.setMsg(t ? `${box.label}を書き込みました` : `${box.label}を空にしました`);
+  });
+};
+
 /* ── Panel Studio (制御盤配置) の図面差し込み ──
    JSON (<案件番号>_electracad.json) か、それが入った設計完了 ZIP を受ける */
 UI.importPanelStudio = () => {

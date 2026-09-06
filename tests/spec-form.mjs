@@ -20,7 +20,9 @@
                 もう片方の ◯ が消える。新規図面はステンレス側が未選択
    ・supPhase : AC200V の行に単相/3相の小 2 択。3相を押すと ◯ が付き
                 AC200V も選ばれる。AC100V に移すと単相/3相は外れる
-   ・supNote  : 供給電源電圧の表の下に備考欄 — クリックで書き込め、図面に出る */
+   ・supNote  : 供給電源電圧の表の下に備考欄 — クリックするとテキストエリアが
+               開き、Enter で改行できる。書いた行のぶんだけ枠が伸び、
+               全行が図面に出る */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -239,10 +241,23 @@ R.supPhase.after = await p.evaluate(() => ({ v: curPage().spec.sel.sup_v, ph: cu
 R.supPhase.pick100 = await clickS2('o.k === "sup_v" && o.i === 0');
 R.supPhase.off = await p.evaluate(() => ({ v: curPage().spec.sel.sup_v, ph: curPage().spec.sel.sup_v_ph }));
 
-await p.evaluate(() => { window.prompt = () => "主幹 30A・漏電遮断器指定"; });
 R.supNote = { clicked: await clickS2('o.memo === "sup_v_note"') };
-R.supNote.after = await p.evaluate(() => ({ memo: curPage().spec.memo.sup_v_note,
-  drawn: kindSVG(curPage()).includes("主幹 30A・漏電遮断器指定") }));
+await p.waitForTimeout(200);
+R.supNote.dialog = await p.evaluate(() => {
+  const ta = document.getElementById("snTxt");
+  if (!ta) return false;
+  ta.value = "主幹 30A・漏電遮断器指定\n2 行目のメモ";   // Enter で改行した内容
+  document.getElementById("snOk").click();
+  return true;
+});
+await p.waitForTimeout(200);
+R.supNote.after = await p.evaluate(() => {
+  const svg = kindSVG(curPage());
+  const rows = (Editor.specBoxes || []).filter(o => o.memo === "sup_v_note").length;
+  return { memo: curPage().spec.memo.sup_v_note,
+    drawn: svg.includes("主幹 30A・漏電遮断器指定"), drawn2: svg.includes("2 行目のメモ"),
+    rows };
+});
 
 const checks = {
   noPageErrors: errs.length === 0,
@@ -272,8 +287,9 @@ const checks = {
   supPhase: R.supPhase.def === -1 && R.supPhase.pick3 === true &&
     R.supPhase.after.v === 1 && R.supPhase.after.ph === 1 && R.supPhase.after.drawn === true &&
     R.supPhase.pick100 === true && R.supPhase.off.v === 0 && R.supPhase.off.ph === -1,
-  supNote: R.supNote.clicked === true && R.supNote.after.memo === "主幹 30A・漏電遮断器指定" &&
-    R.supNote.after.drawn === true,
+  supNote: R.supNote.clicked === true && R.supNote.dialog === true &&
+    R.supNote.after.memo === "主幹 30A・漏電遮断器指定\n2 行目のメモ" &&
+    R.supNote.after.drawn === true && R.supNote.after.drawn2 === true && R.supNote.after.rows === 2,
   multi: JSON.stringify(R.multi.on) === JSON.stringify([0, 2])
     && JSON.stringify(R.multi.off) === JSON.stringify([2]) && R.multi.drawn >= 1,
 };

@@ -857,13 +857,18 @@ function specSheetSVG(page, k, record) {
         });
         y += RH * blk.opts.length;
         if (blk.noteK) {
-          // 表の下の備考欄 (クリックで記入)。空でも行は出す — 紙の様式と同じ
-          const v = memo[blk.noteK];
-          out += box(x0, y, colW, RH) +
-            txt(x0, y + RH / 2 + TH * 0.36 * f, colW, `備考: ${v || "(クリックして記入)"}`, "start", v ? TH : TH * 0.8);
-          if (record) Editor.specBoxes.push({ x: x0, y, w: colW, h: RH,
-            memo: blk.noteK, label: blk.noteLabel || "備考" });
-          y += RH;
+          /* 表の下の備考欄 (クリックで記入・Enter で改行できる)。
+             書いた行のぶんだけ枠が伸びる。空でも 1 行は出す — 紙の様式と同じ */
+          const v = memo[blk.noteK] || "";
+          const nLines = v ? v.split("\n") : [""];
+          nLines.forEach((ln, li) => {
+            const label2 = li === 0 ? `備考: ${ln || (v ? "" : "(クリックして記入)")}` : ln;
+            out += box(x0, y, colW, RH) +
+              txt(x0, y + RH / 2 + TH * 0.36 * f, colW, label2, "start", v ? TH : TH * 0.8);
+            if (record) Editor.specBoxes.push({ x: x0, y, w: colW, h: RH,
+              memo: blk.noteK, label: blk.noteLabel || "備考", multiline: true });
+            y += RH;
+          });
         }
       } else if (blk.kind === "bullets") {
         /* 箇条書きの記入欄。上のチェック (複数選択) で選んだ項目だけ行が出る。
@@ -1375,6 +1380,8 @@ function onMouseDown(e) {
         const pg = curPage();
         pg.spec = pg.spec || defaultSpec();
         if (box.memo) {
+          // 複数行の欄 (備考) は Enter で改行できるテキストエリアで編集する
+          if (box.multiline) { UI.editSpecNote(pg, box); return; }
           // 記入欄 (特記事項・指定色・御社指定方法など) はその場で書き込む
           pg.spec.memo = pg.spec.memo || {};
           const v = prompt(box.label, pg.spec.memo[box.memo] || "");
