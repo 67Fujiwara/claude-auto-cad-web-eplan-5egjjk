@@ -1142,6 +1142,9 @@ function overlaySVG(page) {
   if (Editor.ghost) {
     const g = Editor.ghost;
     const sym = symOf(g.symId);
+    // 端子の行・列に吸着したときの目印 (何に揃ったかが見える)
+    if (g.ax != null) out += `<path d="M${g.ax},0 V${SHEET.h}" stroke="${SIM_P}" stroke-width="0.3" stroke-dasharray="2 2" opacity="0.7"/>`;
+    if (g.ay != null) out += `<path d="M0,${g.ay} H${SHEET.w}" stroke="${SIM_P}" stroke-width="0.3" stroke-dasharray="2 2" opacity="0.7"/>`;
     out += `<g transform="translate(${g.x},${g.y}) rotate(${g.rot || 0})" opacity="0.55" style="color:${SEL}">${symBodySVG(sym, { strokeWidth: LINE_W.thick, textScale: 1, rot: g.rot || 0 })}</g>`;
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
@@ -1681,7 +1684,17 @@ function onMouseMove(e) {
     return;
   }
   if (Editor.ghost) {
-    Editor.ghost.x = snap(w.x); Editor.ghost.y = snap(w.y);
+    const g = Editor.ghost;
+    g.x = snap(w.x); g.y = snap(w.y);
+    /* 微調整 (Shift+矢印の 0.5mm) で格子から外れた機器の「隣に並べる」
+       ため、近くの機器の端子の行・列へ吸着する (± 格子の半分)。
+       Alt を押している間は格子のまま */
+    g.ax = null; g.ay = null;
+    if (!e.altKey) {
+      const al = ghostAlignSnap(g);
+      if (al.cx) { g.x = Math.round((g.x + al.cx) * 10) / 10; g.ax = al.axv; }
+      if (al.cy) { g.y = Math.round((g.y + al.cy) * 10) / 10; g.ay = al.ayv; }
+    }
     requestRender();
     return;
   }
@@ -1857,6 +1870,31 @@ function alignSnapOffset(attach, dx, dy) {
     if (ay && (cy === 0 || Math.abs(ay) < Math.abs(cy))) cy = ay;
   });
   return { cx, cy };
+}
+
+/** ゴースト (配置前の記号) の端子を、近くの機器の端子の行・列へ合わせる補正 */
+function ghostAlignSnap(g) {
+  const page = curPage();
+  const pins = devPinsOf(g);
+  if (!pins.length) return { cx: 0, cy: 0 };
+  const xs = [], ys = [];
+  page.devices.forEach(d => devPins(d).forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  page.wires.forEach(w2 => w2.pts.forEach(p => { xs.push(p[0]); ys.push(p[1]); }));
+  const pick = (vals, cur) => {
+    let bd = 0, bv = null;
+    vals.forEach(v => {
+      const d2 = v - cur;
+      if (Math.abs(d2) > 0.001 && Math.abs(d2) <= ALIGN_TOL + 0.001 && (bd === 0 || Math.abs(d2) < Math.abs(bd))) { bd = d2; bv = v; }
+    });
+    return { d: bd, v: bv };
+  };
+  let cx = 0, cy = 0, axv = null, ayv = null;
+  pins.forEach(p => {
+    const ax = pick(xs, p.x), ay = pick(ys, p.y);
+    if (ax.d && (cx === 0 || Math.abs(ax.d) < Math.abs(cx))) { cx = ax.d; axv = ax.v; }
+    if (ay.d && (cy === 0 || Math.abs(ay.d) < Math.abs(cy))) { cy = ay.d; ayv = ay.v; }
+  });
+  return { cx, cy, axv, ayv };
 }
 
 function applyMove(attach, dx, dy) {
@@ -2120,6 +2158,9 @@ function placeGhost() {
   if (!g) return;
   commit();
   const dev = addDevice(curPage(), g.symId, g.x, g.y, { rot: g.rot });
+  // 整列吸着で 0.5mm 単位に合わせた位置は、addDevice の格子丸めから守る
+  dev.x = Math.round(g.x * 10) / 10;
+  dev.y = Math.round(g.y * 10) / 10;
   // 既存配線の上に置いた場合は配線を自動分割して割り込む (線の重なりを防ぐ)
   spliceDeviceIntoWires(curPage(), dev);
   /* ピンが乗った配線は「機器につながる回路」になった瞬間なので、ここで
