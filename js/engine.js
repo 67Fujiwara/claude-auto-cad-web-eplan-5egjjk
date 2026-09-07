@@ -4865,6 +4865,7 @@ function panelNormalize(project) {
   project.pages.forEach(pg => {
     const pn = pg.panel;
     if (!pn) return;
+    delete pg.tb;              // 旧版が付けた表題欄の上書き (会社名など) は外す
     if (pn.entities) {
       project.panelData = project.panelData || {};
       const key = `${pn.jobNo}/${pn.sheetId}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -4955,12 +4956,9 @@ function panelInsertPages(data) {
         outer: deepCopy(outer), note: job.note || "",
       },
       /* 表題欄の書き換え (このページだけ) */
-      /* 図名セルは幅が 58mm しかないので、外形寸法は紙の下の備考行に出す */
-      tb: {
-        proj: [jobNo, "制御盤", panel.model].filter(Boolean).join(" "),
-        designer: job.owner || "", date: String(job.completedAt || "").slice(0, 10),
-        author: job.company || "",
-      },
+      /* 表題欄は他のページと同じ書式 (プロジェクト名・自社名・設計者) を
+         使う — Panel Studio 側の会社名などで上書きしない。案件番号・型式・
+         外形寸法は紙の左下の行に出す */
     };
   });
   applySheet(keepPage);

@@ -1078,6 +1078,7 @@ function panelSVG(page) {
   // 外形寸法と備考 (job.note) は図枠の左下へ (紙の上で 2.5mm の文字)
   {
     const parts = [];
+    if (pn.jobNo || pn.model) parts.push([pn.jobNo, pn.model && `制御盤 ${pn.model}`].filter(Boolean).join(" "));
     if (pn.outer && pn.outer.w) parts.push(`外形 W${pn.outer.w}×H${pn.outer.h}×D${pn.outer.d}`);
     if (pn.note) parts.push(`備考: ${pn.note}`);
     if (parts.length) {

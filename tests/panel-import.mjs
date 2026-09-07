@@ -6,7 +6,9 @@
    ・scale    : 540×740 の中板は A3 横の図枠で 1:5 になる (標準縮尺の最小)
    ・draw     : ページに図形が出る — 円・円弧 (反時計回り)。文字は既定では
                 出さず (図が読みにくいため)、「文字も描く」で出る。
-                表題欄には job/panel の値 (会社・担当・日付・型式・寸法) が入る
+                表題欄は他のページと同じ書式 (プロジェクト名・自社の名前) —
+                Panel Studio 側の会社名・担当では上書きしない。案件番号・
+                型式・外形・備考は紙の左下の行に出る
    ・reimport : 同じ案件の JSON をもう一度読んでも 4 ページのまま (置き換え)
    ・zip      : ZIP のまま渡されたら中の *_electracad.json を探して読む
    ・bounds   : 0〜extent の外の座標は数えて知らせる (読み込みは続ける)
@@ -97,18 +99,24 @@ const R = await p.evaluate(async () => {
   App.pageIdx = pages.indexOf(plate); applySheet(plate);
   // 文字は既定で出ない (kindSVG = 表題欄なしで見る)。extent の破線枠も無い
   const svgOff = kindSVG(plate);
-  out.textOff = { noText: !svgOff.includes("S-T12"), noDash: !svgOff.includes("stroke-dasharray") };
+  // 左下の行に「J123 制御盤 S-T12」が常に出るので、S-T12 の出現は 1 回のはず
+  out.textOff = { noText: (svgOff.match(/S-T12/g) || []).length === 1,
+    noDash: !svgOff.includes("stroke-dasharray") };
   plate.panelText = true;                      // 以降は「文字も描く」で検査
   const svg = exportSheetSVG(plate);
   // 座標系: 左下原点 Y 上向き → 画面では cy=30 の穴は「下」= oy + (extent.h - 30)
   const area2 = panelAreaRect();
   const oy2 = area2.y + (area2.h - plate.panel.extent.h) / 2;
   const cyGot = parseFloat((/<circle[^>]*cy="([\d.]+)" r="3\.25"/.exec(kindSVG(plate)) || [])[1]);
-  out.draw = { text: svg.includes("S-T12"), circle: /<circle[^>]*r="3\.25"/.test(svg),
+  out.draw = { text: (svg.match(/S-T12/g) || []).length >= 2,   // 実体の文字 + 左下の行
+    circle: /<circle[^>]*r="3\.25"/.test(svg),
     yFlip: Math.abs(cyGot - (oy2 + plate.panel.extent.h - 30)) < 0.01,
     arcCCW: /A20,20 0 1 0 /.test(svg),
-    company: svg.includes("テスト工業"), owner: svg.includes("藤原"),
-    date: svg.includes("2026-09-01"), model: svg.includes("S-T12"),
+    // 表題欄は他ページと同じ: プロジェクト名が出て、Panel Studio 側の
+    // 会社名・担当者では上書きされない
+    projName: svg.includes(App.project.name),
+    noCompany: !svg.includes("テスト工業") && !svg.includes("藤原"),
+    jobLine: svg.includes("J123 制御盤 S-T12"),
     outer: svg.includes("W600×H800×D250"), note: svg.includes("備考: 扉裏に配線ダクト"),
     scaleCell: svg.includes(">1:5<") };
   // 白黒設定
@@ -120,8 +128,7 @@ const R = await p.evaluate(async () => {
   // ── DXF (文字も描く ON のまま / OFF で消えることも見る) ──
   delete plate.panelText;
   const dxfOff = pageToDXF(plate); applySheet(plate);
-  out.textOff.dxf = !/1\nS-T12\n/.test(dxfOff.split("ENTITIES")[1].split("表題欄")[0] || dxfOff) ||
-    !new RegExp("0\\nTEXT\\n8\\nPANEL\\n").test(dxfOff);
+  out.textOff.dxf = !new RegExp("0\\nTEXT\\n8\\nPANEL\\n").test(dxfOff);   // 実体の文字 (PANEL レイヤ) が無い
   plate.panelText = true;
   const dxf = pageToDXF(plate); applySheet(plate);
   out.dxf = { text: dxf.includes("S-T12"),
