@@ -618,7 +618,7 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
     (placed || []).forEach(r => {
       const perp = horiz ? Math.abs((r.y + r.h / 2) - (bx.y + bx.h / 2))
                          : Math.abs((r.x + r.w / 2) - (bx.x + bx.w / 2));
-      if (perp > 12) return;                       // 離れた線番とは揃えない
+      if (perp > 45) return;                       // 離れた線番とは揃えない (行ピッチ 2 つ + 余裕)
       const c = horiz ? bx.x + bx.w / 2 : bx.y + bx.h / 2;
       const rc = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
       m = Math.min(m, Math.abs(c - rc));
@@ -657,24 +657,44 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
     // 並走する導体があるときは、線番を自分の線へ十分に寄せる
     const lgap = gapFor(sg, horiz);
     const para = lgap < WIRE_LABEL_GAP * f - 0.001;
-    // 隣を並走する心線に既に線番が付いていれば、まず「その列」に置いてみる。
-    // ケーブルの中で列が割れると、どの心線の番号か読めなくなる — 囲みに少し
-    // 重なってでも列をそろえるほうが図面としては読める (重なりは検図が知らせる)
-    if (para) {
+    /* 既に置いた近くの線番の「列」に、まずそのまま置いてみる。
+       ・並走する心線 (para): ケーブルの中で列が割れると読めないので、
+         囲み記号 (soft) に少し重なってでも列をそろえる (重なりは検図が知らせる)
+       ・それ以外 (PLC の入出力行のように 20mm ピッチで並ぶ横線): 列が
+         ガタガタだと読みにくいので、完全に空いている場合に限り列へ吸着する。
+         行ピッチ 2 つぶん + 余裕 = 45mm まで見る */
+    {
       const lo = horiz ? Math.min(sg.a[0], sg.b[0]) : Math.min(sg.a[1], sg.b[1]);
       const hi = horiz ? Math.max(sg.a[0], sg.b[0]) : Math.max(sg.a[1], sg.b[1]);
-      let col = null, near0 = Infinity;
+      /* 多数決の窓: 心線 (para) は隣だけ。行の列ぞろえはページ全体規模で
+         見る — 窓が狭いと、機器をよけて逃げた行が新しい多数派になって
+         後続の行が連鎖してしまう */
+      const RANGE = para ? 12 : 300;
+      /* 近くのラベルの列を集め、最も多くのラベルが並ぶ列 (多数決) から試す。
+         最寄り優先だと、機器をよけて逃げた 1 行の列に後続の行が連鎖して
+         列が割れてしまう — 多数派の列に付けば、よけた行だけが独りで逃げる */
+      const clusters = [];
       (placed || []).forEach(r => {
         const perp = horiz ? Math.abs((r.y + r.h / 2) - sg.a[1]) : Math.abs((r.x + r.w / 2) - sg.a[0]);
-        if (perp > 12 || perp < 0.01) return;
-        if (perp < near0) { near0 = perp; col = horiz ? r.x + r.w / 2 : r.y + r.h / 2; }
+        if (perp > RANGE || perp < 0.01) return;
+        const c0 = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
+        const cl = clusters.find(k => Math.abs(k.col - c0) < 0.8);
+        if (cl) { cl.n++; cl.perp = Math.min(cl.perp, perp); }
+        else clusters.push({ col: c0, n: 1, perp });
       });
-      if (col !== null && col > lo - 0.01 && col < hi + 0.01) {
-        const hard = obst.filter(r => !r.soft);
+      clusters.sort((a2, b2) => (b2.n - a2.n) || (a2.perp - b2.perp));
+      const hard = obst.filter(r => !r.soft);
+      for (const cl of clusters.slice(0, 3)) {
+        const col = cl.col;
+        if (!(col > lo - 0.01 && col < hi + 0.01)) continue;
         for (const side of [1, -1]) {
           const res = posOf(horiz ? [col, sg.a[1]] : [sg.a[0], col], horiz, side, 0, lgap);
           const bx = boxOf(res);
-          if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) return res;
+          if (para) {
+            if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) return res;
+          } else if (obst.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) {
+            return res;
+          }
         }
       }
     }
