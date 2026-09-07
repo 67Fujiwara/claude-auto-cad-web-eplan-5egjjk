@@ -465,7 +465,9 @@ function wireLabelMap(page) {
   const placed = [];
   const wires = condWires(page)
     .filter(w => w.num && w.numShow !== false)
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    // 手で位置を決めた線番 (numAt) を先に置く — 自動の列ぞろえがそれに従う
+    .sort((a, b) => ((a.numAt ? 0 : 1) - (b.numAt ? 0 : 1)) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   wires.forEach(w => {
     const st = {};
     let res = wireLabelPosCalc(w, page, placed, { state: st });
@@ -644,6 +646,35 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
     });
     return out;
   };
+  /* 手で決めた位置 (numAt = ダブルクリックした点): クリックした区間の
+     クリックした側へ、その付近に置く。近くの線番の列 (多数決) が 12mm
+     以内にあればそこへ吸着してそろえる — バラバラにならないように */
+  if (w.numAt && !opt.noManualAt) {
+    let bs = null, bd = Infinity;
+    for (const sg of segs) {
+      const d2 = distToSeg(w.numAt[0], w.numAt[1], sg.a, sg.b);
+      if (d2 < bd) { bd = d2; bs = sg; }
+    }
+    if (bs) {
+      const horiz = Math.abs(bs.b[1] - bs.a[1]) < 0.01;
+      const lo = horiz ? Math.min(bs.a[0], bs.b[0]) : Math.min(bs.a[1], bs.b[1]);
+      const hi = horiz ? Math.max(bs.a[0], bs.b[0]) : Math.max(bs.a[1], bs.b[1]);
+      let c = Math.max(lo + 2, Math.min(hi - 2, horiz ? w.numAt[0] : w.numAt[1]));
+      // 近くの列への吸着 (多数決順に、クリック位置から 12mm 以内の列だけ)
+      const cls = [];
+      (placed || []).forEach(r => {
+        const c0 = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
+        const cl = cls.find(k => Math.abs(k.col - c0) < 0.8);
+        if (cl) cl.n++; else cls.push({ col: c0, n: 1 });
+      });
+      cls.sort((a2, b2) => b2.n - a2.n);
+      for (const cl of cls) {
+        if (Math.abs(cl.col - c) <= 12 && cl.col > lo + 1 && cl.col < hi - 1) { c = cl.col; break; }
+      }
+      const side = (horiz ? w.numAt[1] <= bs.a[1] : w.numAt[0] <= bs.a[0]) ? 1 : -1;
+      return posOf(horiz ? [c, bs.a[1]] : [bs.a[0], c], horiz, side, 0, gapFor(bs, horiz));
+    }
+  }
   // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す。
   // まず線に沿って場所を変え (線番は自分の線のすぐ脇にあるのが読みやすい)、
   // それでも空きが無いときにだけ法線方向へ逃がす — 逃がしを先に試すと、

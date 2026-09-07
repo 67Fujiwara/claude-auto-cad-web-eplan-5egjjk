@@ -771,6 +771,8 @@ UI.showProps = (focusTag = false) => {
       <div class="prop-row"><label>配線番号 ${w.numOff ? "(空欄 = 図面に出しません)" : w.fixed ? "(手動・自動採番から保護)" : ""}</label>
         <input id="pNum" class="mono" value="${w.num || ""}" placeholder="空欄にすると線番を出しません"/></div>
       ${w.numOff ? `<div class="prop-row"><button class="btn-solid" id="pNumAuto" style="padding:5px 10px;font-size:11.5px">自動採番に戻す</button></div>` : ""}
+      ${w.numAt ? `<div class="prop-row"><button class="btn-solid" id="pNumAtAuto" style="padding:5px 10px;font-size:11.5px">線番の位置を自動に戻す</button>
+        <span class="rp-dim" style="font-size:10.5px">ダブルクリックで決めた位置に出しています</span></div>` : ""}
       <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`
       : `<div class="prop-note">作図線です。接続ドット・線番は付かず、ネット解析・
          シミュレーション・検図 (DRC)・端子表・接続リストの対象外です。<br>
@@ -809,6 +811,15 @@ UI.showProps = (focusTag = false) => {
       UI.showProps();
     });
     if (!isWireConductive(w)) return;
+    const numAtBtn = pane.querySelector("#pNumAtAuto");
+    if (numAtBtn) numAtBtn.addEventListener("click", () => {
+      commit();
+      delete w.numAt;
+      App.labelRev++;
+      UI.refresh(false);
+      UI.showProps();
+      UI.setMsg("線番の位置を自動配置に戻しました");
+    });
     pane.querySelector("#pNum").addEventListener("change", e => {
       commit();
       const v = e.target.value.trim();
@@ -1932,6 +1943,7 @@ UI.openAutoRules = () => {
       この設定は図面 (プロジェクト) に保存されます — マスターファイルに入れておけば、コピーした案件すべてに効きます。</div>
   </div>`);
   const foot = h(`<div style="display:flex;gap:10px;width:100%">
+    <button class="btn-solid" id="arWipe" title="自動で付いた仕様だけを消します。手で入れた仕様はそのまま">自動で付けた仕様を全ページから消す</button>
     <span style="flex:1"></span>
     <button class="btn-solid" id="arCancel">キャンセル</button>
     <button class="btn-solid primary" id="arOk">保存して今の図面に適用</button>
@@ -1939,6 +1951,20 @@ UI.openAutoRules = () => {
   const m = UI.openModal({ title: "線番・電線仕様の自動ルール",
     sub: "配線を引くだけで線番と電線仕様が付きます — 例外だけ手で直す運用", body, foot });
   foot.querySelector("#arCancel").addEventListener("click", m.close);
+  /* 自動で付けた仕様の一括削除 — 「自動付与を止めたが、付いた仕様を
+     1 本ずつ消すのが面倒」への出口。手で入れた仕様 (specAuto なし) は残す */
+  foot.querySelector("#arWipe").addEventListener("click", () => {
+    commit();
+    let n = 0;
+    App.project.pages.forEach(pg => (pg.wires || []).forEach(w => {
+      if (w.spec && w.specAuto) { delete w.spec; delete w.specAuto; n++; }
+    }));
+    App.labelRev++;
+    m.close();
+    UI.refresh(false);
+    UI.setMsg(n ? `自動で付けた電線仕様 ${n} 本ぶんを消しました (手で入れた仕様はそのまま)`
+                : "自動で付けた電線仕様はありませんでした");
+  });
   foot.querySelector("#arOk").addEventListener("click", () => {
     commit();
     const q = sel => body.querySelector(sel);
@@ -2073,7 +2099,7 @@ UI.openModal = ({ title, sub = "", body, foot = "", onclose = null, wide = false
 };
 
 /** 配線の線番インライン編集 (ダブルクリックから) */
-UI.openWireNumInput = (clientX, clientY, wire) => {
+UI.openWireNumInput = (clientX, clientY, wire, at) => {
   if (App.sim.running) return;
   const root = document.getElementById("overlay-root");
   const inp = h(`<input style="position:fixed;left:${clientX}px;top:${clientY - 14}px;z-index:300;
@@ -2088,14 +2114,24 @@ UI.openWireNumInput = (clientX, clientY, wire) => {
     closed = true;
     const v = inp.value.trim();
     inp.remove();
-    if (save && v !== (wire.num || "")) {
+    const changed = v !== (wire.num || "");
+    if (save && (changed || (v && at))) {
       commit();
-      const n = setWireNumber(curPage(), wire, v);   // ネット全体に反映 (1ネット1線番)
-      const chained = v ? chainWireNumbers(curPage(), wire, v) : 0;
-      if (chained) UI.setMsg(`並びに合わせて下の ${chained} 本へ連番を振りました`);
+      if (changed) {
+        const n = setWireNumber(curPage(), wire, v);   // ネット全体に反映 (1ネット1線番)
+        const chained = v ? chainWireNumbers(curPage(), wire, v) : 0;
+        if (chained) UI.setMsg(`並びに合わせて下の ${chained} 本へ連番を振りました`);
+        UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
+                    : `線番を消しました (この配線 ${n} 本には線番を出しません — プロパティの「自動採番に戻す」で戻せます)`);
+      }
+      /* ダブルクリックした位置を線番の置き場所として覚える — 自動配置に
+         任せず「ここに出す」。近くの列にはそろえて置かれる */
+      if (v && at) {
+        wire.numAt = [Math.round(at.x * 10) / 10, Math.round(at.y * 10) / 10];
+        if (!changed) UI.setMsg("線番の位置をクリックした場所に合わせました (プロパティの「位置を自動に戻す」で戻せます)");
+      }
+      App.labelRev++;
       UI.refresh(false);
-      UI.setMsg(v ? `線番を ${v} に変更しました (同じネットの配線 ${n} 本に反映・自動採番から保護)`
-                  : `線番を消しました (この配線 ${n} 本には線番を出しません — プロパティの「自動採番に戻す」で戻せます)`);
     }
   };
   inp.addEventListener("keydown", e => {

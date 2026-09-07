@@ -1656,7 +1656,7 @@ function buildMoveAttachment() {
   });
   return {
     devIds: selDevs.map(d => ({ id: d.id, x0: d.x, y0: d.y })),
-    wireIds: selWires.map(w => ({ id: w.id, pts0: deepCopy(w.pts) })),
+    wireIds: selWires.map(w => ({ id: w.id, pts0: deepCopy(w.pts), numAt0: w.numAt ? [...w.numAt] : null })),
     endpoints: map,
     textIds: page.texts.filter(t => App.selection.has(t.id)).map(t => ({ id: t.id, x0: t.x, y0: t.y })),
     zoneIds: pageZones(page).filter(z => App.selection.has(z.id)).map(z => ({ id: z.id, x0: z.x, y0: z.y })),
@@ -1876,9 +1876,12 @@ function applyMove(attach, dx, dy) {
     const t2 = pageTables(page).find(t3 => t3.id === id);
     if (t2) { t2.x = r1(x0 + dx); t2.y = r1(y0 + dy); }
   });
-  attach.wireIds.forEach(({ id, pts0 }) => {
+  attach.wireIds.forEach(({ id, pts0, numAt0 }) => {
     const wr = page.wires.find(w => w.id === id);
-    if (wr) wr.pts = pts0.map(p => [p[0] + dx, p[1] + dy]);
+    if (wr) {
+      wr.pts = pts0.map(p => [p[0] + dx, p[1] + dy]);
+      if (numAt0) wr.numAt = [numAt0[0] + dx, numAt0[1] + dy];   // 手決めの線番位置も一緒に運ぶ
+    }
   });
   // 接続ワイヤ端点の追従 + 直交補正
   attach.endpoints.forEach(ep => {
@@ -2066,7 +2069,7 @@ function onDblClick(e) {
     // 配線ダブルクリック = 線番のインライン編集 (作図線は線番を持たないのでプロパティを開く)
     App.selection.clear();
     App.selection.add(hit.obj.id);
-    if (isWireConductive(hit.obj)) UI.openWireNumInput(e.clientX, e.clientY, hit.obj);
+    if (isWireConductive(hit.obj)) UI.openWireNumInput(e.clientX, e.clientY, hit.obj, { x: w.x, y: w.y });
     else UI.showProps();
     requestRender();
   } else if (hit && hit.type === "device" || hit && hit.type === "zone") {

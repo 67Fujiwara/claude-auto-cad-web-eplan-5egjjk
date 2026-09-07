@@ -4,7 +4,11 @@
               1 列にそろう (ガタガタにならない)
    ・dodge   : 列位置に機器を置くと、機器の箱が届く行 (その行と直下) だけ
               逃げ、残りの行は元の列を保つ。逃げた行どうしも列がそろう
-   ・overlapFree : そろえた後も、ラベルは機器・他の線に重ならない */
+   ・overlapFree : そろえた後も、ラベルは機器・他の線に重ならない
+   ・manualAt : 配線をダブルクリックした位置に線番が出る (クリックした側)。
+               近くの列が 12mm 以内ならそこへ吸着してそろう。
+               表示だけの機能 — 移動すると位置も一緒に付いてくる。
+               プロパティ「位置を自動に戻す」で解除できる */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -48,15 +52,69 @@ const R = await p.evaluate(() => {
   return out;
 });
 
+/* ── 手決めの線番位置 (ダブルクリック) ── */
+const MA = {};
+await p.evaluate(() => {
+  const pg = curPage();
+  pg.devices.length = 0; App.labelRev++;
+  UI.setTool("select"); UI.refresh(true); zoomFit();
+});
+await p.waitForTimeout(250);
+const S2 = await p.evaluate(() => {
+  const bb = Editor.svg.getBoundingClientRect();
+  return { bb: [bb.left, bb.top], v: [Editor.view.tx, Editor.view.ty, Editor.view.s] };
+});
+const at2 = (x, y) => ({ x: S2.bb[0] + S2.v[0] + x * S2.v[2], y: S2.bb[1] + S2.v[1] + y * S2.v[2] });
+// 1 本目: x=90・線の下側をダブルクリック → その場・下側に出る
+let cc = at2(90, 61);   // 線 (y=60) のすぐ下 = 下側指定
+await p.mouse.dblclick(cc.x, cc.y);
+await p.waitForTimeout(250);
+MA.input = await p.evaluate(() => !!document.querySelector("#overlay-root input"));
+await p.keyboard.press("Enter");
+await p.waitForTimeout(250);
+Object.assign(MA, await p.evaluate(() => {
+  const pg = curPage(), w = pg.wires[0];
+  const pos = wireLabelPos(w, pg);
+  return { anchored: Array.isArray(w.numAt), x1: Math.round(pos[0]), below: pos[4] === -1 && pos[1] > 60 };
+}));
+// 2 本目: 1 本目の列から 8mm ずれた位置でダブルクリック → 列へ吸着
+cc = at2(98, 81);       // 2 本目 (y=80) のすぐ下・列から 8mm ずれた位置
+await p.mouse.dblclick(cc.x, cc.y);
+await p.waitForTimeout(250);
+await p.keyboard.press("Enter");
+await p.waitForTimeout(250);
+Object.assign(MA, await p.evaluate(() => {
+  const pg = curPage();
+  const w1 = pg.wires[0], w2 = pg.wires[1];
+  const p1 = wireLabelPos(w1, pg), p2 = wireLabelPos(w2, pg);
+  // 移動で位置が付いてくる
+  App.selection.clear(); App.selection.add(w1.id);
+  const att = buildMoveAttachment();
+  applyMove(att, 20, 0);
+  App.labelRev++;
+  const p1b = wireLabelPos(w1, pg);
+  // プロパティで自動へ戻す
+  UI.showProps();
+  const btn = document.getElementById("pNumAtAuto");
+  if (btn) btn.click();
+  const cleared = !pg.wires[0].numAt;
+  App.selection.clear();
+  return { snap: Math.round(p2[0]) === Math.round(p1[0]),
+    movedWith: Math.round(p1b[0]) === Math.round(p1[0]) + 20,
+    btn: !!btn, cleared };
+}));
+
 const checks = {
   noPageErrors: errs.length === 0,
   aligned: R.aligned.cols === 1,
   dodge: R.dodge.othersCols === 1 && R.dodge.othersCol === true &&
     R.dodge.moved === true && R.dodge.escTogether === true,
   overlapFree: R.overlapFree.n === 0,
+  manualAt: MA.input === true && MA.anchored === true && Math.abs(MA.x1 - 90) <= 1 && MA.below === true &&
+    MA.snap === true && MA.movedWith === true && MA.btn === true && MA.cleared === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, R, MA, errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("wire-num-align OK");

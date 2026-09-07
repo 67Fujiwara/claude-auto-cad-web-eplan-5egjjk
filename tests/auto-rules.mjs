@@ -151,8 +151,36 @@ const R = await p.evaluate(async () => {
   return out;
 });
 
+/* ── 「自動で付けた仕様を全ページから消す」— 手入力の仕様は残る ── */
+const WIPE = await p.evaluate(async () => {
+  App.project = newProject("一括削除"); UI.renumberPages();
+  const pg = App.project.pages.find(isDrawingPage);
+  App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
+  pg.devices.length = 0; pg.wires.length = 0;
+  const d1 = addDevice(pg, "pb_no", 100, 80, { tag: "-PB9" });
+  const d2 = addDevice(pg, "coil", 100, 140, { tag: "-RY9" });
+  const [p1] = [devPins(d1)[1]], [p2] = [devPins(d2)[0]];
+  const wa = addWire(pg, [[p1.x, p1.y], [p2.x, p2.y]]);
+  const d3 = addDevice(pg, "pb_no", 150, 80, { tag: "-PB8" });
+  const d4 = addDevice(pg, "coil", 150, 140, { tag: "-RY8" });
+  const wb = addWire(pg, [[devPins(d3)[1].x, devPins(d3)[1].y], [devPins(d4)[0].x, devPins(d4)[0].y]]);
+  autoNumberWires();
+  const auto0 = pg.wires.filter(w2 => w2.spec && w2.specAuto).length;
+  setWireSpec(pg, wb, "KIV 5.5sq BK");                     // 1 本だけ手入力へ
+  UI.openAutoRules();
+  await new Promise(r => setTimeout(r, 150));
+  const btn = document.getElementById("arWipe");
+  if (btn) btn.click();
+  await new Promise(r => setTimeout(r, 150));
+  const autoLeft = App.project.pages.reduce((a2, q) => a2 + q.wires.filter(w2 => w2.spec && w2.specAuto).length, 0);
+  return { auto0, btn: !!btn, autoLeft,
+    kept: pg.wires.find(w2 => w2.id === wb.id).spec === "KIV 5.5sq BK",
+    autoGone: !pg.wires.find(w2 => w2.id === wa.id).spec };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
+  wipe: WIPE.auto0 > 0 && WIPE.btn === true && WIPE.autoLeft === 0 && WIPE.kept === true && WIPE.autoGone === true,
   pinName: R.pinName.w0 === "Y00" && R.pinName.w10 === "Y0A"
     && R.pinName.spec0 === "KIV 0.75sq BL" && R.pinName.auto0 === true,
   termName: R.termName.w1 === "R200" && R.termName.w2 === "S200",
@@ -170,7 +198,7 @@ const checks = {
   coreCross: R.coreCross.inEncl === true && !!R.coreCross.num && R.coreCross.spec === undefined,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, WIPE, R, errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("auto-rules OK");
