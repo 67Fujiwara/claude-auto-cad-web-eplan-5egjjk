@@ -3,9 +3,13 @@
    ・ipNone   : 保護等級に「指定無し」がある (8 番) — 選ぶと ◯ が付く
    ・matMemo  : 指定色を書いた後で 1 番 (標準色) を選んでも、標準色の欄に
                 指定色が出ない (記入は 2 番の括弧だけに入る)
-   ・pwrOpts  : 電源接続方法が 2 択 (端子台 / コネクター接続 3112N 配線長 3M)
+   ・pwrOpts  : 電源接続方法が 3 択 (端子台 / コネクター 3112N / 3222RW-L6)。
+               配線長は選択肢の文言ではなく行内の小さな選択 (3M/5M/10M)
    ・pwrPick  : その番号をクリックすると ◯ が移る
-   ・pwrMemo  : 御社指定方法の欄を図面の上でクリックすると書き込め、図面に出る
+   ・pwrLen   : コネクターの行の配線長 (3M/5M/10M) を押すと ◯ が付き、
+               その行も選ばれる。端子台の行を選ぶと配線長は外れる
+   ・pwrMemo  : 御社指定方法の欄をクリックするとテキストエリアが開き、
+               Enter で改行できる。全行が図面に出る
    ・memoCells: 特記事項・指定色・チューブ長の欄もクリックで書ける
    ・sheet2   : 仕様は 2 枚目があり、1 枚目と別の様式 (供給電源電圧・
                 制御盤冷却方法・外部 I/F) で描かれる。温度レンジの欄は無い
@@ -61,7 +65,8 @@ R.form = await p.evaluate(() => {
   const ip = SPEC_SHEET[0].blocks.find(x => x.k === "ip");
   const pwr = SPEC_SHEET[0].blocks.find(x => x.kind === "compare");
   const fe = SPEC_SHEET[0].blocks.find(x => x.kind === "pair").groups[0];
-  return { ipOpts: ip.opts, pwrOpts: pwr.opts || [], pwrK: pwr.k, feMemoAt: fe.memoAt };
+  return { ipOpts: ip.opts, pwrOpts: pwr.opts || [], pwrK: pwr.k, feMemoAt: fe.memoAt,
+    pwrSub: pwr.sub ? pwr.sub.opts.join("/") : "" };
 });
 
 // ── 保護等級「指定無し」を選ぶ ──
@@ -94,13 +99,30 @@ R.matMemo = await p.evaluate(() => {
 R.pwrPick = { picked: await clickBox('o.k === "pwr_std" && o.i === 1') };
 R.pwrPick.sel = await p.evaluate(() => curPage().spec.sel.pwr_std);
 
-// ── 御社指定方法の欄をクリックして書き込む ──
-await p.evaluate(() => { window.prompt = () => "盤上部より 3φ3W 直入れ"; });
+// ── 御社指定方法の欄をクリック → テキストエリアで複数行を書き込む ──
 R.pwrMemo = { clicked: await clickBox('o.memo === "pwr"') };
-R.pwrMemo.after = await p.evaluate(() => ({
-  memo: curPage().spec.memo.pwr,
-  drawn: kindSVG(curPage()).includes("盤上部より 3φ3W 直入れ"),
-}));
+await p.waitForTimeout(200);
+R.pwrMemo.dialog = await p.evaluate(() => {
+  const ta = document.getElementById("snTxt");
+  if (!ta) return false;
+  ta.value = "盤上部より 3φ3W 直入れ\n中継箱経由";
+  document.getElementById("snOk").click();
+  return true;
+});
+await p.waitForTimeout(200);
+R.pwrMemo.after = await p.evaluate(() => {
+  const svg = kindSVG(curPage());
+  return { memo: curPage().spec.memo.pwr,
+    drawn: svg.includes(">盤上部より 3φ3W 直入れ<") && svg.includes(">中継箱経由<") };
+});
+
+// ── コネクター行の配線長 (5M) を押す → 行も選ばれる。端子台に移すと外れる ──
+R.pwrLen = { picked: await clickBox('o.k === "pwr_len" && o.i === 1 && o.row === 2') };
+await p.waitForTimeout(150);
+Object.assign(R.pwrLen, await p.evaluate(() => ({ len: curPage().spec.sel.pwr_len, row: curPage().spec.sel.pwr_std })));
+await clickBox('o.k === "pwr_std" && o.i === 0');
+await p.waitForTimeout(150);
+R.pwrLen.cleared = await p.evaluate(() => curPage().spec.sel.pwr_len);
 
 // ── 記入欄が一通りクリックできる ──
 R.memoCells = await p.evaluate(() => {
@@ -263,11 +285,14 @@ const checks = {
   noPageErrors: errs.length === 0,
   ipNone: R.form.ipOpts[7] === "指定無し" && R.ipNone.picked === true && R.ipNone.sel === 7,
   matMemo: R.matMemo.sel === 0 && R.matMemo.bad === false && R.matMemo.good === true && R.form.feMemoAt === 1,
-  pwrOpts: R.form.pwrOpts.length === 2 && /端子台/.test(R.form.pwrOpts[0])
-    && /アメリカン電機/.test(R.form.pwrOpts[1]) && /3112N/.test(R.form.pwrOpts[1]) && /3M/.test(R.form.pwrOpts[1]),
+  pwrOpts: R.form.pwrOpts.length === 3 && /端子台/.test(R.form.pwrOpts[0])
+    && /3112N/.test(R.form.pwrOpts[1]) && /3222RW-L6/.test(R.form.pwrOpts[2])
+    && !/3M/.test(R.form.pwrOpts[1]) && R.form.pwrSub === "3M/5M/10M",
+  pwrLen: R.pwrLen.picked === true && R.pwrLen.len === 1 && R.pwrLen.row === 2 &&
+    R.pwrLen.cleared === -1,
   pwrPick: R.pwrPick.picked === true && R.pwrPick.sel === 1,
-  pwrMemo: R.pwrMemo.clicked === true && R.pwrMemo.after.memo === "盤上部より 3φ3W 直入れ"
-    && R.pwrMemo.after.drawn === true,
+  pwrMemo: R.pwrMemo.clicked === true && R.pwrMemo.dialog === true &&
+    R.pwrMemo.after.memo === "盤上部より 3φ3W 直入れ\n中継箱経由" && R.pwrMemo.after.drawn === true,
   memoCells: JSON.stringify(R.memoCells.keys) === JSON.stringify(["env", "mat_fe", "pwr", "tube", "tube_dir"]),
   newProj: R.newProj.specs === 2,
   sheet2: R.sheet2.missing.length === 0 && R.sheet2.notSheet1 === true

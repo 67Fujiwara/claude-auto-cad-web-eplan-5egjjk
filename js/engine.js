@@ -2078,9 +2078,15 @@ const SPEC_SHEET = [
       { k: "mat_fe", opts: ["標準色 (5Y7/1)", "指定色 (      )"], memoK: "mat_fe", memoAt: 1 },
       { k: "mat_sus", opts: ["無処理 (購入標準)", "鏡面", "ヘアライン"] },
     ] },
+    /* sub.at が配列 = その行たちに小さな選択肢 (配線長) を出す。
+       どの行で押しても長さは 1 つ (pwr_len)。memoMulti = 記入欄は
+       Enter で改行できるテキストエリアで書く */
     { t: "電源接続方法", kind: "compare", heads: ["当社標準", "御社指定方法"], k: "pwr_std",
-      opts: ["主幹用遮断器一次側へ引き込み (端子台)", "コネクター接続 (アメリカン電機:3112N) 配線長 3M"],
-      memoK: "pwr", memoLabel: "御社指定方法" },
+      opts: ["主幹用遮断器一次側へ引き込み (端子台)",
+             "コネクター接続 (アメリカン電機:3112N)",
+             "コネクター接続 (アメリカン電機:3222RW-L6)"],
+      sub: { at: [1, 2], k: "pwr_len", opts: ["3M", "5M", "10M"] },
+      memoK: "pwr", memoLabel: "御社指定方法", memoMulti: true },
   ] },
   { title: "制御盤配線仕様", blocks: [
     { t: "単線", kind: "wire", heads: ["回路", "用途", "線色", "定格"], rows: [

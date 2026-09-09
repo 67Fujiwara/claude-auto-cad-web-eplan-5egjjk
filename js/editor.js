@@ -832,16 +832,37 @@ function specSheetSVG(page, k, record) {
         [[x0, cw], [x0 + cw, cw2]].forEach(([hx, hw], c) => {
           out += box(hx, y, hw, RH) + txt(hx, y + RH / 2 + TH * 0.36 * f, hw, blk.heads[c]);
         });
+        const subAt = blk.sub ? (Array.isArray(blk.sub.at) ? blk.sub.at : [blk.sub.at]) : [];
         blk.opts.forEach((opt, i) => {
           const yy = y + RH + i * RH;
           out += numCell(x0, yy, NW, RH, i + 1, sel[blk.k] === i, blk.k, i);
           out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, opt);
+          // コネクターの行には配線長の小 2 択 (3M/5M/10M)。選んだ語を ◯ で囲む
+          if (blk.sub && subAt.includes(i)) {
+            const sw2 = S(9);
+            blk.sub.opts.forEach((so, j) => {
+              const sx = x0 + cw - sw2 * (blk.sub.opts.length - j) - S(1);
+              out += txt(sx, yy + RH / 2 + TH * 0.36 * f, sw2, so, "middle", TH * 0.85);
+              if (sel[blk.sub.k] === j && sel[blk.k] === i)
+                out += `<ellipse cx="${sx + sw2 / 2}" cy="${yy + RH / 2}" rx="${sw2 * 0.4}" ry="${RH * 0.36}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
+              if (record) Editor.specBoxes.push({ x: sx, y: yy, w: sw2, h: RH, k: blk.sub.k, i: j, row: i });
+            });
+          }
         });
         const mh = RH * blk.opts.length;
         out += box(x0 + cw, y + RH, cw2, mh);
-        if (memo[blk.memoK]) out += txt(x0 + cw, y + RH + mh / 2 + TH * 0.36 * f, cw2, memo[blk.memoK]);
+        if (memo[blk.memoK]) {
+          // 記入は Enter で改行できる — 行ごとに縦へ並べる
+          const mlines = String(memo[blk.memoK]).split("\n");
+          const lh0 = Math.min(RH * 0.8, mh / mlines.length);
+          const my0 = y + RH + (mh - lh0 * mlines.length) / 2;
+          mlines.forEach((ln, li) => {
+            out += txt(x0 + cw, my0 + lh0 * (li + 0.5) + TH * 0.36 * f, cw2, ln);
+          });
+        }
         else out += line(x0 + cw, y + RH + mh, x0 + cw + cw2, y + RH);   // 記入なし = 斜線
-        if (record) Editor.specBoxes.push({ x: x0 + cw, y: y + RH, w: cw2, h: mh, memo: blk.memoK, label: blk.memoLabel || "指定内容" });
+        if (record) Editor.specBoxes.push({ x: x0 + cw, y: y + RH, w: cw2, h: mh,
+          memo: blk.memoK, label: blk.memoLabel || "指定内容", multiline: !!blk.memoMulti });
 
         y += RH + mh;
       } else if (blk.kind === "wire") {
@@ -1531,11 +1552,13 @@ function onMouseDown(e) {
           // どれかのみの組 (材質): 選んだ群以外の ◯ を消す
           (at.b.groups || []).forEach(g2 => { if (g2.k !== box.k) pg.spec.sel[g2.k] = -1; });
         }
+        const subAt2 = at.b && at.b.sub ? (Array.isArray(at.b.sub.at) ? at.b.sub.at : [at.b.sub.at]) : [];
         if (at.b && !at.sub && at.b.sub) {
-          // 小 2 択つきの行以外を選んだら、小 2 択 (単相/3相) は外す
-          if (box.i !== at.b.sub.at) pg.spec.sel[at.b.sub.k] = -1;
+          // 小さな選択肢つきの行以外を選んだら、小さな選択肢 (単相/3相・配線長) は外す
+          if (!subAt2.includes(box.i)) pg.spec.sel[at.b.sub.k] = -1;
         }
-        if (at.sub) pg.spec.sel[at.b.k] = at.b.sub.at;   // 単相/3相を押したら AC200V も選ぶ
+        // 単相/3相・配線長を押したら、その行 (押した行) も選ぶ
+        if (at.sub) pg.spec.sel[at.b.k] = box.row != null ? box.row : subAt2[0];
         requestRender();
         UI.setMsg("仕様を選びました (クリックで ◯ が移ります)");
         return;
