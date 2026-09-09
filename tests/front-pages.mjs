@@ -188,9 +188,17 @@ R.rest = await p.evaluate(async () => {
      選択肢の上だと「仕様を選ぶ」動作になってしまい、線を引かない確認にならない */
   const bb = Editor.svg.getBoundingClientRect();
   const { tx, ty, s: vs } = Editor.view;
-  const empty = { x: SHEET.w * 0.25, y: SHEET.h * 0.8 };
-  const hit = (Editor.specBoxes || []).some(o =>
-    empty.x >= o.x && empty.x <= o.x + o.w && empty.y >= o.y && empty.y <= o.y + o.h);
+  /* ブロック追加で位置が動いても壊れないよう、枠に当たらない点を探す */
+  const inBox = (pt) => (Editor.specBoxes || []).some(o =>
+    pt.x >= o.x && pt.x <= o.x + o.w && pt.y >= o.y && pt.y <= o.y + o.h);
+  let empty = null;
+  for (let fy = 0.95; fy > 0.1 && !empty; fy -= 0.05)
+    for (let fx = 0.1; fx < 0.9 && !empty; fx += 0.1) {
+      const cand = { x: SHEET.w * fx, y: SHEET.h * fy };
+      if (!inBox(cand)) empty = cand;
+    }
+  const hit = !empty || inBox(empty);
+  if (!empty) empty = { x: SHEET.w * 0.25, y: SHEET.h * 0.8 };
   const cx = bb.left + tx + empty.x * vs, cy = bb.top + ty + empty.y * vs;
   const ev = (t) => Editor.svg.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: cx, clientY: cy }));
   ev("mousedown"); ev("mouseup");
