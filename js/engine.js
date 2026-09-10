@@ -2589,10 +2589,12 @@ function defaultDwgNo(page) {
 function pageDwgNo(page) {
   return page.dwgNo || projectMeta().dwgNo || defaultDwgNo(page);
 }
+/** 機器の位置参照: ページNo.行英字列数字 (例 3.B2)。図枠の縦軸英字と
+    横軸数字の区画で、どのページのどこにあるかを一目で指せるようにする */
 function devLocation(dev) {
   const f = findDevice(dev.id);
   const pageNo = f ? f.page.no : "?";
-  return pageNo + "." + sheetCol(dev.x);
+  return pageNo + "." + sheetRow(dev.y) + sheetCol(dev.x);
 }
 
 /** コイルにリンクされた接点一覧 (接点ミラー / クロスリファレンス) */
@@ -2919,54 +2921,41 @@ function mirrorCols(contacts) {
   return { pin, ref: pin + Math.max(wPin + 1.2, 8) };
 }
 
-/** 接点ミラー表の原点。既定はコイルの右下だが、他機器・他のミラー表・図枠外を
-    避けられる位置を探す (見つからなければ重なり最小の候補)。 */
+/** 接点ミラー表の見出し行 (コイルタグ) の高さ [mm] */
+const MIRROR_HEAD = 4.6;
+/** 接点ミラー表の原点 (最初の接点行の基準)。表は図面の左下に、コイルの
+    並び順 (左→右) で横にまとめて置く — 接点がどのページのどの区画に
+    あるか、図面の決まった場所で読めるようにする。表は下ぞろえで、
+    右下の表題欄 (案件名など) の上端より上には出さない。 */
 function mirrorOrigin(coilDev) {
   const f = contentScale();
-  const csym0 = symOf(coilDev.sym);
-  const wide = csym0.bounds[2] > 20;      // 多極機器は極間配線を避けて左下へ
-  const baseX = wide ? coilDev.x - 24 * f : coilDev.x + 3 * f;
-  const baseY = coilDev.y + 24 * f;
+  const left = SHEET.marginLeft + 3 * f;
+  const bottom = SHEET.h - SHEET.margin - 1.5 * f;
+  const size = mirrorTableSize(coilDev);
+  if (!size) return { x: left, y0: bottom - 4.2 * f };
   const page = (findDevice(coilDev.id) || {}).page;
-  if (!page) return { x: baseX, y0: baseY };
-  const w = mirrorTableSize(coilDev);
-  if (!w) return { x: baseX, y0: baseY };
-  const obst = [];
-  page.devices.forEach(d2 => {
-    if (d2.id === coilDev.id) return;
-    deviceObstacleBoxes(d2, OBST_INSET.label * f).forEach(b => obst.push(b));
-    // 先に配置が決まっている (id 順で前の) コイルのミラー表
-    if (d2.id < coilDev.id) mirrorLabelBoxes(d2).forEach(b => obst.push(b));
-  });
-  // 導体も避ける。表の中を配線が貫くと、どの接点の行か読めなくなる
-  const HW = LINE_W.thick / 2 * f;
-  condWires(page).forEach(o => {
-    for (let i = 0; i < o.pts.length - 1; i++) {
-      const p0 = o.pts[i], p1 = o.pts[i + 1];
-      obst.push({ x: Math.min(p0[0], p1[0]) - HW, y: Math.min(p0[1], p1[1]) - HW,
-        w: Math.abs(p1[0] - p0[0]) + HW * 2, h: Math.abs(p1[1] - p0[1]) + HW * 2 });
+  const coils = page ? page.devices
+    .filter(d => symOf(d.sym).mirror && linkedContacts(d).length)
+    .sort((a, b) => (a.x - b.x) || (a.y - b.y) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    : [coilDev];
+  // 表題欄 (と、その左隣に置かれる改訂履歴欄) より左に収める
+  const tb = titleBlockRect(), rev = revisionRect();
+  const limit = (rev && rev.side ? rev.x : tb.x) - 3 * f;
+  let x = left;
+  for (const d of coils) {
+    const sz = d.id === coilDev.id ? size : mirrorTableSize(d);
+    if (!sz) continue;
+    if (d.id === coilDev.id) {
+      const n = linkedContacts(d).length;
+      const shown = Math.min(n, 4);
+      const extra = n > shown ? 4.2 * f : 0;
+      // 帯からあふれる分は左へ寄せてでも帯の中に留める (重なりは検図が知らせる)
+      if (x + sz.w > limit) x = Math.max(left, limit - sz.w);
+      return { x, y0: bottom - shown * 4.2 * f - extra };
     }
-  });
-  const fr = frameRect();
-  const outArea = bx => {
-    const dx = Math.max(0, fr.x - bx.x) + Math.max(0, bx.x + bx.w - (fr.x + fr.w));
-    const dy = Math.max(0, fr.y - bx.y) + Math.max(0, bx.y + bx.h - (fr.y + fr.h));
-    return dx * bx.h + dy * bx.w;
-  };
-  const cands = [[baseX, baseY], [baseX, baseY + 4.2 * f], [baseX + 6 * f, baseY],
-    [coilDev.x - 24 * f, baseY], [coilDev.x - 24 * f, baseY + 4.2 * f], [baseX, baseY - 6 * f],
-    [baseX - w.w - 3 * f, baseY], [baseX + 10 * f, baseY], [baseX, baseY + 9 * f],
-    [baseX - w.w - 3 * f, baseY + 4.2 * f], [baseX + 10 * f, baseY + 4.2 * f],
-    [baseX, baseY - 12 * f], [baseX, baseY - 18 * f], [baseX + 10 * f, baseY - 12 * f]];
-  let best = null;
-  for (const [x, y0] of cands) {
-    const box = { x, y: y0 - 2 * f, w: w.w, h: w.h };
-    let sc = outArea(box);
-    for (const r of obst) sc += overlapArea(box, r);
-    if (sc === 0) return { x, y0 };
-    if (!best || sc < best.sc) best = { sc, res: { x, y0 } };
+    x += sz.w + 6 * f;
   }
-  return best.res;
+  return { x, y0: bottom - 4.2 * f };
 }
 /** 接点ミラー表の外形寸法 (幅×高さ)。接点が無ければ null */
 function mirrorTableSize(coilDev) {
@@ -2976,9 +2965,10 @@ function mirrorTableSize(coilDev) {
   const shown = contacts.slice(0, 4);
   const cols = mirrorCols(shown);
   const h = TEXT_H.small * f;
-  let wMax = 0;
+  let wMax = textWidthMM(displayTag(coilDev) || "", h, true, true);
   shown.forEach(c => { wMax = Math.max(wMax, cols.ref * f + textWidthMM("/" + devLocation(c), h, false, true)); });
-  return { w: wMax, h: shown.length * 4.2 * f + 2 * f };
+  const extra = contacts.length > shown.length ? 4.2 * f : 0;
+  return { w: wMax, h: MIRROR_HEAD * f + shown.length * 4.2 * f + 2 * f + extra };
 }
 
 /** 接点ミラー表の文字矩形 (検図・当たり判定用)。画面/DXF と同じ割付を使う */
@@ -2993,6 +2983,8 @@ function mirrorLabelBoxes(coilDev) {
   const cols = mirrorCols(shown);
   const h = TEXT_H.small * f;
   const out = [];
+  const tag = displayTag(coilDev);
+  if (tag) out.push({ x, y: y0 - 2 * f - MIRROR_HEAD * f, w: textWidthMM(tag, h, true, true), h: MIRROR_HEAD * f });
   shown.forEach((c, i) => {
     const cy = y0 + i * rowH + 2.3 * f;
     const t = contactPinLabel(c);

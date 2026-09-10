@@ -570,7 +570,9 @@ function mirrorSVG(coilDev) {
   const MAXROWS = 4;
   const cols = mirrorCols(contacts.slice(0, 4));   // 桁被りを防ぐ動的な列位置
   let out = `<g font-family="monospace">`;
-  out += `<path d="M${coilDev.x},${coilDev.y + 20 * mfr} L${x},${y0 - 1.5 * mfr}" stroke="${INK_SOFT}" stroke-width="${LINE_W.thin * mfr}" stroke-dasharray="${fitDashPattern(WIRE_STYLES.dash.dash.split(" ").map(v => v * mfr), Math.hypot(x - coilDev.x, y0 - 1.5 * mfr - coilDev.y - 20 * mfr)).join(" ")}" stroke-linecap="butt"/>`;
+  // 見出し = コイルタグ。表は左下の帯にまとまるので、どのリレーの表かを名前で示す
+  const mtag = displayTag(coilDev);
+  if (mtag) out += `<text x="${x}" y="${y0 - 2.6 * mfr}" font-size="${svgFontSizeFor(mtag, TEXT_H.small * mfr, true, { bold: true })}" font-family="monospace" font-weight="bold" fill="${INK}">${escXML(mtag)}</text>`;
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = symOf(c.sym);

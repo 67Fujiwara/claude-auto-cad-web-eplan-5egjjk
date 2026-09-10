@@ -476,7 +476,8 @@ function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   if (!contacts.length) return "";
   const org = mirrorOrigin(coilDev);      // 位置は画面・検図と同じ探索結果を使う
   const x = org.x, y0 = org.y0, rowH = S(4.2), MAXROWS = 4;
-  let out = dxfPoly([[coilDev.x, coilDev.y + S(20)], [x, y0 - S(1.5)]], "WIRENUM", "DASHED");
+  // 見出し = コイルタグ (画面と同じ — 表は左下の帯にまとまる)
+  let out = dxfText(x, y0 - S(2.6), S(TEXT_H.small), displayTag(coilDev) || "", "WIRENUM", "start", 0, { bold: true });
   contacts.slice(0, MAXROWS).forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = symOf(c.sym);
