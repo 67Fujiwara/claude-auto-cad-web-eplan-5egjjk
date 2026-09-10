@@ -418,14 +418,16 @@ const KV_FIT_H = 360;
      各部屋の点数を並べる ([1,1,1,3] = 1点部屋×3 + 3点部屋)。リレー出力は
      部屋ごとに別電源を入れられる
    ・出力側の端子台にはサービス電源 (0V / 24V) の端子がある (交流電源形)
-   写しで確認できたのは N14AR のみ。AT 形の部屋割りは「端子台の成形が
-   AR 形と共通」の前提で N14AR の並びを拡張した類推 (N24=+4点部屋 /
-   N40=+4点+6点部屋)。実機の端子カバーの刻印と違うときは outRooms を
-   直すか、置いた記号の「端子番号」プロパティで刻印だけ描き替える */
+   写しで確認できたのは N14AR (リレー出力: 1点部屋×3+3点部屋) と
+   N40AT (トランジスタ出力: 実機照合で出力コモンは C1・C2 の 2 つ)。
+   AT 形 (トランジスタ・シンク出力) はコモンを細かく分ける理由が無いので
+   8点/1コモンで割る — コモンは必要最低限にする (N14AT/N24AT は類推)。
+   実機の端子カバーの刻印と違うときは outRooms を直すか、置いた記号の
+   「端子番号」プロパティで刻印だけ描き替える */
 const KV_UNITS = [
-  ["KV-N14AT", { nIn: 8, nOut: 6, outRooms: [1, 1, 1, 3] }],
-  ["KV-N24AT", { nIn: 14, nOut: 10, outRooms: [1, 1, 1, 3, 4] }],
-  ["KV-N40AT", { nIn: 24, nOut: 16, outRooms: [1, 1, 1, 3, 4, 6] }],
+  ["KV-N14AT", { nIn: 8, nOut: 6, outRooms: [6] }],
+  ["KV-N24AT", { nIn: 14, nOut: 10, outRooms: [8, 2] }],
+  ["KV-N40AT", { nIn: 24, nOut: 16, outRooms: [8, 8], verified: true }],
   ["KV-N14AR", { nIn: 8, nOut: 6, relay: true, outRooms: [1, 1, 1, 3] }],
   /* 拡張ユニット (トランジスタ・シンク出力形)。exp = 拡張:
      ・入力枚は無し。サービス電源 (0V/24V) の端子も無い — あれは基本ユニット
@@ -559,12 +561,14 @@ function mkKvUnit(model, cfg) {
      入力の枚は現場側 (レール) が左で、箱の下の右向きの帯と離れているので
      極性の宣言まで足せる — KV の入力は両極性のため、+コモン (NPN 機器向け)
      を黙って選んでいることを紙で宣言する (PNP はレールの電位名を描き替え) */
-  const AT_NOTE = cfg.relay ? "" :
+  const AT_NOTE = cfg.relay || cfg.verified ? "" :
     "※コモン C の並びは類推 — 実機の刻印と照合のこと";
   const IN_NOTE = (AT_NOTE ? AT_NOTE + "。" : "※") + "コモンは +24V (NPN 機器向け)";
   let comN = 0;
   const nextCom = () => `C${comN++}`;
-  const inSheets = cfg.nIn ? autoSheets(0, cfg.nIn, nextCom, "入力") : [];
+  /* 入力コモンは機種で 1 つ (C0)。入力が複数枚に割れても同じ刻印を使う —
+     出力コモンの番号が入力の枚数で変わらないように */
+  const inSheets = cfg.nIn ? autoSheets(0, cfg.nIn, nextCom(), "入力") : [];
   const outSheets = cfg.outRooms
     ? packRooms(mkRooms(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.outRooms, nextCom), !cfg.exp)
     : autoSheets(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.nOut, nextCom, "出力");

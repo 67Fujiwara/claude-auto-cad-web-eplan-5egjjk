@@ -375,8 +375,89 @@ const TITLE_BLOCK = { w: 160, h: 30, rowH: 10, cols: [58, 42, 32, 28] };
 const REV_TABLE = { rowH: 6, maxRows: 4, w: 120, cols: [16, 26, 0, 22] }; // cols[2]=残り
 
 /** 表題欄の矩形 (作図領域座標)。図枠描画・DXF・DRC で共有する */
+/* ── シンプル図枠 (他社様式に合わせる切替) ──
+   下端の帯だけの様式: 左 = 改訂欄 (C/B/A + 改訂内容 + Qty)、右 = 企業名 /
+   作成日・製図・検図・承認 / 管理番号 / 頁 (00 始まり)。
+   区画帯 (格子参照)・中心/裁断マーク・尺度欄・図名欄・接点ミラー表は無い */
+function frameStyle() {
+  const m = (App.project && App.project.meta) || {};
+  return m.frameStyle === "plain" ? "plain" : "std";
+}
+const PLAIN_TB = { h: 20, rowH: 5, company: 64, signL: 14, signV: 30, ctrl: 56, pageW: 18,
+  rev: { w: 110, cols: [8, 24, 64, 14] } };
+/** シンプル図枠の帯の割付 + 記入文字。画面と DXF が同じものを描くための共有モデル。
+    boxes = 太線の外形 / lines = 細線の仕切り / texts = 文字 (soft = 見出し) */
+function plainTitleLayout(page) {
+  const f = sheetScale();
+  const S = v => v * f;
+  const meta = projectMeta();
+  const m = SHEET.margin, ml = SHEET.marginLeft;
+  const H = SHEET.h, W = SHEET.w;
+  const h = S(PLAIN_TB.h), rh = S(PLAIN_TB.rowH);
+  const y0 = H - m - h, y1 = H - m;
+  const boxes = [], lines = [], texts = [];
+  const fitH = (t, wmm, base, bold) => S(fitTextSize(String(t), wmm, base, bold));
+  // ── 右ブロック (企業名 / 署名 / 管理番号 / 頁) ──
+  const wR = S(PLAIN_TB.company + PLAIN_TB.signL + PLAIN_TB.signV + PLAIN_TB.ctrl + PLAIN_TB.pageW);
+  const xR = W - m - wR;
+  boxes.push({ x: xR, y: y0, w: wR, h });
+  const xSign = xR + S(PLAIN_TB.company);
+  const xCtrl = xSign + S(PLAIN_TB.signL + PLAIN_TB.signV);
+  const xPage = xCtrl + S(PLAIN_TB.ctrl);
+  lines.push([xSign, y0, xSign, y1], [xCtrl, y0, xCtrl, y1], [xPage, y0, xPage, y1]);
+  const company = meta.author || "";
+  if (company) texts.push({ x: xR + S(PLAIN_TB.company) / 2, y: y0 + h / 2 + S(1.5),
+    t: company, h: fitH(company, PLAIN_TB.company - 4, 4), anchor: "middle" });
+  const xSv = xSign + S(PLAIN_TB.signL);
+  lines.push([xSv, y0, xSv, y1]);
+  const signVals = [meta.date || todayStr(), meta.designer || "", meta.checker || "", meta.approver || ""];
+  ["作成日", "製図", "検図", "承認"].forEach((t2, i) => {
+    const yy = y0 + rh * i;
+    if (i) lines.push([xSign, yy, xCtrl, yy]);
+    texts.push({ x: xSign + S(1.2), y: yy + rh - S(1.4), t: t2, h: S(2.5), soft: true });
+    if (signVals[i]) texts.push({ x: xSv + S(PLAIN_TB.signV) / 2, y: yy + rh - S(1.4),
+      t: signVals[i], h: fitH(signVals[i], PLAIN_TB.signV - 2, 2.5), anchor: "middle" });
+  });
+  lines.push([xCtrl, y0 + rh, W - m, y0 + rh]);
+  texts.push({ x: xCtrl + S(PLAIN_TB.ctrl) / 2, y: y0 + rh - S(1.4), t: "管理番号", h: S(2.5), anchor: "middle", soft: true });
+  const ctrl = meta.ctrlNo || meta.dwgNo || "";
+  if (ctrl) texts.push({ x: xCtrl + S(PLAIN_TB.ctrl) / 2, y: y0 + rh + (h - rh) / 2 + S(2.6),
+    t: ctrl, h: fitH(ctrl, PLAIN_TB.ctrl - 4, 7), anchor: "middle", bold: true });
+  texts.push({ x: xPage + S(PLAIN_TB.pageW) / 2, y: y0 + rh - S(1.4), t: "頁", h: S(2.5), anchor: "middle", soft: true });
+  texts.push({ x: xPage + S(PLAIN_TB.pageW) / 2, y: y0 + rh + (h - rh) / 2 + S(2.6),
+    t: plainPageNo(page), h: S(7), anchor: "middle", bold: true });
+  // ── 左ブロック (改訂欄: 下から A・B・C。記入は改訂履歴のデータを使う) ──
+  const rv = PLAIN_TB.rev;
+  const xL = ml, wL = S(rv.w);
+  boxes.push({ x: xL, y: y0, w: wL, h });
+  const xs = [xL];
+  rv.cols.forEach(c => xs.push(xs[xs.length - 1] + S(c)));
+  xs.slice(1, -1).forEach(x => lines.push([x, y0, x, y1]));
+  for (let i = 1; i < 4; i++) lines.push([xL, y0 + rh * i, xL + wL, y0 + rh * i]);
+  texts.push({ x: xs[2] + S(rv.cols[2]) / 2, y: y0 + rh - S(1.4), t: "改訂内容", h: S(2.5), anchor: "middle", soft: true });
+  texts.push({ x: xs[3] + S(rv.cols[3]) / 2, y: y0 + rh - S(1.4), t: "Qty", h: S(2.5), anchor: "middle", soft: true });
+  const revs = revisionRows();
+  ["C", "B", "A"].forEach((mark, ri) => {
+    const yy = y0 + rh * (ri + 1);
+    const r = revs[2 - ri];              // 下段 A = 1 件目
+    texts.push({ x: xs[0] + S(rv.cols[0]) / 2, y: yy + rh - S(1.4), t: mark, h: S(2.5), anchor: "middle", soft: true });
+    if (r) {
+      if (r.date) texts.push({ x: xs[1] + S(1.2), y: yy + rh - S(1.4), t: r.date, h: S(2.5) });
+      if (r.desc) texts.push({ x: xs[2] + S(1.2), y: yy + rh - S(1.4), t: r.desc,
+        h: fitH(r.desc, rv.cols[2] - 2.4, 2.5) });
+    }
+  });
+  return { boxes, lines, texts };
+}
+/** シンプル図枠の頁番号 (表紙 = 00、以降 01, 02 …) */
+function plainPageNo(page) { return String(Math.max(0, ((page && page.no) || 1) - 1)).padStart(2, "0"); }
 function titleBlockRect() {
   const f = sheetScale();
+  if (frameStyle() === "plain") {
+    const w = (PLAIN_TB.company + PLAIN_TB.signL + PLAIN_TB.signV + PLAIN_TB.ctrl + PLAIN_TB.pageW) * f;
+    const h = PLAIN_TB.h * f;
+    return { x: SHEET.w - SHEET.margin - w, y: SHEET.h - SHEET.margin - h, w, h };
+  }
   const w = TITLE_BLOCK.w * f, h = TITLE_BLOCK.h * f;
   return { x: SHEET.w - SHEET.margin - w, y: SHEET.h - SHEET.margin - h, w, h };
 }
@@ -384,6 +465,11 @@ function titleBlockRect() {
     表題欄の左隣 (同じ下段の帯) に置き、回路の作図領域を侵さないようにする。
     左に余地が無い小さな用紙では従来どおり表題欄の直上に積む。 */
 function revisionRect() {
+  if (frameStyle() === "plain") {
+    const f = sheetScale();
+    return { x: SHEET.marginLeft, y: SHEET.h - SHEET.margin - PLAIN_TB.h * f,
+      w: PLAIN_TB.rev.w * f, h: PLAIN_TB.h * f, side: true };
+  }
   const revs = revisionRows();
   if (!revs.length) return null;
   const f = sheetScale(), tb = titleBlockRect();
@@ -2594,6 +2680,7 @@ function pageDwgNo(page) {
 function devLocation(dev) {
   const f = findDevice(dev.id);
   const pageNo = f ? f.page.no : "?";
+  if (frameStyle() === "plain") return String(pageNo);   // 区画帯が無い様式はページのみ
   return pageNo + "." + sheetRow(dev.y) + sheetCol(dev.x);
 }
 
@@ -2959,6 +3046,7 @@ function mirrorOrigin(coilDev) {
 }
 /** 接点ミラー表の外形寸法 (幅×高さ)。接点が無ければ null */
 function mirrorTableSize(coilDev) {
+  if (frameStyle() === "plain") return null;   // この様式では接点ミラーを描かない
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return null;
   const f = contentScale();
@@ -2973,6 +3061,7 @@ function mirrorTableSize(coilDev) {
 
 /** 接点ミラー表の文字矩形 (検図・当たり判定用)。画面/DXF と同じ割付を使う */
 function mirrorLabelBoxes(coilDev) {
+  if (frameStyle() === "plain") return [];
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return [];
   const f = contentScale();

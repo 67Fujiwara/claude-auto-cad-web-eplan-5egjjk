@@ -53,17 +53,18 @@ const R = await p.evaluate(() => {
   const SPEC = {
     /* 1 枚 = 1 チャネル (16 点 + コモン)。A3 縦 1:1 にびっしり収まる。
        端子の刻印は取説の回路図どおり (デバイス番号から R を除いた数字、
-       出力の 1 枚目にサービス電源 0V/24V)。コモンは端子台の部屋ごとに分かれ、
-       C の連番を入力の部屋から出力の部屋へ通しで振る (N14AR の写しで確認。
-       AT 形の部屋割りは端子台が AR 形と共通の前提での類推) */
+       出力の 1 枚目にサービス電源 0V/24V)。コモンは必要最低限:
+       入力は機種で C0 の 1 つ (複数枚でも同じ刻印)、AT 形 (トランジスタ) の
+       出力は 8点/1コモン (N40AT は実機照合で C1・C2)。N14AR (リレー) だけ
+       写しどおり部屋ごとに C1〜C4 */
     kv_n14at_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
-    kv_n14at_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
+    kv_n14at_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1", paper: "A3", orient: "landscape" },
     kv_n24at_in:  { io: 14, first: "000", last: "013", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n24at_out: { io: 10, first: "500", last: "509", aux: "0V,24V,C1,C2,C3,C4,C5", paper: "A3", orient: "portrait" },
+    kv_n24at_out: { io: 10, first: "500", last: "509", aux: "0V,24V,C1,C2", paper: "A3", orient: "portrait" },
     kv_n40at_in1: { io: 16, first: "000", last: "015", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C1", paper: "A3", orient: "portrait" },
-    kv_n40at_out1:{ io: 10, first: "500", last: "509", aux: "0V,24V,C2,C3,C4,C5,C6", paper: "A3", orient: "portrait" },
-    kv_n40at_out2:{ io: 6,  first: "510", last: "515", aux: "C7", paper: "A3", orient: "portrait" },
+    kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C0", paper: "A3", orient: "portrait" },
+    kv_n40at_out1:{ io: 8,  first: "500", last: "507", aux: "0V,24V,C1", paper: "A3", orient: "portrait" },
+    kv_n40at_out2:{ io: 8,  first: "508", last: "515", aux: "C2", paper: "A3", orient: "portrait" },
     kv_n14ar_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
     kv_n14ar_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
     /* 三菱 MELSEC iQ-R — 作りは KV と同じ・接点構成は三菱の取説どおり。
@@ -672,7 +673,7 @@ const R = await p.evaluate(() => {
   App.pageIdx = i2;
   applySheet(curPage());
   const dxf = pageToDXF(curPage());
-  out.dxf = { r107: /\n1\n107\n/.test(dxf), com: /\n1\nC1\n/.test(dxf) };   // 入力 2 部屋目のコモンは C1
+  out.dxf = { r107: /\n1\n107\n/.test(dxf), com: /\n1\nC0\n/.test(dxf) };   // 入力 2 枚目もコモン刻印は C0 (機種で 1 つ)
   return out;
 });
 console.log(JSON.stringify(R, null, 1));
@@ -867,8 +868,9 @@ const MELTB = await p.evaluate(() => {
    (N14AR は写しで確認済みなので類推の文言なし・極性宣言のみ) */
 const KVNOTE = await p.evaluate(() => ({
   inPol: ((symOf("kv_n14at_in") || {}).body || "").includes("コモンは +24V (NPN 機器向け)"),
-  inSurm: ((symOf("kv_n40at_in2") || {}).body || "").includes("類推"),
-  outSurm: ((symOf("kv_n40at_out1") || {}).body || "").includes("類推"),
+  inSurm: ((symOf("kv_n24at_in") || {}).body || "").includes("類推"),
+  outSurm: ((symOf("kv_n24at_out") || {}).body || "").includes("類推"),
+  n40Clean: !(((symOf("kv_n40at_out1") || {}).body || "").includes("類推")),
   arClean: !(((symOf("kv_n14ar_out") || {}).body || "").includes("類推")),
   arInPol: ((symOf("kv_n14ar_in") || {}).body || "").includes("+24V (NPN"),
 }));
@@ -920,7 +922,7 @@ const checks = {
      電源と接地はこの図に無い (別紙) ので、ここには出てこない */
   /* 未使用の入出力点とサービス電源 (0V/24V) は黙るが、コモンの結び忘れは
      知らせる。分割コモン (C1〜C4) も 1 つずつ */
-  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "C0,C1,C2,C3,C4,C5,C6,C7,COM" &&
+  pinLevelDrc: ids.every(id => (R.group[id] || {}).ioSkipped) && R.unconnected.names === "C0,C1,C2,C3,C4,COM" &&
     R.unconnected.otherSev === "warn" && R.unconnected.peSev === "" &&
     // 電源端子・接地端子が 1 つも無いこと
     ids.every(id => !/[LN]|PE/.test((R.group[id] || {}).aux || "")),
@@ -972,7 +974,7 @@ const checks = {
   // 最下段コモンの合流に接続点の黒丸 (レールの 5mm 延長で線の途中に乗せる)
   botDot: R.botDot === true,
   // 図中注記 (類推の照合指示 + 入力の +コモン極性宣言)
-  kvNote: KVNOTE.inPol && KVNOTE.inSurm && KVNOTE.outSurm && KVNOTE.arClean && KVNOTE.arInPol,
+  kvNote: KVNOTE.inPol && KVNOTE.inSurm && KVNOTE.outSurm && KVNOTE.arClean && KVNOTE.arInPol && KVNOTE.n40Clean === true,
   // 出力の枚でも UI 経路 (機種差し替え・行ピッチ) が下地と負荷を壊さない
   outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out1" && V2.drc.length === 0 &&
     V3.pitch === 30 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,

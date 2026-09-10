@@ -104,6 +104,13 @@ function sheetSVG(page, opts = {}) {
   }
   // 輪郭線 (JIS Z 8311: とじ代側 20mm・他辺 c)
   out += `<rect x="${ml}" y="${m}" width="${w - ml - m}" height="${h - 2 * m}" fill="none" stroke="${INK}" stroke-width="${LINE_W.extra * fr}"/>`;
+  /* シンプル図枠: 中心/裁断マーク・格子参照・標準の表題欄は描かず、
+     用紙縁の細線 + 下端の帯 (改訂欄・企業名・管理番号・頁) だけの様式 */
+  if (frameStyle() === "plain") {
+    out += `<rect x="${4 * fr}" y="${4 * fr}" width="${w - 8 * fr}" height="${h - 8 * fr}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * fr}"/>`;
+    out += plainTitleSVG(page);
+    return out;
+  }
   // 中心マーク (4辺の中点。輪郭線の内側 5mm まで) — JIS Z 8311 必須
   const cmw = LINE_W.thick * fr, cm5 = 5 * fr;
   const cxm = w / 2, cym = h / 2;   // 中心マークは用紙の対称軸上 (JIS Z 8311)
@@ -180,6 +187,25 @@ function sheetSVG(page, opts = {}) {
     ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}
   </g>`;
   return out;
+}
+
+/** シンプル図枠の帯 (割付は engine の plainTitleLayout — DXF と同一) */
+function plainTitleSVG(page) {
+  const f = sheetScale();
+  const L = plainTitleLayout(page);
+  let out = `<g font-family="sans-serif" data-titleblock="1">`;
+  L.boxes.forEach(b => {
+    out += `<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" fill="#fff" stroke="${INK}" stroke-width="${LINE_W.thick * f}"/>`;
+  });
+  let grid = "";
+  L.lines.forEach(([x1, y1, x2, y2]) => { grid += `M${x1},${y1} L${x2},${y2} `; });
+  out += `<path d="${grid}" stroke="${INK}" stroke-width="${LINE_W.thin * f}" fill="none"/>`;
+  L.texts.forEach(t => {
+    out += `<text x="${t.x}" y="${t.y}" font-size="${svgFontSizeFor(t.t, t.h, false, { bold: t.bold })}"` +
+      `${t.anchor === "middle" ? ' text-anchor="middle"' : ""}${t.bold ? ' font-weight="bold"' : ""}` +
+      ` fill="${t.soft ? INK_SOFT : INK}">${escXML(t.t)}</text>`;
+  });
+  return out + `</g>`;
 }
 
 /** 改訂履歴欄 (表題欄の直上。JIS Z 8311 附属書: 改訂記号・日付・内容・承認)。
@@ -561,6 +587,7 @@ function devLabelsSVG(dev, sym, page, opts = {}) {
 /** コイル下の接点ミラー (EPLAN流クロスリファレンス表)
     0Vへの縦配線を避けて右側にオフセット。端子番号と NO/NC 種別つき */
 function mirrorSVG(coilDev) {
+  if (frameStyle() === "plain") return "";   // この様式では接点ミラーを描かない
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
   const mfr = contentScale();           // 表の寸法は用紙上一定 (文字と同じ空間)

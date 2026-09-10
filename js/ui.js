@@ -2359,6 +2359,15 @@ UI.sheetSetup = () => {
   const cur = pageSheetMeta(page);        // このページに効いている用紙・尺度
   const opt = (v, cur, label) => `<option value="${v}"${v === cur ? " selected" : ""}>${label || v}</option>`;
   const body = h(`<div>
+    <div class="prop-sect">図枠スタイル</div>
+    <div class="prop-grid2">
+      <div class="prop-row"><label>様式</label><select id="tbFrameStyle">
+        ${opt("std", meta.frameStyle || "std", "標準 (JIS・区画参照つき)")}
+        ${opt("plain", meta.frameStyle || "std", "シンプル (改訂欄 + 管理番号・頁)")}
+      </select></div>
+    </div>
+    <div class="prop-note">シンプル様式は下端の帯だけの図枠 — 区画参照・尺度欄・接点ミラー表は出ません。<br>
+      帯には 企業名 / 作成日・製図・検図・承認 / 管理番号 / 頁 (表紙 = 00) と改訂欄 (A〜C) が入ります。</div>
     <div class="prop-sect">表題欄</div>
     <div class="prop-grid2">
       <div class="prop-row"><label>プロジェクト</label><input id="tbProj" value="${escAttr(App.project.name)}"/></div>
@@ -2369,6 +2378,8 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>改訂</label><input id="tbRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
       <div class="prop-row"><label>設計</label><input id="tbDes" value="${escAttr(meta.designer || "")}" placeholder="—"/></div>
       <div class="prop-row"><label>検図</label><input id="tbChk" value="${escAttr(meta.checker || "")}" placeholder="—"/></div>
+      <div class="prop-row"><label>承認</label><input id="tbAppr" value="${escAttr(meta.approver || "")}" placeholder="—"/></div>
+      <div class="prop-row"><label>管理番号</label><input id="tbCtrl" class="mono" value="${escAttr(meta.ctrlNo || "")}" placeholder="シンプル様式の帯に表示"/></div>
       <div class="prop-row"><label>日付</label><input id="tbDate" class="mono" value="${escAttr(meta.date || todayStr())}" placeholder="2026-01-31"/></div>
       <div class="prop-row"><label>企業 (団体) 名</label><input id="tbAuth" value="${escAttr(meta.author || "")}" placeholder="社名を入力"/></div>
       <div class="prop-row"><label>投影法</label><select id="tbProjMethod">
@@ -2505,6 +2516,9 @@ UI.sheetSetup = () => {
     meta.rev = q("#tbRev").value.trim() || "0";
     meta.designer = q("#tbDes").value.trim();
     meta.checker = q("#tbChk").value.trim();
+    meta.approver = q("#tbAppr").value.trim();
+    meta.ctrlNo = q("#tbCtrl").value.trim();
+    meta.frameStyle = q("#tbFrameStyle").value === "plain" ? "plain" : "std";
     meta.date = q("#tbDate").value.trim();
     meta.author = q("#tbAuth").value.trim();
     meta.proj = q("#tbProjMethod").value;

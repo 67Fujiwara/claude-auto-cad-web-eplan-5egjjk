@@ -472,6 +472,7 @@ function dxfProjSymbol(x, y, u, proj) {
 
 /** コイル下の接点ミラー表 (画面 mirrorSVG と同じ内容) */
 function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
+  if (frameStyle() === "plain") return "";   // この様式では接点ミラーを描かない
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
   const org = mirrorOrigin(coilDev);      // 位置は画面・検図と同じ探索結果を使う
@@ -515,6 +516,22 @@ function pageToDXF(page) {
 
   // ── 輪郭線 (とじ代 20mm) + 中心マーク ──
   ents += dxfPoly([[ml, mg], [w - mg, mg], [w - mg, h - mg], [ml, h - mg], [ml, mg]], "FRAME");
+  /* シンプル図枠: マーク・格子参照・標準の表題欄は描かず、用紙縁の細線 +
+     下端の帯 (改訂欄・企業名・管理番号・頁) だけ (割付は画面と同じ共有モデル) */
+  if (frameStyle() === "plain") {
+    ents += dxfPoly([[S(4), S(4)], [w - S(4), S(4)], [w - S(4), h - S(4)], [S(4), h - S(4)], [S(4), S(4)]], "FRAME_THIN");
+    const L = plainTitleLayout(page);
+    L.boxes.forEach(b => {
+      ents += dxfPoly([[b.x, b.y], [b.x + b.w, b.y], [b.x + b.w, b.y + b.h], [b.x, b.y + b.h], [b.x, b.y]], "FRAME");
+    });
+    L.lines.forEach(([x1, y1, x2, y2]) => { ents += dxfLine(x1, y1, x2, y2, "FRAME_THIN"); });
+    L.texts.forEach(t => {
+      const fw = Math.min(textWidthMM(String(t.t), t.h / f, !!t.bold, false) * f, w);
+      ents += dxfText(t.x, t.y, t.h, t.t, t.soft ? "FRAME" : "TEXT",
+        t.anchor === "middle" ? "middle" : "start", 0,
+        { mono: false, bold: !!t.bold, noMin: true, ...(t.anchor === "middle" ? {} : { fitTo: fw }) });
+    });
+  } else {
   const cxm = w / 2, cym = h / 2, cm5 = S(5);   // 中心マークは用紙の対称軸上
   ents += dxfLine(cxm, 0, cxm, mg + cm5, "FRAME");
   ents += dxfLine(cxm, h, cxm, h - mg - cm5, "FRAME");
@@ -606,6 +623,7 @@ function pageToDXF(page) {
       });
     });
   }
+  }   // ← 標準図枠ここまで (シンプル図枠は上の分岐で描画済み)
 
   // ── Panel Studio の図面ページ (entities をそのまま DXF へ) ──
   /* 元データは mm・左下原点・Y 上向き・角度は反時計回り — DXF と同じ向き
