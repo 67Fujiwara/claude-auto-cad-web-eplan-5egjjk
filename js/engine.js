@@ -468,21 +468,66 @@ function wireLabelMap(page) {
     // 手で位置を決めた線番 (numAt) を先に置く — 自動の列ぞろえがそれに従う
     .sort((a, b) => ((a.numAt ? 0 : 1) - (b.numAt ? 0 : 1)) ||
       (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const shared = wires.length ? wireLabelObstBase(page, contentScale()) : null;
   wires.forEach(w => {
     const st = {};
-    let res = wireLabelPosCalc(w, page, placed, { state: st });
+    let res = wireLabelPosCalc(w, page, placed, { state: st, shared });
     /* 線番+電線仕様の 2 段では空きが無い狭い所は、仕様を出さずに線番だけで
        置き直す。2 段を無理に押し込んで端子番号や図記号に重ねるより読める
        (仕様のデータ・部品表・接続リストはそのまま残る) */
     if (st.dirty && w.spec && w.numShow !== false) {
       const st2 = {};
-      const res2 = wireLabelPosCalc(w, page, placed, { noSpec: true, state: st2 });
+      const res2 = wireLabelPosCalc(w, page, placed, { noSpec: true, state: st2, shared });
       if (!st2.dirty) res = [res2[0], res2[1], res2[2], res2[3], res2[4], 1];
     }
     map.set(w.id, res);
     const { num, spec } = wireLabelBoxes(w, res);
     placed.push(num);
     if (spec) placed.push(spec);
+  });
+  /* 2 巡目: 列が割れたときだけ、全ラベルの位置が見えた状態で置き直す。
+     1 巡目は置く順に決めるので、先に置いた線は「自分が動けば後の線と
+     そろえられる列」を知らずに決めてしまう (例: 分岐位置の違う 2 本 —
+     後の線は先の線の列に入れないが、先の線が後の線の列へ動けばそろう) */
+  const boxes = new Map();
+  wires.forEach(w => boxes.set(w.id, wireLabelBoxes(w, map.get(w.id))));
+  /* 置き直すのは列に入れていないラベルだけ (多数派の列はそのまま)。
+     列の数が同数で「多数派」が決まらないときはその全員を置き直す —
+     2 本だけの図では先に置いた方が後の線の列へ動けるように */
+  const keyOf = r => Math.round((r[2] ? r[0] : r[1]) * 2);
+  const clusters = { h: new Map(), v: new Map() };
+  wires.forEach(w => {
+    const r = map.get(w.id); const m = r[2] ? clusters.h : clusters.v;
+    m.set(keyOf(r), (m.get(keyOf(r)) || 0) + 1);
+  });
+  const redo = [];
+  for (const o of ["h", "v"]) {
+    const m = clusters[o];
+    if (m.size < 2) continue;
+    const max = Math.max(...m.values());
+    const tie = [...m.values()].filter(n => n === max).length > 1;
+    wires.forEach(w => {
+      const r = map.get(w.id);
+      if ((r[2] ? "h" : "v") !== o || w.numAt) return;   // 手で決めた位置は動かさない
+      if (m.get(keyOf(r)) < max || tie) redo.push(w);
+    });
+  }
+  redo.forEach(w => {
+    const others = [];
+    wires.forEach(w2 => {
+      if (w2 === w) return;
+      const bx = boxes.get(w2.id);
+      others.push(bx.num); if (bx.spec) others.push(bx.spec);
+    });
+    const st = {};
+    let res = wireLabelPosCalc(w, page, others, { state: st, shared });
+    if (st.dirty && w.spec && w.numShow !== false) {
+      const st2 = {};
+      const res2 = wireLabelPosCalc(w, page, others, { noSpec: true, state: st2, shared });
+      if (!st2.dirty) res = [res2[0], res2[1], res2[2], res2[3], res2[4], 1];
+    }
+    map.set(w.id, res);
+    boxes.set(w.id, wireLabelBoxes(w, res));
   });
   _wireLabelCache.set(page, { rev: App.labelRev, map });
   return map;
@@ -494,6 +539,46 @@ function wireLabelPos(w, page) {
   }
   return wireLabelPosCalc(w, page, []);
 }
+/* ページだけで決まる障害物 (機器・注記・図枠・導体)。ラベルごとに作り
+   直すとラベル数×機器数で膨らみ、大きなページで目に見えて遅くなるので、
+   wireLabelMap が 1 回作って全ラベルの計算で使い回す */
+function wireLabelObstBase(page, f) {
+  const base = page ? pinLabelBoxes(page) : [];
+  (page ? page.devices : []).forEach(d => {
+    const soft = !!symOf(d.sym).enclosure;   // 囲み記号 = 最後の手段では上に載せてよい
+    deviceObstacleBoxes(d, OBST_INSET.wireNum * f).forEach(b => base.push(soft ? { ...b, soft: true } : b));
+    if (page) {
+      deviceLabelBoxes(page, d).forEach(o => base.push(o.box));
+      mirrorLabelBoxes(d).forEach(b => base.push(b));
+    }
+  });
+  ((page && page.texts) || []).forEach(t => base.push(textBounds(t)));
+  // 図枠 (輪郭線) の外へは置かない — 外周の帯を障害物として与える。
+  // これが無いと、図枠ぎわの線の線番・電線仕様が枠の外に置かれて検図に出る
+  {
+    const M = 200, ml = SHEET.marginLeft, mr = SHEET.margin;
+    base.push({ x: -M, y: -M, w: SHEET.w + 2 * M, h: mr + M });
+    base.push({ x: -M, y: SHEET.h - mr, w: SHEET.w + 2 * M, h: mr + M });
+    base.push({ x: -M, y: -M, w: ml + M, h: SHEET.h + 2 * M });
+    base.push({ x: SHEET.w - mr, y: -M, w: mr + M, h: SHEET.h + 2 * M });
+  }
+  // 導体そのものも障害物にする。梯子図では線番の脇を別の配線が横切るので、
+  // それを見ないと交差する導体の上に線番が乗る (wid で自分の線だけ除ける —
+  // 線番は自分の線の脇に置くのが目的なので)
+  const HALFW = LINE_W.thick / 2 * f;
+  const cond = [];
+  (page ? condWires(page) : []).forEach(o => {
+    for (let i = 0; i < o.pts.length - 1; i++) {
+      const a = o.pts[i], b2 = o.pts[i + 1];
+      cond.push({
+        x: Math.min(a[0], b2[0]) - HALFW, y: Math.min(a[1], b2[1]) - HALFW,
+        w: Math.abs(b2[0] - a[0]) + HALFW * 2, h: Math.abs(b2[1] - a[1]) + HALFW * 2,
+        cond: true, wid: o.id,
+      });
+    }
+  });
+  return { base, cond };
+}
 function wireLabelPosCalc(w, page, placed, opt = {}) {
   const f = contentScale();
   const segs = [];
@@ -502,43 +587,10 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
     segs.push({ a, b, len: Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]) });
   }
   segs.sort((x, y) => y.len - x.len);
-  const devs = page ? page.devices : [];
-  const notes = page ? page.texts : [];
-  // 障害物: 機器の図記号・注記・デバイスタグ/機能テキスト (線番が図記号に被らないように)
-  const obst = page ? pinLabelBoxes(page) : [];
-  devs.forEach(d => {
-    const soft = !!symOf(d.sym).enclosure;   // 囲み記号 = 最後の手段では上に載せてよい
-    deviceObstacleBoxes(d, OBST_INSET.wireNum * f).forEach(b => obst.push(soft ? { ...b, soft: true } : b));
-    if (page) {
-      deviceLabelBoxes(page, d).forEach(o => obst.push(o.box));
-      mirrorLabelBoxes(d).forEach(b => obst.push(b));
-    }
-  });
-  (notes || []).forEach(t => obst.push(textBounds(t)));
-  // 図枠 (輪郭線) の外へは置かない — 外周の帯を障害物として与える。
-  // これが無いと、図枠ぎわの線の線番・電線仕様が枠の外に置かれて検図に出る
-  {
-    const M = 200, ml = SHEET.marginLeft, mr = SHEET.margin;
-    obst.push({ x: -M, y: -M, w: SHEET.w + 2 * M, h: mr + M });
-    obst.push({ x: -M, y: SHEET.h - mr, w: SHEET.w + 2 * M, h: mr + M });
-    obst.push({ x: -M, y: -M, w: ml + M, h: SHEET.h + 2 * M });
-    obst.push({ x: SHEET.w - mr, y: -M, w: mr + M, h: SHEET.h + 2 * M });
-  }
+  const shared = opt.shared || wireLabelObstBase(page, f);
+  const obst = shared.base.slice();
   (placed || []).forEach(b => obst.push(b));      // すでに確定した他の線番ラベル
-  // 導体そのものも障害物にする。梯子図では線番の脇を別の配線が横切るので、
-  // それを見ないと交差する導体の上に線番が乗る (自分の線は除く — 線番は
-  // 自分の線の脇に置くのが目的なので)
-  const HALFW = LINE_W.thick / 2 * f;
-  (page ? condWires(page) : []).forEach(o => {
-    if (o.id === w.id) return;
-    for (let i = 0; i < o.pts.length - 1; i++) {
-      const a = o.pts[i], b2 = o.pts[i + 1];
-      obst.push({
-        x: Math.min(a[0], b2[0]) - HALFW, y: Math.min(a[1], b2[1]) - HALFW,
-        w: Math.abs(b2[0] - a[0]) + HALFW * 2, h: Math.abs(b2[1] - a[1]) + HALFW * 2, cond: true,
-      });
-    }
-  });
+  for (const cb of shared.cond) if (cb.wid !== w.id) obst.push(cb);
   // この区間のすぐ隣 (心線ピッチ以内) を並走している導体があるか。多芯ケーブルの
   // ように線が詰まって並ぶ図では、線番を自分の線へ十分寄せないと、隣の線の
   // 番号に見えてしまう
@@ -675,6 +727,57 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
       return posOf(horiz ? [c, bs.a[1]] : [bs.a[0], c], horiz, side, 0, gapFor(bs, horiz));
     }
   }
+  /* 既に置いた近くの線番の「列」に、まずそのまま置いてみる。
+     ・並走する心線 (para): ケーブルの中で列が割れると読めないので、
+       囲み記号 (soft) に少し重なってでも列をそろえる (重なりは検図が知らせる)
+     ・それ以外 (PLC の入出力行のように 20mm ピッチで並ぶ横線): 列が
+       ガタガタだと読みにくいので、完全に空いている場合に限り列へ吸着する */
+  const trySnapCol = (sg) => {
+    const horiz = Math.abs(sg.b[1] - sg.a[1]) < 0.01;
+    const lgap = gapFor(sg, horiz);
+    const para = lgap < WIRE_LABEL_GAP * f - 0.001;
+    const lo = horiz ? Math.min(sg.a[0], sg.b[0]) : Math.min(sg.a[1], sg.b[1]);
+    const hi = horiz ? Math.max(sg.a[0], sg.b[0]) : Math.max(sg.a[1], sg.b[1]);
+    /* 多数決の窓: 心線 (para) は隣だけ。行の列ぞろえはページ全体規模で
+       見る — 窓が狭いと、機器をよけて逃げた行が新しい多数派になって
+       後続の行が連鎖してしまう */
+    const RANGE = para ? 12 : 300;
+    /* 近くのラベルの列を集め、最も多くのラベルが並ぶ列 (多数決) から試す。
+       最寄り優先だと、機器をよけて逃げた 1 行の列に後続の行が連鎖して
+       列が割れてしまう — 多数派の列に付けば、よけた行だけが独りで逃げる */
+    const clusters = [];
+    (placed || []).forEach(r => {
+      const perp = horiz ? Math.abs((r.y + r.h / 2) - sg.a[1]) : Math.abs((r.x + r.w / 2) - sg.a[0]);
+      if (perp > RANGE || perp < 0.01) return;
+      const c0 = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
+      const cl = clusters.find(k => Math.abs(k.col - c0) < 0.8);
+      if (cl) { cl.n++; cl.perp = Math.min(cl.perp, perp); }
+      else clusters.push({ col: c0, n: 1, perp });
+    });
+    clusters.sort((a2, b2) => (b2.n - a2.n) || (a2.perp - b2.perp));
+    const hard = obst.filter(r => !r.soft);
+    for (const cl of clusters.slice(0, 3)) {
+      const col = cl.col;
+      if (!(col > lo - 0.01 && col < hi + 0.01)) continue;
+      for (const side of [1, -1]) {
+        const res = posOf(horiz ? [col, sg.a[1]] : [sg.a[0], col], horiz, side, 0, lgap);
+        const bx = boxOf(res);
+        if (para) {
+          if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) return res;
+        } else if (obst.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) {
+          return res;
+        }
+      }
+    }
+    return null;
+  };
+  /* 列そろえは全区間を見てから決める。区間ごとの配置に混ぜると、分岐で
+     区間が割れた線 (長い区間には列が無く、短い区間になら列がある) で、
+     長い区間の空きに先に置いてしまい列が割れる */
+  for (const sg of segs) {
+    const res = trySnapCol(sg);
+    if (res) return res;
+  }
   // 長い区間から順に、機器・注記・デバイスタグに当たらない位置を探す。
   // まず線に沿って場所を変え (線番は自分の線のすぐ脇にあるのが読みやすい)、
   // それでも空きが無いときにだけ法線方向へ逃がす — 逃がしを先に試すと、
@@ -688,47 +791,6 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
     // 並走する導体があるときは、線番を自分の線へ十分に寄せる
     const lgap = gapFor(sg, horiz);
     const para = lgap < WIRE_LABEL_GAP * f - 0.001;
-    /* 既に置いた近くの線番の「列」に、まずそのまま置いてみる。
-       ・並走する心線 (para): ケーブルの中で列が割れると読めないので、
-         囲み記号 (soft) に少し重なってでも列をそろえる (重なりは検図が知らせる)
-       ・それ以外 (PLC の入出力行のように 20mm ピッチで並ぶ横線): 列が
-         ガタガタだと読みにくいので、完全に空いている場合に限り列へ吸着する。
-         行ピッチ 2 つぶん + 余裕 = 45mm まで見る */
-    {
-      const lo = horiz ? Math.min(sg.a[0], sg.b[0]) : Math.min(sg.a[1], sg.b[1]);
-      const hi = horiz ? Math.max(sg.a[0], sg.b[0]) : Math.max(sg.a[1], sg.b[1]);
-      /* 多数決の窓: 心線 (para) は隣だけ。行の列ぞろえはページ全体規模で
-         見る — 窓が狭いと、機器をよけて逃げた行が新しい多数派になって
-         後続の行が連鎖してしまう */
-      const RANGE = para ? 12 : 300;
-      /* 近くのラベルの列を集め、最も多くのラベルが並ぶ列 (多数決) から試す。
-         最寄り優先だと、機器をよけて逃げた 1 行の列に後続の行が連鎖して
-         列が割れてしまう — 多数派の列に付けば、よけた行だけが独りで逃げる */
-      const clusters = [];
-      (placed || []).forEach(r => {
-        const perp = horiz ? Math.abs((r.y + r.h / 2) - sg.a[1]) : Math.abs((r.x + r.w / 2) - sg.a[0]);
-        if (perp > RANGE || perp < 0.01) return;
-        const c0 = horiz ? r.x + r.w / 2 : r.y + r.h / 2;
-        const cl = clusters.find(k => Math.abs(k.col - c0) < 0.8);
-        if (cl) { cl.n++; cl.perp = Math.min(cl.perp, perp); }
-        else clusters.push({ col: c0, n: 1, perp });
-      });
-      clusters.sort((a2, b2) => (b2.n - a2.n) || (a2.perp - b2.perp));
-      const hard = obst.filter(r => !r.soft);
-      for (const cl of clusters.slice(0, 3)) {
-        const col = cl.col;
-        if (!(col > lo - 0.01 && col < hi + 0.01)) continue;
-        for (const side of [1, -1]) {
-          const res = posOf(horiz ? [col, sg.a[1]] : [sg.a[0], col], horiz, side, 0, lgap);
-          const bx = boxOf(res);
-          if (para) {
-            if (hard.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) return res;
-          } else if (obst.every(r => overlapArea(bx, padRect(r, LABEL_CLEAR / 2)) === 0)) {
-            return res;
-          }
-        }
-      }
-    }
     const along = alongFree(sg, horiz, at, 1, lgap);
     if (along.length) return pickAlong(along, horiz);
     // 線上に収まらない場合は、じゃまをしている物 (囲みなど) の外側へ寄せて

@@ -5,6 +5,8 @@
    ・dodge   : 列位置に機器を置くと、機器の箱が届く行 (その行と直下) だけ
               逃げ、残りの行は元の列を保つ。逃げた行どうしも列がそろう
    ・overlapFree : そろえた後も、ラベルは機器・他の線に重ならない
+   ・branchAlign : 分岐位置の違う 2 本 (2 段ラベル) でも列がそろう —
+              後の線が入れない列なら、先の線のほうが動く
    ・manualAt : 配線をダブルクリックした位置に線番が出る (クリックした側)。
                近くの列が 12mm 以内ならそこへ吸着してそろう。
                表示だけの機能 — 移動すると位置も一緒に付いてくる。
@@ -49,6 +51,7 @@ const R = await p.evaluate(() => {
   // 重なりなし (検図のラベル系エラーが出ない)
   const drc = runDRC().filter(i => /線番|ラベル|重な/.test(i.msg));
   out.overlapFree = { n: drc.length, msgs: drc.slice(0, 3).map(i => i.msg) };
+
   return out;
 });
 
@@ -104,17 +107,48 @@ Object.assign(MA, await p.evaluate(() => {
     btn: !!btn, cleared };
 }));
 
+/* ── 分岐位置の違う 2 本 + 電線仕様 (2 段ラベル) の列ぞろえ ── */
+const BA = await p.evaluate(() => {
+  const pg = curPage();
+  pg.devices.length = 0; pg.wires.length = 0; App.labelRev++;
+  const b1 = addWire(pg, [[60, 100], [240, 100]]);
+  const b2 = addWire(pg, [[60, 120], [240, 120]]);
+  addWire(pg, [[150, 100], [150, 140]]);
+  addWire(pg, [[110, 120], [110, 160]]);
+  setWireNumber(pg, b1, "S220"); b1.spec = "KIV 1.25sq Y";
+  setWireNumber(pg, b2, "R220"); b2.spec = "KIV 1.25sq Y";
+  App.labelRev++;
+  const q1 = wireLabelPos(b1, pg), q2 = wireLabelPos(b2, pg);
+  const out = { x1: Math.round(q1[0] * 2) / 2, x2: Math.round(q2[0] * 2) / 2,
+    same: Math.abs(q1[0] - q2[0]) < 1 };
+
+  /* 交差する導体の上に線番が載らない (導体も障害物に入っている) —
+     すき間 1 か所以外を縦線でふさいだ横線で、ラベルがすき間へ入る */
+  pg.devices.length = 0; pg.wires.length = 0; App.labelRev++;
+  const c1 = addWire(pg, [[60, 100], [140, 100]]);
+  [70, 80, 90, 100, 110, 130].forEach(x => addWire(pg, [[x, 80], [x, 120]]));
+  setWireNumber(pg, c1, "X999");
+  App.labelRev++;
+  const q3 = wireLabelPos(c1, pg);
+  const bx = wireLabelBoxes(c1, q3).num;
+  out.condAvoid = [70, 80, 90, 100, 110, 130].every(x => bx.x > x + 0.2 || bx.x + bx.w < x - 0.2);
+  out.condX = Math.round(q3[0] * 2) / 2;
+  return out;
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
   aligned: R.aligned.cols === 1,
   dodge: R.dodge.othersCols === 1 && R.dodge.othersCol === true &&
     R.dodge.moved === true && R.dodge.escTogether === true,
   overlapFree: R.overlapFree.n === 0,
+  branchAlign: BA.same === true,
+  condAvoid: BA.condAvoid === true,
   manualAt: MA.input === true && MA.anchored === true && Math.abs(MA.x1 - 90) <= 1 && MA.below === true &&
     MA.snap === true && MA.movedWith === true && MA.btn === true && MA.cleared === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R, MA, errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, R, MA, BA, errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("wire-num-align OK");
