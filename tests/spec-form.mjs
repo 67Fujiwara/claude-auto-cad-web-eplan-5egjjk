@@ -116,6 +116,27 @@ R.pwrMemo.after = await p.evaluate(() => {
     drawn: svg.includes(">盤上部より 3φ3W 直入れ<") && svg.includes(">中継箱経由<") };
 });
 
+/* ── レイアウト: 配線長の語が選択肢の文言に重ならない (実描画の矩形で判定)。
+      御社指定方法の記入欄は選択肢の右ではなく下の段 ── */
+R.pwrClear = await p.evaluate(() => {
+  UI.refresh(true);
+  return new Promise(res => requestAnimationFrame(() => {
+    const texts = [...Editor.svg.querySelectorAll("text")];
+    const opt = texts.find(t => t.textContent.includes("3222RW-L6"));
+    const words = texts.filter(t => ["3M", "5M", "10M"].includes(t.textContent.trim()));
+    if (!opt || words.length < 3) return res({ found: false });
+    const ob = opt.getBoundingClientRect();
+    const clear = words.every(w2 => {
+      const b2 = w2.getBoundingClientRect();
+      return b2.left >= ob.right - 0.5 || b2.right <= ob.left + 0.5 ||
+        b2.top >= ob.bottom - 0.5 || b2.bottom <= ob.top + 0.5;
+    });
+    const memoBox = Editor.specBoxes.find(o => o.memo === "pwr");
+    const optBox = Editor.specBoxes.filter(o => o.k === "pwr_std").sort((a, b) => b.y - a.y)[0];
+    res({ found: true, clear, below: memoBox && optBox && memoBox.y > optBox.y + optBox.h - 0.01 });
+  }));
+});
+
 // ── コネクター行の配線長 (5M) を押す → 行も選ばれる。端子台に移すと外れる ──
 R.pwrLen = { picked: await clickBox('o.k === "pwr_len" && o.i === 1 && o.row === 2') };
 await p.waitForTimeout(150);
@@ -288,6 +309,7 @@ const checks = {
   pwrOpts: R.form.pwrOpts.length === 3 && /端子台/.test(R.form.pwrOpts[0])
     && /3112N/.test(R.form.pwrOpts[1]) && /3222RW-L6/.test(R.form.pwrOpts[2])
     && !/3M/.test(R.form.pwrOpts[1]) && R.form.pwrSub === "3M/5M/10M",
+  pwrClear: R.pwrClear.found === true && R.pwrClear.clear === true && R.pwrClear.below === true,
   pwrLen: R.pwrLen.picked === true && R.pwrLen.len === 1 && R.pwrLen.row === 2 &&
     R.pwrLen.cleared === -1,
   pwrPick: R.pwrPick.picked === true && R.pwrPick.sel === 1,

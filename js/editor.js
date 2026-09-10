@@ -853,24 +853,21 @@ function specSheetSVG(page, k, record) {
         }
         y += RH * (rows + 1);
       } else if (blk.kind === "compare") {
-        /* 電源接続方法: 左は当社標準の選択肢 (端子台 / コネクター接続)、
-           右は御社指定方法の記入欄。記入が無い欄には斜線を引く。
-           右の欄は図面の上で直接クリックして書ける */
-        // 当社標準の欄は文言が長いので広めに取る (右は記入欄なので狭くてよい)
-        const cw = colW * 0.6, cw2 = colW - cw, ow = cw - NW;
-        [[x0, cw], [x0 + cw, cw2]].forEach(([hx, hw], c) => {
-          out += box(hx, y, hw, RH) + txt(hx, y + RH / 2 + TH * 0.36 * f, hw, blk.heads[c]);
-        });
+        /* 電源接続方法: 上 = 当社標準の選択肢 (全幅 — 配線長の小選択が
+           選択肢の文言と重ならない広さを取る)、下 = 御社指定方法の記入欄。
+           記入が無い欄には斜線を引く。欄は図面の上で直接クリックして書ける */
+        const ow = colW - NW;
+        out += box(x0, y, colW, RH) + txt(x0, y + RH / 2 + TH * 0.36 * f, colW, blk.heads[0]);
         const subAt = blk.sub ? (Array.isArray(blk.sub.at) ? blk.sub.at : [blk.sub.at]) : [];
         blk.opts.forEach((opt, i) => {
           const yy = y + RH + i * RH;
           out += numCell(x0, yy, NW, RH, i + 1, sel[blk.k] === i, blk.k, i);
           out += box(x0 + NW, yy, ow, RH) + txt(x0 + NW, yy + RH / 2 + TH * 0.36 * f, ow, opt);
-          // コネクターの行には配線長の小 2 択 (3M/5M/10M)。選んだ語を ◯ で囲む
+          // コネクターの行には配線長の小選択 (3M/5M/10M)。選んだ語を ◯ で囲む
           if (blk.sub && subAt.includes(i)) {
             const sw2 = S(9);
             blk.sub.opts.forEach((so, j) => {
-              const sx = x0 + cw - sw2 * (blk.sub.opts.length - j) - S(1);
+              const sx = x0 + colW - sw2 * (blk.sub.opts.length - j) - S(1);
               out += txt(sx, yy + RH / 2 + TH * 0.36 * f, sw2, so, "middle", TH * 0.85);
               if (sel[blk.sub.k] === j && sel[blk.k] === i)
                 out += `<ellipse cx="${sx + sw2 / 2}" cy="${yy + RH / 2}" rx="${sw2 * 0.4}" ry="${RH * 0.36}" fill="none" stroke="${INK}" stroke-width="${LINE_W.thin * f}"/>`;
@@ -878,22 +875,25 @@ function specSheetSVG(page, k, record) {
             });
           }
         });
-        const mh = RH * blk.opts.length;
-        out += box(x0 + cw, y + RH, cw2, mh);
+        // 御社指定方法は選択肢の下の段 — 右隣に置くと選択肢の幅が足りず文字が重なる
+        const oy = y + RH * (1 + blk.opts.length);
+        out += box(x0, oy, colW, RH) + txt(x0, oy + RH / 2 + TH * 0.36 * f, colW, blk.heads[1]);
+        const mh = RH * 2;
+        out += box(x0, oy + RH, colW, mh);
         if (memo[blk.memoK]) {
           // 記入は Enter で改行できる — 行ごとに縦へ並べる
           const mlines = String(memo[blk.memoK]).split("\n");
           const lh0 = Math.min(RH * 0.8, mh / mlines.length);
-          const my0 = y + RH + (mh - lh0 * mlines.length) / 2;
+          const my0 = oy + RH + (mh - lh0 * mlines.length) / 2;
           mlines.forEach((ln, li) => {
-            out += txt(x0 + cw, my0 + lh0 * (li + 0.5) + TH * 0.36 * f, cw2, ln);
+            out += txt(x0, my0 + lh0 * (li + 0.5) + TH * 0.36 * f, colW, ln);
           });
         }
-        else out += line(x0 + cw, y + RH + mh, x0 + cw + cw2, y + RH);   // 記入なし = 斜線
-        if (record) Editor.specBoxes.push({ x: x0 + cw, y: y + RH, w: cw2, h: mh,
+        else out += line(x0, oy + RH + mh, x0 + colW, oy + RH);   // 記入なし = 斜線
+        if (record) Editor.specBoxes.push({ x: x0, y: oy + RH, w: colW, h: mh,
           memo: blk.memoK, label: blk.memoLabel || "指定内容", multiline: !!blk.memoMulti });
 
-        y += RH + mh;
+        y += RH * (2 + blk.opts.length) + mh;
       } else if (blk.kind === "wire") {
         // 単線: 回路 / 用途 / 線色 (1〜3) / 定格
         const wC = colW * 0.16, wU = colW * 0.18, wR = colW * 0.30;
