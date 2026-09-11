@@ -450,6 +450,14 @@ UI.showProps = (focusTag = false) => {
         }).join("");
         return rows ? `<div class="prop-row" style="margin-bottom:0"><label>端子番号 <span class="rp-dim">(空欄 = 図面に出さない)</span></label></div>` + rows : "";
       })()}
+      ${(sym.breakBand || sym.breakOf) ? (() => {
+        const L = sym.brkLen || (sym.breakBand && sym.breakBand.lenDef) || 20;
+        const G = sym.brkGap || (sym.breakBand && sym.breakBand.gapDef) || 15;
+        return `<div class="prop-row"><label>波線の長さ <span class="rp-dim">(10〜300mm・5mm 刻み)</span></label>
+            <input id="pBrkLen" class="mono" type="number" step="5" min="10" max="300" value="${L}"/></div>
+          <div class="prop-row"><label>2 本の間隔 <span class="rp-dim">(この間の配線・機器を隠す)</span></label>
+            <input id="pBrkGap" class="mono" type="number" step="5" min="5" max="400" value="${G}"/></div>`;
+      })() : ""}
       ${symStretchBase(sym) ? (() => {
         const st = symStretchBase(sym).stretch;
         const span = sym.span || st.def;
@@ -724,6 +732,16 @@ UI.showProps = (focusTag = false) => {
       UI.refresh(false);
     }));
     // 行ピッチ (mm 指定の寸法違い)。下地を引き直せるよう、古い下地は消して知らせる
+    // 破断記号の寸法 (bind が commit と再描画を行う — ここでは記号の差し替えだけ)
+    const brkApply = () => {
+      const base = SYMBOLS_BY_ID[symOf(dev.sym).breakOf || dev.sym];
+      if (!base || !base.breakBand) return;
+      const eL = pane.querySelector("#pBrkLen"), eG = pane.querySelector("#pBrkGap");
+      const v2 = breakVariant(base, eL && eL.value, eG && eG.value);
+      if (dev.sym !== v2.id) { dev.sym = v2.id; App.labelRev++; UI.showProps(); }
+    };
+    bind("#pBrkLen", brkApply);
+    bind("#pBrkGap", brkApply);
     bind("#pSpanMM", v => {
       const base = symStretchBase(symOf(dev.sym));
       if (!base) return;

@@ -482,9 +482,12 @@ function devicesSVG(page, opts = {}) {
   const print = !!opts.print;
   const simOn = App.sim.running;
   const fr = contentScale();
+  // 破断帯 (波線 2 本の間) に丸ごと入った機器は描かない — 省略表示
+  const brkHide = breakHiddenSet(page);
   page.devices.forEach(dev => {
     const sym = symOf(dev.sym);
     if (!sym) return;
+    if (brkHide.has(dev.id)) return;
     const selected = !print && App.selection.has(dev.id);
     const hovered = !print && Editor.hover.devId === dev.id;
     let color = INK;
@@ -1333,8 +1336,10 @@ function hitTest(wx, wy) {
       cands.push({ type: "table", obj: tb });
   }
   // デバイス
+  const brkHide = breakHiddenSet(page);   // 破断帯で省略表示中の機器はつかめない (見えないものは選ばせない)
   for (let i = page.devices.length - 1; i >= 0; i--) {
     const d = page.devices[i];
+    if (brkHide.has(d.id)) continue;
     const sym = symOf(d.sym);
     if (sym.enclosure) {
       /* 囲み記号 (多芯ケーブル・シールド) は輪郭の近傍だけを拾う。

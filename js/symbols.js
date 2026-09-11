@@ -430,10 +430,14 @@ const SYMBOLS = [
        そのまま。幅は 20mm — 広い範囲はプロパティ「配線の破断」を使う */
     id: "break_mark", nonstd: true, cat: "misc", letter: "W",
     name: "破断記号 (配線の省略)", nameEn: "Break mark",
-    desc: "波線から下に重なった配線を隠して省略表示にする。つながりは変わらない (検図・接続リストはそのまま)",
-    pins: [], sim: "none", noDrc: true, bounds: [-10, -3, 20, 8],
-    wireMask: [{ x: -10, y: 0, w: 20, h: 1000 }],
-    body: `<path d="M-10,0 C-7,-3 -3,3 0,0 C3,-3 7,3 10,0" fill="none"/>`,
+    desc: "波線 2 本の間に重なった配線・機器を隠して省略表示にする。つながりは変わらない (検図・接続リストはそのまま)。" +
+      "長さと 2 本の間隔はプロパティで変えられ、回転すると帯も一緒に回る",
+    pins: [], sim: "none", noDrc: true, bounds: [-10, -3, 20, 21],
+    /* 帯 (2 本の波線の間) だけを隠す。寸法違い (長さ×間隔) は breakVariant が
+       break_mark@L x G の id で作る — この既定形は置いた直後の姿 */
+    breakBand: { lenDef: 20, gapDef: 15 },
+    wireMask: [{ x: -10, y: 0.01, w: 20, h: 14.98 }],
+    body: `<path d="M-10,0 C-7,-3 -3,3 0,0 C3,-3 7,3 10,0 M-10,15 C-7,12 -3,18 0,15 C3,12 7,18 10,15" fill="none"/>`,
   },
   {
     id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",

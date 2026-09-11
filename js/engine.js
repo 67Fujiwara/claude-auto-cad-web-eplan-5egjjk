@@ -2543,6 +2543,51 @@ const MISSING_SYM = {
    保存・再読込・DXF出力・部品表は通常のシンボルと同じ扱いで通る。
    パレット (DB_SYMBOLS) には基本形だけを置き、寸法違いは並べない。 */
 const SYM_VARIANT_RE = /^(.+)@(\d+(?:\.\d+)?)$/;
+/* 破断記号の寸法違い: break_mark@長さx間隔。波線 2 本 + 間の帯 (マスク) を
+   その寸法で作る。回転・倍率はマスクが機器ローカルで判定されるので追従する */
+const SYM_BREAK_RE = /^(.+)@(\d+)x(\d+)$/;
+function breakVariant(base, len, gap) {
+  const L = Math.max(10, Math.min(300, Math.round((parseFloat(len) || base.breakBand.lenDef) / 5) * 5));
+  const G = Math.max(5, Math.min(400, Math.round((parseFloat(gap) || base.breakBand.gapDef) / 5) * 5));
+  const id = `${base.id}@${L}x${G}`;
+  if (SYMBOLS_BY_ID[id]) return SYMBOLS_BY_ID[id];
+  const wave = y => `M${-L / 2},${y} C${-L * 0.35},${y - 3} ${-L * 0.15},${y + 3} 0,${y} ` +
+    `C${L * 0.15},${y - 3} ${L * 0.35},${y + 3} ${L / 2},${y}`;
+  const v = { ...base, id, breakOf: base.id, brkLen: L, brkGap: G,
+    bounds: [-L / 2, -3, L, G + 6],
+    body: `<path d="${wave(0)} ${wave(G)}" fill="none"/>`,
+    // 帯は波線の内側だけ (波線そのものは残す)
+    wireMask: [{ x: -L / 2, y: 0.01, w: L, h: G - 0.02 }] };
+  delete v.breakBand;
+  SYMBOLS_BY_ID[id] = v;
+  return v;
+}
+/** 破断帯に丸ごと入った機器 (省略表示で隠すもの) の id 集合 */
+function breakHiddenSet(page) {
+  const bands = [];
+  (page.devices || []).forEach(d => {
+    const sym = symOf(d.sym);
+    const bb = sym.breakBand ? { L: sym.breakBand.lenDef, G: sym.breakBand.gapDef }
+      : (sym.breakOf ? { L: sym.brkLen, G: sym.brkGap } : null);
+    if (bb) bands.push({ dev: d, L: bb.L, G: bb.G });
+  });
+  const hidden = new Set();
+  if (!bands.length) return hidden;
+  (page.devices || []).forEach(d => {
+    const sym = symOf(d.sym);
+    if (sym.breakBand || sym.breakOf) return;    // 破断記号どうしは隠さない
+    const b = devBounds(d);
+    const cs = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]];
+    for (const band of bands) {
+      const ok = cs.every(([wx, wy]) => {
+        const [lx, ly] = devLocalPt(band.dev, wx, wy);
+        return lx >= -band.L / 2 - 0.01 && lx <= band.L / 2 + 0.01 && ly >= -0.01 && ly <= band.G + 0.01;
+      });
+      if (ok) { hidden.add(d.id); break; }
+    }
+  });
+  return hidden;
+}
 /** 伸縮シンボルの寸法を丸める (刻み・上下限は各シンボルの stretch 定義に従う) */
 function symStretchSpan(base, span) {
   const st = base.stretch;
@@ -2577,6 +2622,11 @@ function symStretchBase(sym) {
 function symOf(symId) {
   const s = SYMBOLS_BY_ID[symId];
   if (s) return s;
+  const mb = SYM_BREAK_RE.exec(String(symId == null ? "" : symId));
+  if (mb) {
+    const base = SYMBOLS_BY_ID[mb[1]];
+    if (base && base.breakBand) return breakVariant(base, parseFloat(mb[2]), parseFloat(mb[3]));
+  }
   const m = SYM_VARIANT_RE.exec(String(symId == null ? "" : symId));
   if (m) {
     const base = SYMBOLS_BY_ID[m[1]];

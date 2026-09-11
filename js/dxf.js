@@ -755,9 +755,11 @@ function pageToDXF(page) {
   });
 
   // ── デバイス ──
+  const brkHide = breakHiddenSet(page);    // 破断帯の中の機器は描かない (画面と同じ)
   page.devices.forEach(dev => {
     const sym = symOf(dev.sym);
     if (!sym) return;
+    if (brkHide.has(dev.id)) return;
     const xf = dxfDevXform(dev);
     // 細線 (0.25mm) で登録したシンボルは細線レイヤへ (AutoCAD 側でペンを分けられる)
     const symLyr = symStrokeWidth(sym) <= LINE_W.thin + 0.01 ? "SYMBOL_THIN" : "SYMBOL";
