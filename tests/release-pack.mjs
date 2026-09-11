@@ -175,6 +175,33 @@ const RN = await p.evaluate(async () => {
     wipKept: list.length === nWip0 + 1 && list.some(r2 => r2.name === "出図遷移テスト") };
 });
 
+/* ── 履歴から開くと「作業中」に追加される (ヘッダ名と図面名がそろう) ── */
+const HO = await p.evaluate(async () => {
+  // 別の図面を作業中にしてから、履歴の一番上を開く
+  App.project = newProject("履歴前の図面"); UI.renumberPages();
+  App.project.name = "履歴前の図面";
+  await UI.wipSave({ asNew: true, name: "履歴前の図面" });
+  const beforeId = wipCurrent();
+  const target = relList()[0];
+  window.confirm = () => true;
+  UI.openReleaseHistory();
+  await new Promise(r => setTimeout(r, 150));
+  const btn = document.querySelector(`.rl-open[data-id="${target.id}"]`);
+  if (!btn) return { noBtn: true };
+  btn.click();
+  await new Promise(r => setTimeout(r, 500));
+  const list = wipList();
+  const cur = list.find(r2 => r2.id === wipCurrent());
+  const lab = document.querySelector("#btnWip .wip-label");
+  return {
+    opened: App.project.name, target: target.project,
+    curChanged: wipCurrent() !== beforeId,
+    curName: cur && cur.name,
+    kept: list.some(r2 => r2.id === beforeId && r2.name === "履歴前の図面"),
+    chip: lab ? lab.textContent : "",
+  };
+});
+
 /* ── data-h + font-size 両持ちの記号 → PDF 化 (二重属性の回帰) ── */
 const DUP = await p.evaluate(async () => {
   App.project = newProject("二重FS"); UI.renumberPages();
@@ -198,6 +225,10 @@ const DUP = await p.evaluate(async () => {
 
 const checks = {
   noPageErrors: errs.length === 0,
+  /* 履歴から開いた図面が作業中の新しい枠になり、ヘッダ名も図面名と
+     そろう。開く前の図面は別枠として残る */
+  histOpen: HO.curChanged === true && HO.opened === HO.target &&
+    HO.curName === HO.opened && HO.chip === HO.opened && HO.kept === true,
   dupFs: DUP.xmlOk === true && DUP.dbl === 0 && DUP.img === true && DUP.hasText === true,
   relNew: RN.moved === true && RN.wipKept === true,
   newBtn: R.newBtn.exists === true && /新規/.test(R.newBtn.label || ""),

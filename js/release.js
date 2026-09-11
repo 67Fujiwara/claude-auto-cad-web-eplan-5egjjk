@@ -343,8 +343,12 @@ UI.openReleaseHistory = () => {
       if (!p) { alert("この履歴の図面データが見つかりません (ブラウザのデータが消去された可能性があります)"); return; }
       fn(p, list.find(r => r.id === id));
     };
-    rows.querySelectorAll(".rl-open").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => {
-      if (!confirm(`${r.stamp} の図面を開きます。現在の編集内容は失われます (保存していない場合)。\nよろしいですか？`)) return;
+    rows.querySelectorAll(".rl-open").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, async (p, r) => {
+      if (!confirm(`${r.stamp} の図面を開いて「作業中」に追加します。\n今の図面は作業中へ退避します。よろしいですか？`)) return;
+      /* 今の図面を作業中へ退避してから開く — 開いた図面は新しい作業中の
+         枠として登録する。登録しないと、ヘッダの作業中名が前の図面のまま
+         になり、次の一時保存が前の図面の枠を上書きしてしまう */
+      await wipStashCurrent();
       commit();
       App.project = p;
       mergeProjectSymbols();
@@ -353,10 +357,11 @@ UI.openReleaseHistory = () => {
       UI.renumberPages();
       applySheet();
       document.getElementById("projectName").value = App.project.name;
+      await UI.wipSave({ asNew: true });
       m.close();
       UI.refresh();
       zoomFit();
-      UI.setMsg(`設計完了履歴 (${r.stamp}) の図面を開きました`);
+      UI.setMsg(`設計完了履歴 (${r.stamp}) の図面を開き、作業中に追加しました`);
     })));
     rows.querySelectorAll(".rl-dxf").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => {
       // 履歴の図面で一時的に差し替えて DXF を作り、元に戻す
