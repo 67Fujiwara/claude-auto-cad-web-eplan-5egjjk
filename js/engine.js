@@ -5197,11 +5197,14 @@ function releasePages(kind, pages) {
 }
 /** その版のページだけを載せた図面として fn を走らせる (目次と「n / N」を合わせる)。
     ページは写しを使うので、元の図面のページ番号は書き換わらない。 */
-async function withReleaseProject(kind, fn) {
+async function withReleaseProject(kind, fn, o = {}) {
   const keep = App.project, keepIdx = App.pageIdx;
   const list = releasePages(kind, keep.pages).map(pg => ({ ...pg }));
   list.forEach((pg, i) => { pg.no = i + 1; });
-  App.project = { ...keep, pages: list };
+  /* o.frameStyle = この版だけ図枠様式を差し替えて描く (顧客提出用 PDF を
+     シンプル図枠で出す)。meta ごと写しに差し替えるので元の図面は変わらない */
+  const meta = o.frameStyle ? { ...(keep.meta || {}), frameStyle: o.frameStyle } : keep.meta;
+  App.project = { ...keep, meta, pages: list };
   App.pageIdx = Math.max(0, Math.min(list.length - 1, keepIdx));
   try { return await fn(list); }
   finally { App.project = keep; App.pageIdx = keepIdx; }

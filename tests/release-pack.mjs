@@ -131,9 +131,17 @@ const R2 = await p.evaluate(async () => {
     }
     return { how: "テスト", name: "" };
   };
+  /* 顧客提出用 PDF はシンプル図枠で描かれること (社内保存用は今の様式のまま)。
+     buildPDF を横取りして、描画中の様式を版ごとに記録する */
+  const keepBuild = window.buildPDF;
+  const styles = [];
+  window.buildPDF = (pgs, opts) => { styles.push({ n: pgs.length, style: frameStyle() }); return keepBuild(pgs, opts); };
   await UI.runRelease({ dxf: false, json: false, pdfIn: true, pdfCus: true, dpi: 72, pack: "zip", rev: "0" });
+  window.buildPDF = keepBuild;
   window.saveReleaseFiles = keepSave;
   o.out = grabbed;
+  o.pdfStyles = styles;
+  o.styleAfter = frameStyle();
   return o;
 });
 
@@ -195,6 +203,11 @@ const checks = {
   newBtn: R.newBtn.exists === true && /新規/.test(R.newBtn.label || ""),
   pdfOne: R.pdfOne.type === "application/pdf" && R.pdfOne.pages === R.pdfOne.want && R.pdfOne.want >= 4,
   pdfValid: R.pdfValid.head && R.pdfValid.eof && R.pdfValid.xrefAt && R.pdfValid.objs && R.pdfValid.size > 10000,
+  /* 顧客提出用 = シンプル図枠 (仕様ページを外した短い方)。社内保存用 = 標準のまま。
+     出図が終わったら様式は元 (標準) に戻っている */
+  cusPlain: Array.isArray(R2.pdfStyles) && R2.pdfStyles.length === 2 &&
+    R2.pdfStyles[0].style === "std" && R2.pdfStyles[1].style === "plain" &&
+    R2.pdfStyles[1].n < R2.pdfStyles[0].n && R2.styleAfter === "std",
   zipPack: R.zipPack.type === "application/zip" && R.zipPack.local === 2 && R.zipPack.central === 2 && R.zipPack.end === 1,
   zipRead: zipOK === true,
   menu: menuHas.includes("PDF出力 (全ページを1ファイル)"),
