@@ -589,8 +589,20 @@ UI.showProps = (focusTag = false) => {
       const tgt = SYMBOLS_BY_ID[v];
       const want = (curB.expCh && tgt && tgt.expAlts && tgt.expAlts[curB.expCh]) ? tgt.expAlts[curB.expCh] : v;
       if (want === curB.id) return;      // 同一機種・同一台数の再選択 (寸法違いでも) は何もしない
+      /* 行ピッチは今の値を保つ — 機種ごとに既定ピッチが違う (16 点機は
+         15mm に詰めて 1 枚) ため、既定へ黙って変わると行の高さがズレて
+         引いてある配線が全行外れる */
+      const oldSpan = curB.stretch
+        ? (/@(\d+(?:\.\d+)?)$/.test(dev.sym) ? parseFloat(RegExp.$1) : curB.stretch.def)
+        : null;
       dev.sym = want;
-      const after = symOf(want);
+      const tgtB = SYMBOLS_BY_ID[want];
+      if (tgtB && tgtB.stretch && oldSpan != null && tgtB.stretch.def !== oldSpan
+          && oldSpan >= tgtB.stretch.min && oldSpan <= tgtB.stretch.max) {
+        symStretchVariant(tgtB, oldSpan);
+        dev.sym = `${want}@${oldSpan}`;
+      }
+      const after = symOf(dev.sym);
       // 型式は差し替えに追従させる (図と部品表が食い違わないように)。
       // 使う人が手で入れた型式は尊重する
       if (!dev.typeRef || dev.typeRef === (before.typ || "")) dev.typeRef = after.typ || "";

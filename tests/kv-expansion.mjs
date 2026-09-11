@@ -68,7 +68,7 @@ const R = await p.evaluate(async () => {
       && v16.bounds[3] > s16.bounds[3],   // ピッチを広げると縦に伸びる
   };
   out.baseKept = {
-    n40pins: SYMBOLS_BY_ID["kv_n40at_out1"].pins.length,   // 8点+C1+0V/24V = 11 (コモンは実機照合で最低限)
+    n40pins: SYMBOLS_BY_ID["kv_n40at_out"].pins.length,   // 16点+C1/C2+0V/24V = 20 (16点は 1 枚 1 列)
     n14in: SYMBOLS_BY_ID["kv_n14at_in"].pins.length,       // 8点+C0 = 9
   };
 
@@ -143,7 +143,7 @@ const checks = {
   oneSheet: R.oneSheet.s8 && R.oneSheet.s16 && R.oneSheet.noSplit,
   swap: R.swap === true,
   place: R.place.dev && R.place.pins === 17 && R.place.drawn && R.place.stretch,
-  baseKept: R.baseKept.n40pins === 11 && R.baseKept.n14in === 9,
+  baseKept: R.baseKept.n40pins === 20 && R.baseKept.n14in === 9,
   alts: R.alts.made && R.alts.notInDb && R.alts.altOf && R.alts.samePos
     && R.alts.pins7 === [...seq(0, 7).map(v => String(+v + 100)), "COM"].join(","),
   onSheet: R.onSheet.header && R.onSheet.note1 && R.onSheet.note2,

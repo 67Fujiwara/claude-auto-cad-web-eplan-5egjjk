@@ -63,8 +63,8 @@ const R = await p.evaluate(() => {
     kv_n24at_out: { io: 10, first: "500", last: "509", aux: "0V,24V,C1,C2", paper: "A3", orient: "portrait" },
     kv_n40at_in1: { io: 16, first: "000", last: "015", aux: "C0", paper: "A3", orient: "portrait" },
     kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n40at_out1:{ io: 8,  first: "500", last: "507", aux: "0V,24V,C1", paper: "A3", orient: "portrait" },
-    kv_n40at_out2:{ io: 8,  first: "508", last: "515", aux: "C2", paper: "A3", orient: "portrait" },
+    /* 出力 16 点は 1 枚 (1 列) — ピッチを 15mm に詰めて A3 縦へ収める */
+    kv_n40at_out: { io: 16, first: "500", last: "515", aux: "0V,24V,C1,C2", paper: "A3", orient: "portrait" },
     kv_n14ar_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
     kv_n14ar_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
     /* 三菱 MELSEC iQ-R — 作りは KV と同じ・接点構成は三菱の取説どおり。
@@ -167,6 +167,19 @@ const R = await p.evaluate(() => {
     out.pitchPaperByModel[v] = {};
     Object.entries(byModel).forEach(([m, v2]) => { out.pitchPaperByModel[v][m] = [...new Set(v2)]; });
   });
+  /* 既定ピッチ (機種ごと — 16 点機の出力は 15mm) での用紙。基準はこちら:
+     既定どうしなら同じ機種の枚は同じ用紙で、すべて A3 に収まる */
+  out.defPaper = Object.keys(SPEC).map(id => lab((symOf(id) || {}).sheet)).join(",");
+  {
+    const bm = {};
+    Object.keys(SPEC).forEach(id => {
+      const m = id.replace(/_(in|out)\d*$/, "");
+      (bm[m] = bm[m] || []).push(lab((symOf(id) || {}).sheet));
+    });
+    out.defPaperByModel = {};
+    Object.entries(bm).forEach(([m, v2]) => { out.defPaperByModel[m] = [...new Set(v2)]; });
+  }
+  out.n40at20 = lab((symOf("kv_n40at_out@20") || {}).sheet);
 
   if (out.missingIds.length) return out;      // 以降は記号がそろっている前提
 
@@ -759,7 +772,7 @@ const V1 = await p.evaluate(() => {
   return { drc0: runDRC().filter(i => i.page === q.no).length };
 });
 // 機種差し替え: 6 点 → 8 点 (行ピッチは同じなので既存 6 行はそのまま合う)
-await p.selectOption("#pSwap", "kv_n40at_out1").catch(() => {});
+await p.selectOption("#pSwap", "kv_n40at_out").catch(() => {});
 await p.waitForTimeout(250);
 const V2 = await p.evaluate(() => {
   const q = curPage();
@@ -768,8 +781,9 @@ const V2 = await p.evaluate(() => {
   return { swapped: dd.sym,
     drc: runDRC().filter(i => i.page === q.no && /貫通|宙吊り|どこにも接続|短絡|ピン COM/.test(i.msg)).map(i => i.sev + ":" + i.msg) };
 });
-// 行ピッチを 30 に (UI の入力欄経由) → 負荷が新しい行へ運ばれること
-await p.$eval("#pSpanMM", el => { el.value = "30"; el.dispatchEvent(new Event("change", { bubbles: true })); }).catch(() => {});
+/* 行ピッチを 25 に (UI の入力欄経由) → 負荷が新しい行へ運ばれること。
+   16 点 1 枚になったので 30 では A1 でも縦が足りない — 25 なら A2 に収まる */
+await p.$eval("#pSpanMM", el => { el.value = "25"; el.dispatchEvent(new Event("change", { bubbles: true })); }).catch(() => {});
 await p.waitForTimeout(250);
 const V3 = await p.evaluate(() => {
   const q = curPage();
@@ -832,8 +846,8 @@ const FN = await p.evaluate(() => {
   App.project = newProject("fn下線"); UI.renumberPages();
   const pg = App.project.pages.find(isDrawingPage);
   App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg);
-  const d = addDevice(pg, "kv_n40at_out1", 100, 40);
-  const sym = symOf("kv_n40at_out1");
+  const d = addDevice(pg, "kv_n40at_out", 100, 40);
+  const sym = symOf("kv_n40at_out");
   // 記号が無い (壊れている) ときはクラッシュせず判定を落とす
   if (!sym.ioSheet) return { drawn: -1, fnRows: -2, total: -1, uiNames: [], dxfLines: -1, fx: 0, devx: 0 };
   const fx = sym.ioSheet.fnX;
@@ -870,21 +884,21 @@ const KVNOTE = await p.evaluate(() => ({
   inPol: ((symOf("kv_n14at_in") || {}).body || "").includes("コモンは +24V (NPN 機器向け)"),
   inSurm: ((symOf("kv_n24at_in") || {}).body || "").includes("類推"),
   outSurm: ((symOf("kv_n24at_out") || {}).body || "").includes("類推"),
-  n40Clean: !(((symOf("kv_n40at_out1") || {}).body || "").includes("類推")),
+  n40Clean: !(((symOf("kv_n40at_out") || {}).body || "").includes("類推")),
   arClean: !(((symOf("kv_n14ar_out") || {}).body || "").includes("類推")),
   arInPol: ((symOf("kv_n14ar_in") || {}).body || "").includes("+24V (NPN"),
 }));
 
 const checks = {
   // 想定の枚 (id) がすべてあること
-  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 12,
+  symbolsExist: Array.isArray(R.missingIds) && R.missingIds.length === 0 && ids.length === 11,
   // 群ごとの点数・端子番号 (16 点で次のチャネルへ繰り上がる)
   groups: ids.every(id => R.group[id] && R.group[id].io !== undefined && R.group[id].io === R.spec[id].io &&
     R.group[id].first === R.spec[id].first && R.group[id].last === R.spec[id].last &&
     R.group[id].aux === R.spec[id].aux),
   // 16 点で次のチャネルへ繰り上がる (枚の切れ目はチャネルをまたがない)
   relayCarry: (R.group.kv_n40at_in1 || {}).last === "015" && (R.group.kv_n40at_in2 || {}).first === "100" &&
-    (R.group.kv_n40at_out2 || {}).last === "515",
+    (R.group.kv_n40at_out || {}).last === "515",
   // 1 枚 = 1 チャネル (16 点まで)
   perSheet16: ids.every(id => (R.group[id] || {}).io <= 16),
   // 用紙は 1:1。図枠に収まり表題欄を避け、レールの左に余白が残る
@@ -899,8 +913,12 @@ const checks = {
   /* 既定ピッチ (20mm) でどの枚も A3 (16 点の機種は縦・小さい機種は横)。
      どのピッチでも「同じ機種の枚どうしは同じ用紙」であること —
      枚ごとに用紙を決めると、ピッチを広げたとき 1 台の図面集に横と縦が混ざる */
-  pitchPaper: ((R.pitchPaper || {})[20] || "").split(",").every(v => /^A3[横縦] 1:1$/.test(v)) &&
-    Object.values(R.pitchPaperByModel || {}).every(m => Object.values(m).every(v => v.length === 1)),
+  /* 既定ピッチでどの枚も A3 (16 点機の出力は 15mm に詰めて縦 1 枚)。
+     既定どうしなら同じ機種の枚は同じ用紙。ピッチを手で広げた枚は
+     その枚だけ大きな用紙になってよい (16 点 @20mm は A2) */
+  pitchPaper: (R.defPaper || "").split(",").every(v => /^A3[横縦] 1:1$/.test(v)) &&
+    Object.values(R.defPaperByModel || {}).every(v => v.length === 1) &&
+    /^A2/.test(R.n40at20 || ""),
   // 横に倒した現場機器が隣の行とぶつからない (既定ピッチ)。
   // 背の高い記号は既定では当たるが、ピッチを広げれば収まる
   /* 単極の入出力機器は既定ピッチ (20mm) で隣の行とぶつからない。
@@ -915,7 +933,7 @@ const checks = {
     Object.keys((R.pitch || {}).wideClash || {}).length === 2 &&
     R.pitch.tallAtDef > 0 && R.pitch.tallAtWide === 0 && R.pitch.wide === 30,
   // 紙の上の見え方が群によらず同じ
-  printedSame: ids.every(id => (R.print[id] || {}).pitch === 20 && R.print[id].minText >= 2.5 - 0.001 &&
+  printedSame: ids.every(id => (R.print[id] || {}).pitch === (id === "kv_n40at_out" ? 15 : 20) && R.print[id].minText >= 2.5 - 0.001 &&
     R.print[id].minLine >= 0.25 - 0.001),
   // 未使用の入出力点は黙る。電源・コモン・保護接地は知らせる
   /* 未使用の入出力点は黙るが、コモンの結び忘れは知らせる。
@@ -952,7 +970,7 @@ const checks = {
   /* 出力の A3 縦置きは横幅をぎりぎりまで使う — 現場側 (レールまでの距離) を
      160mm へ広げる (箱 36 + 現場 160 + コメント欄 62 ≈ 作図領域 267)。
      A3 横の出力 (8 点以下の機種) は従来の 80mm のまま */
-  fillWidth: (R.group.kv_n40at_out1 || {}).rail >= 155 && (R.group.kv_n24at_out || {}).rail >= 155 &&
+  fillWidth: (R.group.kv_n40at_out || {}).rail >= 155 && (R.group.kv_n24at_out || {}).rail >= 155 &&
     (R.group.kv_n14at_out || {}).rail === 80 && (R.group.kv_n40at_in1 || {}).rail === 80,
   /* 分割コモン (KV-N14AR): 取説どおりの並びで、コモン 4 つが全部 0V レールへ結ばれる */
   splitCom: (R.splitCom || {}).order === "0V,24V,500,C1,501,C2,502,C3,503,504,505,C4" &&
@@ -976,8 +994,8 @@ const checks = {
   // 図中注記 (類推の照合指示 + 入力の +コモン極性宣言)
   kvNote: KVNOTE.inPol && KVNOTE.inSurm && KVNOTE.outSurm && KVNOTE.arClean && KVNOTE.arInPol && KVNOTE.n40Clean === true,
   // 出力の枚でも UI 経路 (機種差し替え・行ピッチ) が下地と負荷を壊さない
-  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out1" && V2.drc.length === 0 &&
-    V3.pitch === 30 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,
+  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out@20" && V2.drc.length === 0 &&
+    V3.pitch === 25 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,
   // 出力の枚の 3 線式センサ: 短絡を描かず、置き場所の誤りをエラーで知らせる
   out3wire: (R.out3wire || {}).noShort === true && R.out3wire.told >= 1,
   // 出力の枚も、負荷を落として結線すれば検図 0 件
@@ -1023,7 +1041,7 @@ const checks = {
   unitSheets: (R.unit || {}).dupTag === 0 && R.unit.bomRows === 1 &&
     (R.unit.bomTags || []).join(",") === "-A100",
   // 部品表・DXF
-  bom: R.bom === 10,   // N40AT の出力が部屋割りで 2 枚に割れたぶん 1 行増える
+  bom: R.bom === 9,   // N40AT の出力は 1 枚 (16 点 1 列) になったので 9 行
   dxf: (R.dxf || {}).r107 === true && R.dxf.com === true,
   // プロパティ: 機種の差し替え・下地・機能欄の入口があること
   /* 規格外の図記号は図面上で説明する (JIS C 0617-1)。プロパティの説明文は

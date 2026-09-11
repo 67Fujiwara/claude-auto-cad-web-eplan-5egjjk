@@ -239,7 +239,8 @@ function kvBuild(o, pitch) {
   /* 拡張の図中注記 (※拡張◯台目…) は箱の下 7mm に出る。用紙判定へ入れないと
      「判定は入るが注記が表題欄帯に掛かる」機種がいずれ出る (bounds と申告の一致) */
   const noteH = o.expNote ? 7 : 0;
-  const sheetH = r1(Math.max(...(o.allSeqs || [o.seq]).map(q => kvSeqH(q, pitch))) + noteH);
+  const sheetH = r1(Math.max(kvSeqH(o.seq, pitch),
+    ...(o.allSeqs || []).map(q => q && q.seq ? kvSeqH(q.seq, q.def || KV_PITCH_DEF) : kvSeqH(q, KV_PITCH_DEF))) + noteH);
   /* 幅は「本物の最小幅」を渡す。1 などの仮値だと「表題欄の左に収まる細い記号」
      と誤判定され、右下の帯 (表題欄 + 改訂履歴欄) を確保しない高さで
      用紙が選ばれてしまう。この記号は最小でも 170mm ある */
@@ -339,7 +340,7 @@ function kvBuild(o, pitch) {
 
 /** 入出力結線図の記号 (1 群ぶん)。入力は端子が箱の左、出力は端子が箱の右 */
 function mkKvSheet(o) {
-  const built = kvBuild(o, KV_PITCH_DEF);
+  const built = kvBuild(o, o.pitchDef || KV_PITCH_DEF);
   const flip = o.fieldSide === "right";
   return {
     id: o.id, db: true, group: "PLC入出力結線図", cat: "db", letter: "PLC",
@@ -360,7 +361,7 @@ function mkKvSheet(o) {
     ...built,
     /* 行ピッチの寸法違い。現場機器がぶつからない距離を図ごとに選べる */
     stretch: {
-      min: KV_PITCH_MIN, max: KV_PITCH_MAX, step: 5, def: KV_PITCH_DEF, unit: "mm",
+      min: KV_PITCH_MIN, max: KV_PITCH_MAX, step: 5, def: o.pitchDef || KV_PITCH_DEF, unit: "mm",
       label: "行ピッチ (横に倒した機器がぶつからない距離)",
       bounds: (v) => kvBuild(o, v).bounds,
       body: (v) => kvBuild(o, v).body,
@@ -497,6 +498,16 @@ function mkKvUnit(model, cfg) {
   /* 部屋を丸ごと (点とコモンを離さず) 枚へ詰める。svcFirst = 1 枚目の頭に
      サービス電源 (0V/24V) が載る */
   const packRooms = (groups, svcFirst) => {
+    /* まず 1 枚に収まるピッチを探す — 16 点機 (N40AT) は行を詰めれば
+       接点を 1 列に収められるので、枚を割るより先にピッチを落として試す。
+       詰めても入らないときだけ従来どおり部屋単位で枚へ割る */
+    for (let pitch = KV_PITCH_DEF; pitch >= KV_PITCH_MIN; pitch -= 5) {
+      if (kvSeqH(mkSeq(groups, svcFirst), pitch) + (AT_NOTE ? 7 : 0) <= KV_FIT_H) {
+        const one = [groups];
+        if (pitch !== KV_PITCH_DEF) one.pitchDef = pitch;
+        return one;
+      }
+    }
     const sheets = [];
     let cur = [];
     groups.forEach(g => {
@@ -573,9 +584,12 @@ function mkKvUnit(model, cfg) {
     ? packRooms(mkRooms(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.outRooms, nextCom), !cfg.exp)
     : autoSheets(cfg.ch0 !== undefined ? cfg.ch0 : 5, cfg.nOut, nextCom, "出力");
   // 用紙は機種でそろえる (入力・出力ぜんぶの中でいちばん背の高い枚に合わせる)
+  const outPitch = outSheets.pitchDef;
+  /* 各枚の既定ピッチ込みで持つ — 出力だけピッチを詰めた機種で、入力の
+     用紙判定が「詰める前の出力の高さ」に引きずられないように */
   const allSeqs = [
-    ...inSheets.map(gs => mkSeq(gs, false)),
-    ...outSheets.map((gs, i) => mkSeq(gs, i === 0 && !cfg.exp)),
+    ...inSheets.map(gs => ({ seq: mkSeq(gs, false), def: KV_PITCH_DEF })),
+    ...outSheets.map((gs, i) => ({ seq: mkSeq(gs, i === 0 && !cfg.exp), def: outPitch || KV_PITCH_DEF })),
   ];
   const build = (kind, sheetsG) => {
     const many = sheetsG.length > 1;
@@ -587,6 +601,7 @@ function mkKvUnit(model, cfg) {
       out.push(mkKvSheet({
         id: `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${many ? i + 1 : ""}`,
         model, title: `${kind}${no} ${pts.length}点`, seq, allSeqs,
+        ...(kind === "出力" && outPitch ? { pitchDef: outPitch } : {}),
         /* シンク (NPN) 形・リレー形とも下地は DC24V の想定:
            入力はコモンを P24V へ、機器の帰りは N24V。出力はコモンを N24V へ、
            負荷の帰りは P24V。リレー出力は電源極性が自由なので、交流負荷なら
