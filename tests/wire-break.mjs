@@ -1,8 +1,8 @@
 /* 配線の破断 — シンボルに重なった配線を「破断線から下」だけ隠す。
    外接矩形 (青枠) でなく指定した線の位置で切るので、波線の描線に合わせられる。
 
-   ・breakMark  : 標準の「破断記号」を配線に被せると、波線 (y=0) から下の
-                  配線が隠れ、上はそのまま残る
+   ・breakMark  : 標準の「破断記号」を配線に被せると、波線 2 本の帯 (既定
+                  15mm) の間だけ配線が隠れ、上下はそのまま残る
    ・propCut    : どの機器でもプロパティ「配線の破断」を入れると、指定 y から
                   下に重なった配線が隠れる (幅は記号の外接矩形ぶん)
    ・lineNotBox : 切れる位置は青枠の上端ではなく指定した破断線の y
@@ -43,10 +43,12 @@ const R = await p.evaluate(async () => {
   addDevice(a, "break_mark", 100, 100, {});
   UI.refresh();
   await new Promise(r => setTimeout(r, 200));
+  /* 新仕様: 波線 2 本の帯 (既定 15mm) の間だけ隠れる — 上下は残る */
   out.breakMark = {
     d: pathOf(w1.id),
     upKept: pathOf(w1.id).includes("M100,40"),
-    cutAtLine: pathOf(w1.id).includes("L100,100") && !pathOf(w1.id).includes("160"),
+    cutAtLine: /L100,100(\.01)?( |$)/.test(pathOf(w1.id)) &&
+      /M100,114\.99|M100,115/.test(pathOf(w1.id)) && pathOf(w1.id).includes("L100,160"),
   };
 
   // ── プロパティの破断 (任意の機器: コイルで試す) ──
