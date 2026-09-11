@@ -133,6 +133,25 @@ const BA = await p.evaluate(() => {
   const bx = wireLabelBoxes(c1, q3).num;
   out.condAvoid = [70, 80, 90, 100, 110, 130].every(x => bx.x > x + 0.2 || bx.x + bx.w < x - 0.2);
   out.condX = Math.round(q3[0] * 2) / 2;
+
+  /* 接点のコイル参照 (/ページ.区画 (図番)) と線番・電線仕様が重ならない —
+     参照は接点のそば、線番・仕様は同じ線の上で少しよける (遠くへ逃げない) */
+  pg.devices.length = 0; pg.wires.length = 0; App.labelRev++;
+  const k9 = addDevice(pg, "coil", 300, 200, { tag: "-SFR_A" });
+  const c9 = addDevice(pg, "aux_no", 100, 100, { tag: "-SFR_A", rot: 90 });
+  c9.linkTo = k9.id;
+  const w9 = addWire(pg, [[110, 100], [148, 100]]);   // 短い線 — よけないと仕様が参照に重なる長さ
+  setWireNumber(pg, w9, "INV2S1"); w9.spec = "KIV 1.25sq Y";
+  App.labelRev++;
+  const xr9 = deviceXrefBox(pg, c9);
+  const p9 = wireLabelPos(w9, pg);
+  const b9 = wireLabelBoxes(w9, p9);
+  const hit9 = (a, b2) => a && b2 && a.x < b2.x + b2.w && a.x + a.w > b2.x && a.y < b2.y + b2.h && a.y + a.h > b2.y;
+  out.xrefClear = {
+    has: !!(xr9 && xr9.box) && !!b9.spec,
+    numHit: hit9(b9.num, xr9 && xr9.box), specHit: hit9(b9.spec, xr9 && xr9.box),
+    onWire: b9.num.x + b9.num.w / 2 >= 108 && b9.num.x + b9.num.w / 2 <= 150,   // 中心が自分の線の上に留まる
+  };
   return out;
 });
 
@@ -144,6 +163,8 @@ const checks = {
   overlapFree: R.overlapFree.n === 0,
   branchAlign: BA.same === true,
   condAvoid: BA.condAvoid === true,
+  xrefClear: BA.xrefClear.has === true && BA.xrefClear.numHit === false &&
+    BA.xrefClear.specHit === false && BA.xrefClear.onWire === true,
   manualAt: MA.input === true && MA.anchored === true && Math.abs(MA.x1 - 90) <= 1 && MA.below === true &&
     MA.snap === true && MA.movedWith === true && MA.btn === true && MA.cleared === true,
 };

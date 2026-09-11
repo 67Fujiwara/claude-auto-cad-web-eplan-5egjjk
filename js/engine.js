@@ -636,6 +636,11 @@ function wireLabelObstBase(page, f) {
     if (page) {
       deviceLabelBoxes(page, d).forEach(o => base.push(o.box));
       mirrorLabelBoxes(d).forEach(b => base.push(b));
+      /* 接点のコイル参照 (/2.B6 (B-002) など) も避ける — 見ないと電線仕様の
+         文字が参照の上に重なって両方読めなくなる。参照は機器の配置だけで
+         決まるので先に確定し、線番・仕様のほうが線に沿って少しよける */
+      const xr = deviceXrefBox(page, d);
+      if (xr && xr.box) base.push(xr.box);
     }
   });
   ((page && page.texts) || []).forEach(t => base.push(textBounds(t)));
