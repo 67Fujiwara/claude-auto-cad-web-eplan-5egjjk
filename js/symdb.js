@@ -392,13 +392,23 @@ const KV_TB_W = 160, KV_REV_W = 120, KV_BLOCK_W = KV_TB_W + KV_REV_W, KV_BLOCK_H
    出図先の標準が 1:1 表記なのでそれに従う */
 const KV_SCALE = "1:1";
 function kvSheetFor(size) {
-  for (const s of KV_PAPERS) {
+  const fit = (s) => {
     const c = s.paper === "A1" ? 20 : 10;       // 輪郭線までの余白 (とじ代は 20mm)
     const inW = s.w - Math.max(20, c) - c, inH = s.h - c * 2;
     /* 記号が細くて表題欄・改訂履歴欄の左に収まるなら、高さは作図領域いっぱいまで使える */
     const roomH = size.w <= inW - KV_BLOCK_W ? inH : inH - KV_BLOCK_H;
     // 置き余白は 5mm — 「なるべくびっしり使う」ため (16 点 + COM が A3 縦に入る)
-    if (size.w <= inW && size.h + 5 <= roomH) return { paper: s.paper, orient: s.orient, scale: KV_SCALE };
+    return size.w <= inW && size.h + 5 <= roomH;
+  };
+  for (const s of KV_PAPERS) {
+    if (!fit(s)) continue;
+    /* 縦に細長い記号 (16 点 1 列など) は同じ用紙の縦置きを選ぶ — 横置きだと
+       右側が大きく余り、既存の縦持ちページとも向きが合わない */
+    if (s.orient === "landscape" && size.h > size.w * 1.5) {
+      const port = KV_PAPERS.find(x => x.paper === s.paper && x.orient === "portrait");
+      if (port && fit(port)) return { paper: port.paper, orient: port.orient, scale: KV_SCALE };
+    }
+    return { paper: s.paper, orient: s.orient, scale: KV_SCALE };
   }
   const l = KV_PAPERS[KV_PAPERS.length - 1];
   return { paper: l.paper, orient: l.orient, scale: KV_SCALE };
@@ -498,27 +508,11 @@ function mkKvUnit(model, cfg) {
   /* 部屋を丸ごと (点とコモンを離さず) 枚へ詰める。svcFirst = 1 枚目の頭に
      サービス電源 (0V/24V) が載る */
   const packRooms = (groups, svcFirst) => {
-    /* まず 1 枚に収まるピッチを探す — 16 点機 (N40AT) は行を詰めれば
-       接点を 1 列に収められるので、枚を割るより先にピッチを落として試す。
-       詰めても入らないときだけ従来どおり部屋単位で枚へ割る */
-    for (let pitch = KV_PITCH_DEF; pitch >= KV_PITCH_MIN; pitch -= 5) {
-      if (kvSeqH(mkSeq(groups, svcFirst), pitch) + (AT_NOTE ? 7 : 0) <= KV_FIT_H) {
-        const one = [groups];
-        if (pitch !== KV_PITCH_DEF) one.pitchDef = pitch;
-        return one;
-      }
-    }
-    const sheets = [];
-    let cur = [];
-    groups.forEach(g => {
-      const next = [...cur, g];
-      if (cur.length && kvSeqH(mkSeq(next, svcFirst && sheets.length === 0), KV_PITCH_DEF)
-          + (AT_NOTE ? 7 : 0) > KV_FIT_H) {
-        sheets.push(cur); cur = [g];
-      } else cur = next;
-    });
-    if (cur.length) sheets.push(cur);
-    return sheets;
+    /* 部屋 (コモン) が増えても接点間の既定ピッチ (20mm) は変えず、全部屋を
+       1 枚 (1 列) に収める — 収まらないぶんは用紙のほうを大きくする
+       (16 点機は A2 縦)。ピッチを詰めて A3 に収める案は、行間が狭くなって
+       横に倒した現場機器が入らない・既存図面の接点位置と合わないのでやめた */
+    return groups.length ? [groups] : [];
   };
   /* 拡張ユニット (出力専用)。リレー番号は接続順で決まるので、1〜3台目
      (KV Nano は拡張 3 台まで) の 3 通りを同じ姿で作る。パレットに出すのは

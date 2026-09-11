@@ -61,10 +61,11 @@ const R = await p.evaluate(() => {
     kv_n14at_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1", paper: "A3", orient: "landscape" },
     kv_n24at_in:  { io: 14, first: "000", last: "013", aux: "C0", paper: "A3", orient: "portrait" },
     kv_n24at_out: { io: 10, first: "500", last: "509", aux: "0V,24V,C1,C2", paper: "A3", orient: "portrait" },
-    kv_n40at_in1: { io: 16, first: "000", last: "015", aux: "C0", paper: "A3", orient: "portrait" },
-    kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C0", paper: "A3", orient: "portrait" },
-    /* 出力 16 点は 1 枚 (1 列) — ピッチを 15mm に詰めて A3 縦へ収める */
-    kv_n40at_out: { io: 16, first: "500", last: "515", aux: "0V,24V,C1,C2", paper: "A3", orient: "portrait" },
+    kv_n40at_in1: { io: 16, first: "000", last: "015", aux: "C0", paper: "A2", orient: "portrait" },
+    kv_n40at_in2: { io: 8,  first: "100", last: "107", aux: "C0", paper: "A2", orient: "portrait" },
+    /* 出力 16 点は 1 枚 (1 列)。接点間の既定ピッチ (20mm) は変えず、
+       収まらないぶんは用紙を大きくする — N40AT の枚は A2 縦でそろう */
+    kv_n40at_out: { io: 16, first: "500", last: "515", aux: "0V,24V,C1,C2", paper: "A2", orient: "portrait" },
     kv_n14ar_in:  { io: 8,  first: "000", last: "007", aux: "C0", paper: "A3", orient: "landscape" },
     kv_n14ar_out: { io: 6,  first: "500", last: "505", aux: "0V,24V,C1,C2,C3,C4", paper: "A3", orient: "landscape" },
     /* 三菱 MELSEC iQ-R — 作りは KV と同じ・接点構成は三菱の取説どおり。
@@ -806,7 +807,29 @@ const V3 = await p.evaluate(() => {
   App.project.pages.pop(); App.pageIdx = 0; applySheet(curPage());
   return r;
 });
-console.log("出力の枚のUI経路:", JSON.stringify({ ...V1, ...V2, ...V3 }, null, 1));
+/* 行ピッチを手で変えた枚を機種差し替えしても、ピッチは保たれる
+   (既定ピッチどうしの差し替えは素の id、変えていれば寸法違いへ着地) */
+await p.evaluate(() => {
+  const q = newPage("差替ピッチ", App.project.pages.length + 1);
+  App.project.pages.push(q); App.pageIdx = App.project.pages.length - 1;
+  const s0 = symOf("kv_n24at_out"), w1 = symSheetSpec(s0);
+  q.paper = w1.paper; q.orient = w1.orient; q.scale = w1.scale; applySheet(q);
+  const dd = addDevice(q, "kv_n24at_out", 150, 40, { tag: "-A90" });
+  App.selection.clear(); App.selection.add(dd.id);
+  UI.showProps();
+});
+await p.$eval("#pSpanMM", el => { el.value = "25"; el.dispatchEvent(new Event("change", { bubbles: true })); }).catch(() => {});
+await p.waitForTimeout(200);
+await p.selectOption("#pSwap", "kv_n40at_out").catch(() => {});
+await p.waitForTimeout(250);
+const V4 = await p.evaluate(() => {
+  const q = curPage();
+  const dd = q.devices.find(d => /^kv_/.test(d.sym));
+  const sym = dd && dd.sym;
+  App.project.pages.pop(); App.pageIdx = 0; applySheet(curPage());
+  return { swapped: sym };
+});
+console.log("出力の枚のUI経路:", JSON.stringify({ ...V1, ...V2, ...V3, ...V4 }, null, 1));
 
 /* パレットから置いた瞬間に P24V/N24V のレールと下地が引かれること (事前レール)。
    「下地を作る」を押さなくても、置けばもうレールがある */
@@ -913,12 +936,13 @@ const checks = {
   /* 既定ピッチ (20mm) でどの枚も A3 (16 点の機種は縦・小さい機種は横)。
      どのピッチでも「同じ機種の枚どうしは同じ用紙」であること —
      枚ごとに用紙を決めると、ピッチを広げたとき 1 台の図面集に横と縦が混ざる */
-  /* 既定ピッチでどの枚も A3 (16 点機の出力は 15mm に詰めて縦 1 枚)。
-     既定どうしなら同じ機種の枚は同じ用紙。ピッチを手で広げた枚は
-     その枚だけ大きな用紙になってよい (16 点 @20mm は A2) */
-  pitchPaper: (R.defPaper || "").split(",").every(v => /^A3[横縦] 1:1$/.test(v)) &&
+  /* 既定ピッチ (接点間 20mm) を守ったまま、収まらない機種は用紙を大きく
+     する — N40AT は一式 A2 縦、他の機種は A3。既定どうしなら同じ機種の
+     枚は同じ用紙 */
+  pitchPaper: (R.defPaper || "").split(",").every(v => /^A[23][横縦] 1:1$/.test(v)) &&
     Object.values(R.defPaperByModel || {}).every(v => v.length === 1) &&
-    /^A2/.test(R.n40at20 || ""),
+    ((R.defPaperByModel || {}).kv_n40at || [])[0] === "A2縦 1:1" &&
+    Object.entries(R.defPaperByModel || {}).every(([m, v]) => m === "kv_n40at" || /^A3/.test(v[0])),
   // 横に倒した現場機器が隣の行とぶつからない (既定ピッチ)。
   // 背の高い記号は既定では当たるが、ピッチを広げれば収まる
   /* 単極の入出力機器は既定ピッチ (20mm) で隣の行とぶつからない。
@@ -933,7 +957,7 @@ const checks = {
     Object.keys((R.pitch || {}).wideClash || {}).length === 2 &&
     R.pitch.tallAtDef > 0 && R.pitch.tallAtWide === 0 && R.pitch.wide === 30,
   // 紙の上の見え方が群によらず同じ
-  printedSame: ids.every(id => (R.print[id] || {}).pitch === (id === "kv_n40at_out" ? 15 : 20) && R.print[id].minText >= 2.5 - 0.001 &&
+  printedSame: ids.every(id => (R.print[id] || {}).pitch === 20 && R.print[id].minText >= 2.5 - 0.001 &&
     R.print[id].minLine >= 0.25 - 0.001),
   // 未使用の入出力点は黙る。電源・コモン・保護接地は知らせる
   /* 未使用の入出力点は黙るが、コモンの結び忘れは知らせる。
@@ -994,8 +1018,9 @@ const checks = {
   // 図中注記 (類推の照合指示 + 入力の +コモン極性宣言)
   kvNote: KVNOTE.inPol && KVNOTE.inSurm && KVNOTE.outSurm && KVNOTE.arClean && KVNOTE.arInPol && KVNOTE.n40Clean === true,
   // 出力の枚でも UI 経路 (機種差し替え・行ピッチ) が下地と負荷を壊さない
-  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out@20" && V2.drc.length === 0 &&
-    V3.pitch === 25 && V3.onRows === true && V3.wired === true && V3.drc.length === 0,
+  outUi: V1.drc0 === 0 && V2.swapped === "kv_n40at_out" && V2.drc.length === 0 &&
+    V3.pitch === 25 && V3.onRows === true && V3.wired === true && V3.drc.length === 0 &&
+    V4.swapped === "kv_n40at_out@25",
   // 出力の枚の 3 線式センサ: 短絡を描かず、置き場所の誤りをエラーで知らせる
   out3wire: (R.out3wire || {}).noShort === true && R.out3wire.told >= 1,
   // 出力の枚も、負荷を落として結線すれば検図 0 件
@@ -1052,7 +1077,7 @@ const checks = {
   swapModel: hasSwap === true && canPick === true && U2.swapped === "kv_n40at_in1" && U2.keptTag === true &&
     U2.pins === 17 &&
     // 想定と違う用紙は検図に出て、「この用紙にする」で消える
-    U2.sheetErr === 1 && U2.hasFix === true && U2.fixedPaper === "A3/portrait/1:1" &&
+    U2.sheetErr === 1 && U2.hasFix === true && U2.fixedPaper === "A2/portrait/1:1" &&
     U2.sheetErrAfter === 0 && U2.frameErrAfter === 0 &&
     // 差し替えで下地が壊れていない
     Array.isArray(U2.swapDrc) && U2.swapDrc.length === 0,
