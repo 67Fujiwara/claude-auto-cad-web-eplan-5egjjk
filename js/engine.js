@@ -2680,8 +2680,12 @@ function pageDwgNo(page) {
 function devLocation(dev) {
   const f = findDevice(dev.id);
   const pageNo = f ? f.page.no : "?";
-  if (frameStyle() === "plain") return String(pageNo);   // 区画帯が無い様式はページのみ
-  return pageNo + "." + sheetRow(dev.y) + sheetCol(dev.x);
+  /* 図面番号も併記する — PDF ではページ番号より図面番号 (B-002 など) で
+     探すことが多く、番号だけだと目当ての紙にたどり着けない */
+  const dwg = f ? pageDwgNo(f.page) : "";
+  const tail = dwg ? ` (${dwg})` : "";
+  if (frameStyle() === "plain") return String(pageNo) + tail;   // 区画帯が無い様式は区画なし
+  return pageNo + "." + sheetRow(dev.y) + sheetCol(dev.x) + tail;
 }
 
 /** コイルにリンクされた接点一覧 (接点ミラー / クロスリファレンス) */

@@ -47,7 +47,7 @@ const R = await p.evaluate(() => {
   const c1 = addDevice(pg, "aux_no", 160, 100, { tag: "-KA1" });
   c1.linkTo = k1.id;
   out.noMirror = { svg: mirrorSVG(k1) === "", boxes: mirrorLabelBoxes(k1).length === 0,
-    loc: devLocation(c1) };
+    loc: devLocation(c1), dwg: pageDwgNo(pg) };
   const dxf = pageToDXF(cover);
   out.dxfOut = {
     has: ["管理番号", "A000000ELE", "00", "サンプル電機株式会社"].every(t => dxf.includes(t)),
@@ -65,7 +65,8 @@ const checks = {
   plainStrip: R.plainStrip.has === true && R.plainStrip.none === true,
   pageNo00: R.pageNo.cover === "00" && R.pageNo.p5 === "04",
   noScale: R.noScale === true,
-  noMirror: R.noMirror.svg === true && R.noMirror.boxes === true && R.noMirror.loc === "5",
+  noMirror: R.noMirror.svg === true && R.noMirror.boxes === true &&
+    R.noMirror.loc === `5 (${R.noMirror.dwg})`,
   dxfOut: R.dxfOut.has === true && R.dxfOut.none === true,
   stdBack: R.stdBack.scale === true && R.stdBack.mirror === true,
 };

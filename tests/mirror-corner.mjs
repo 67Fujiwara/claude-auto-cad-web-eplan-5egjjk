@@ -1,7 +1,7 @@
 /* 接点ミラー表 (接点がどこにあるかの相互参照) の左下配置。
 
-   ・refFmt  : 位置参照が「ページNo.行英字列数字」(例 5.D3) — 図枠の
-              縦軸アルファベット + 横軸数字の区画で示す
+   ・refFmt  : 位置参照が「ページNo.行英字列数字 (図面番号)」(例 5.D3 (B-001))
+              — 区画に加え、PDF で紙を探すための図面番号を併記する
    ・corner  : 表は図面の左下 (図枠内側) から、コイルの並び順で横に並ぶ。
               下ぞろえで、右下の表題欄 (案件名など) の上端より上に出ない
    ・header  : 表の見出しにコイルタグが出る (表がコイルから離れたため)。
@@ -36,7 +36,7 @@ const R = await p.evaluate(() => {
   /* A3 (420×297, とじ代 20, 横 8 区画 = 48.75mm) で手計算した区画:
      (120,160) → 列 floor((120-20)/48.75)+1 = 3、行 floor((160-10)/46.17) = 3 = D
      (260, 60) → 列 5、行 1 = B。ページ番号はこの図面ページの no */
-  out.refFmt = { c1: devLocation(c1), c3: devLocation(c3), no: pg.no };
+  out.refFmt = { c1: devLocation(c1), c3: devLocation(c3), no: pg.no, dwg: pageDwgNo(pg) };
 
   const o1 = mirrorOrigin(k1), o2 = mirrorOrigin(k2);
   const s1 = mirrorTableSize(k1), s2 = mirrorTableSize(k2);
@@ -67,7 +67,9 @@ const R = await p.evaluate(() => {
 });
 
 const checks = {
-  refFmt: R.refFmt.c1 === `${R.refFmt.no}.D3` && R.refFmt.c3 === `${R.refFmt.no}.B5`,
+  /* 区画 + そのページの図面番号 (PDF では図番で紙を探すため併記) */
+  refFmt: R.refFmt.c1 === `${R.refFmt.no}.D3 (${R.refFmt.dwg})` &&
+    R.refFmt.c3 === `${R.refFmt.no}.B5 (${R.refFmt.dwg})` && R.refFmt.dwg.length > 0,
   corner: R.corner.left === true && R.corner.sideBySide === true &&
     R.corner.bottom1 === true && R.corner.bottom2 === true && R.corner.belowTitleTop === true,
   header: R.header.boxTop === true && R.header.svg === true,
