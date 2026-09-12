@@ -165,7 +165,8 @@ function mkPort(o) {
 /* 見出しの高さ 13mm = あき 1.5 + 形式 3.5 + あき 1.5 + 種別 3.5 + あき 2 + 罫。
    種別 (「入力 (1) 8点」) は和文なので、呼び 2.5 を書いても JIS Z 8313-0 の
    和文最小 3.5mm へ引き上げられて描かれる。行取りも 3.5 で数える */
-const KV_AUXROW = 10, KV_HDR = 13, KV_BOT = 4, KV_Y0 = 15;
+/* 見出しは文字 1.5 倍 (尺度 1:1.5 用) に合わせて縦も 1.5 倍 — 1 行目は 20mm から */
+const KV_AUXROW = 10, KV_HDR = 13, KV_BOT = 4, KV_Y0 = 20;
 const KV_BOXW = 30;                    // ユニットの箱 (細くてよい。中は形式と CH だけ)
 const KV_FN_X = 5, KV_FN_W = 50;       // 機能欄の下線の長さ (長すぎるので半分にした)
 /* レールまでの距離 / 機器を落とす隙間 / レール 2 本の間隔 / 隙間までの引出し。
@@ -183,8 +184,10 @@ const KV_TERM_X = 3;                   // 外郭の左辺から端子名の左�
 function kvTerm(startCh, i) {
   return `${startCh + Math.floor(i / 16)}${String(i % 16).padStart(2, "0")}`;
 }
+/* 記号内の文字は尺度 1:1.5 用に 1.5 倍で描く — 用紙上でちょうど呼びの
+   大きさ (2.5mm など) になり、JIS Z 8313 の最小文字高を守れる */
 const kvText = (x, y, h, s, anchor = "middle", mono = true) =>
-  `<text x="${r1(x)}" y="${r1(y)}" data-h="${h}" text-anchor="${anchor}" fill="currentColor" stroke="none" font-family="${mono ? "monospace" : "sans-serif"}">${s}</text>`;
+  `<text x="${r1(x)}" y="${r1(y)}" data-h="${r1(h * KV_SCALE_N)}" text-anchor="${anchor}" fill="currentColor" stroke="none" font-family="${mono ? "monospace" : "sans-serif"}">${s}</text>`;
 
 /* 行ピッチは「横に倒した現場機器がぶつからない距離」で決める。
    記号を 270° 回して行に置くと、外接矩形の幅がそのまま縦の広がりになるので、
@@ -246,12 +249,21 @@ function kvBuild(o, pitch) {
      用紙が選ばれてしまう。この記号は最小でも 170mm ある */
   const sheet = kvSheetFor({ w: 170, h: sheetH });
   let RAIL = KV_RAIL;
-  if (flip && sheet.orient === "portrait") {
-    const pp = KV_PAPERS.find(x => x.paper === sheet.paper && x.orient === sheet.orient);
-    const c = sheet.paper === "A1" ? 20 : 10;
-    const inW = pp.w - Math.max(20, c) - c;
-    // 幅 = 箱 (2TR+W+2) + 現場側 + あき 10 + コメント欄 + 2。左右あわせて 8mm 残す
-    RAIL = Math.floor((inW - 8 - (W + 2) - (10 + KV_FN_W + 2)) / 5) * 5;
+  {
+    /* 1 台の幅 = 作図領域の半分 (2 列でぴったり)。入力・出力どちらの枚も
+       同じ幅にそろえ、16 点を左右に並べると 1 枚が埋まる。
+       基準は「既定ピッチの用紙」(o.baseSheet) — ピッチを変えて用紙が
+       変わってもレール幅は動かさない。動くと、隙間に置いた現場機器の
+       x 位置と新しい下地がずれて全行が重なる */
+    const bs = o.baseSheet || sheet;
+    const pp = KV_PAPERS.find(x => x.paper === bs.paper && x.orient === bs.orient);
+    if (pp) {
+      const c = bs.paper === "A1" ? 20 : 10;
+      const inW = (pp.w - Math.max(20, c) - c) * KV_SCALE_N;
+      // 幅 = 箱 (2TR+W+2) + 現場側 + あき 10 + コメント欄 + 2。列あたり 8mm 残す
+      RAIL = Math.max(KV_RAIL,
+        Math.floor((inW / 2 - 8 - (W + 2) - (10 + KV_FN_W + 2)) / 5) * 5);
+    }
   }
   const pins = [], parts = [];
   /* 端子 (小円) はユニットの外郭の「中」に描く (取扱説明書の回路図と同じ —
@@ -261,9 +273,23 @@ function kvBuild(o, pitch) {
      ピンは 5mm 格子に乗る (格子から外れると配線の端点が丸められて届かない) */
   const BX = flip ? -W : 0;                   // 外郭の箱側の辺 (左端の x)
   parts.push(`<rect x="${r1(BX)}" y="0" width="${W}" height="${r1(bh)}"/>`);
-  parts.push(kvText(BX + W / 2, 5, 3.5, o.model, "middle"));
-  parts.push(kvText(BX + W / 2, 10, 3.5, o.title, "middle", false));
-  parts.push(`<path d="M${r1(BX)},${KV_HDR - 1} H${r1(BX + W)}"/>`);
+  /* 見出し (形式・種別) は箱幅に収まるまで縮める — 下限は用紙上 2.5mm
+     (JIS Z 8313 の最小呼び)。長い種別 (「入力 (1/2) 16点」) でもはみ出さない */
+  /* 幅は近似で測る (engine 読込前のロード時にも動く固定則):
+     等幅 0.85h / 欧文サンセリフ 0.5h / 和文 1.0h — 実測に合わせた係数 */
+  const hdW = (txt, h, mono) => {
+    let w = 0;
+    for (const ch of String(txt)) w += /[\u3000-\u9FFF\uFF01-\uFF60]/.test(ch) ? h : h * (mono ? 0.9 : 0.5);
+    return w;
+  };
+  const hdText = (y, txt, base, mono) => {
+    let h = base;
+    while (h > 2.5 + 1e-6 && hdW(txt, r1(h * KV_SCALE_N), mono) > W - 2) h -= 0.1;
+    parts.push(kvText(BX + W / 2, y, Math.max(2.5, h), txt, "middle", mono));
+  };
+  hdText(7.5, o.model, 2.8, true);
+  hdText(15, o.title, 3.5, false);
+  parts.push(`<path d="M${r1(BX)},${r1(KV_HDR * KV_SCALE_N - 1.5)} H${r1(BX + W)}"/>`);
   /* 機能欄の下線の左端。入力は箱の右、出力はレールのさらに右 (右端の名称欄)。
      出力はレールから 10mm あける — レール頭の電位名 (+24V は半幅 5.8mm) が
      下線の帯に食い込まないように */
@@ -341,10 +367,11 @@ function kvBuild(o, pitch) {
 /** 入出力結線図の記号 (1 群ぶん)。入力は端子が箱の左、出力は端子が箱の右 */
 function mkKvSheet(o) {
   const built = kvBuild(o, o.pitchDef || KV_PITCH_DEF);
+  o.baseSheet = built.sheet;    // 寸法違い (ピッチ変更) でもレール幅の基準はこの用紙
   const flip = o.fieldSide === "right";
   return {
     id: o.id, db: true, group: "PLC入出力結線図", cat: "db", letter: "PLC",
-    nonstd: true, swapGroup: o.swapGroup, unitSheet: true,
+    nonstd: true, swapGroup: o.swapGroup, unitSheet: true, textK: KV_SCALE_N,
     name: o.name, nameEn: o.nameEn, desc: o.desc, typ: o.model,
     ...(o.expCh ? { expCh: o.expCh, expAlts: o.expAlts, ...(o.altOf ? { altOf: o.altOf } : {}) } : {}),
     stdNote: o.stdNote || "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: " +
@@ -390,25 +417,24 @@ const KV_TB_W = 160, KV_REV_W = 120, KV_BLOCK_W = KV_TB_W + KV_REV_W, KV_BLOCK_H
 /* 尺度はユーザーの社内標準に合わせて 1:1 (幾何は NS と同一 — このアプリは
    図記号を常に実寸で描く)。JIS 的には結線図は非尺度 (NS) だが、
    出図先の標準が 1:1 表記なのでそれに従う */
-const KV_SCALE = "1:1";
+/* 尺度は社内標準の 1:1.5 — A3 横の作図領域が 1.5 倍に広がり、16 点 1 列の
+   ユニットを 2 列 (入力・出力) 並べて 1 枚に収められる */
+const KV_SCALE = "1:1.5";
+const KV_SCALE_N = 1.5;
 function kvSheetFor(size) {
   const fit = (s) => {
     const c = s.paper === "A1" ? 20 : 10;       // 輪郭線までの余白 (とじ代は 20mm)
-    const inW = s.w - Math.max(20, c) - c, inH = s.h - c * 2;
-    /* 記号が細くて表題欄・改訂履歴欄の左に収まるなら、高さは作図領域いっぱいまで使える */
-    const roomH = size.w <= inW - KV_BLOCK_W ? inH : inH - KV_BLOCK_H;
-    // 置き余白は 5mm — 「なるべくびっしり使う」ため (16 点 + COM が A3 縦に入る)
+    // 尺度 1:n で作図領域は n 倍に広がる (記号は実寸のまま)
+    const inW = (s.w - Math.max(20, c) - c) * KV_SCALE_N, inH = (s.h - c * 2) * KV_SCALE_N;
+    /* 半列幅 (2 列並べる幅) の記号は、表題欄と別の列に置けるので高さは
+       作図領域いっぱいまで使える。それより広い記号は表題欄の帯を避ける */
+    const roomH = size.w <= inW / 2 || size.w <= inW - KV_BLOCK_W * KV_SCALE_N
+      ? inH : inH - KV_BLOCK_H * KV_SCALE_N;
+    // 置き余白は 5mm — 「なるべくびっしり使う」
     return size.w <= inW && size.h + 5 <= roomH;
   };
   for (const s of KV_PAPERS) {
-    if (!fit(s)) continue;
-    /* 縦に細長い記号 (16 点 1 列など) は同じ用紙の縦置きを選ぶ — 横置きだと
-       右側が大きく余り、既存の縦持ちページとも向きが合わない */
-    if (s.orient === "landscape" && size.h > size.w * 1.5) {
-      const port = KV_PAPERS.find(x => x.paper === s.paper && x.orient === "portrait");
-      if (port && fit(port)) return { paper: port.paper, orient: port.orient, scale: KV_SCALE };
-    }
-    return { paper: s.paper, orient: s.orient, scale: KV_SCALE };
+    if (fit(s)) return { paper: s.paper, orient: s.orient, scale: KV_SCALE };
   }
   const l = KV_PAPERS[KV_PAPERS.length - 1];
   return { paper: l.paper, orient: l.orient, scale: KV_SCALE };

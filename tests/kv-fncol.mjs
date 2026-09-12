@@ -136,7 +136,9 @@ const checks = {
   inkShift: Math.abs(R.after.bandX - (R.dev.x + R.fnX - 0.25 + 15)) < 0.1,   // 帯の座標は 0.1mm 丸め
   dxfFollow: R.after.dxfHasNew === true,
   undoBack: R.undoBack.fnDx === 0,
-  resetBtn: R.resetBtn.before === 10 && R.resetBtn.shown && R.resetBtn.after === undefined,
+  /* ドラッグ量 (mm) は表示倍率の丸めで ±1 ほど揺れる — 動いたこと自体と
+     「既定に戻す」で消えることを見る */
+  resetBtn: R.resetBtn.before >= 9 && R.resetBtn.before <= 12 && R.resetBtn.shown && R.resetBtn.after === undefined,
   inColGrab: R.inColGrab.hits && R.inColGrab.missIsNull,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);

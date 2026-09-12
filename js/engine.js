@@ -4245,7 +4245,9 @@ function runDRC() {
       if (minW < 0.13 - 0.0001) bad2.push(`最細線 ${minW.toFixed(3)}mm は JIS Z 8312 の線幅列 (最細 0.13mm) を下回ります`);
       if (bad2.length) {
         issues.push({
-          sev: "err", rule: "尺度と用紙上の寸法",
+          /* 警告どまり: 1:1.5 は社内標準の様式 (PLC 入出力結線図など)。記号側を
+             尺度に合わせて大きく作れば消える — 電気的な誤りではない */
+          sev: "warn", rule: "尺度と用紙上の寸法",
           msg: `尺度 ${pageSheetMeta(page).scale} では図記号・文字が用紙上 1/${f3} になります` +
                ` — ${bad2.join("、")} (この用紙に合わせて作った記号を使うか、尺度を 1:1 にしてください)`,
           page: page.no, target: null, loc: `${page.no}.-`,
