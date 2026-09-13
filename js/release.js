@@ -211,7 +211,7 @@ UI.runRelease = async (opt) => {
     for (const kind of pdfKinds) {
       const label = releaseKindLabel(kind);
       const list = releasePages(kind, pages);
-      const name = safe(`${base}_${label}.pdf`);
+      const name = safe(`${pdfBaseName(now)}_${label}.pdf`);   // 日付_顧客名_装置名_版
       const key = list.map(pg => pages.indexOf(pg)).join(",");
       if (pdfMade.has(key)) { out.push({ name, data: pdfMade.get(key) }); continue; }
       if (!list.length) { UI.setMsg(`PDF (${label}) に載せるページがありません`); continue; }

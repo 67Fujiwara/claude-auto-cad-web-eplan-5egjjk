@@ -15,6 +15,10 @@
                  顧客提出用の中身は仕様のページぶん少ない
    ・outPlain  : 「出力時シンプル図枠」の図面では出図 PDF が 2 本とも
                  シンプル図枠で描かれ、済むと画面様式 (JIS) に戻る
+   ・pdfName   : 出図 PDF の名前は 日付_顧客名_装置名_版.pdf
+                 (顧客名 = 表紙の 1 行目、装置名 = 表紙の 2 行目)
+   ・exportName: メニューの PDF出力も 日付_顧客名_装置名.pdf。
+                 表紙の記入が空なら その部分を抜き、装置名は図名で補う
    ・relNew    : 「設計完了して出図」が済むと新規作成へ移る — 出図した
                  図面は「作業中」の枠と設計完了履歴に残る
    ・dupFs     : 記号編集が保存した body (data-h と font-size を両方持つ) を
@@ -136,6 +140,10 @@ const R2 = await p.evaluate(async () => {
   /* 「出力時シンプル図枠」(meta.outPlain) を入れると、出図の PDF は 2 本とも
      シンプル図枠で描かれること。buildPDF を横取りして描画中の様式を記録する */
   projectMeta().outPlain = true;
+  const cover = pages.find(pg => pg.kind === "cover");
+  cover.cover = { customer: "テスト顧客株式会社", title: "検査装置一式" };
+  const dn = new Date(), pz = n => String(n).padStart(2, "0");
+  o.today = `${dn.getFullYear()}${pz(dn.getMonth() + 1)}${pz(dn.getDate())}`;
   const keepBuild = window.buildPDF;
   const styles = [];
   window.buildPDF = (pgs, opts) => { styles.push({ n: pgs.length, style: frameStyle() }); return keepBuild(pgs, opts); };
@@ -146,6 +154,28 @@ const R2 = await p.evaluate(async () => {
   o.pdfStyles = styles;
   o.styleAfter = frameStyle();
   return o;
+});
+
+/* ── PDF ファイル名: 日付_顧客名_装置名 (表紙の 1・2 行目) ── */
+const EX = await p.evaluate(async () => {
+  App.project = newProject("名前確認"); UI.renumberPages();
+  const cover = App.project.pages.find(pg => pg.kind === "cover");
+  cover.cover = { customer: "サンプル商事", title: "搬送装置" };
+  const dn = new Date(), pz = n => String(n).padStart(2, "0");
+  const today = `${dn.getFullYear()}${pz(dn.getMonth() + 1)}${pz(dn.getDate())}`;
+  const anchors = [];
+  const keepCE = document.createElement.bind(document);
+  document.createElement = t => { const el = keepCE(t); if (String(t).toLowerCase() === "a") anchors.push(el); return el; };
+  const keepBuild = window.buildPDF;
+  window.buildPDF = async () => new Blob(["%PDF-x"], { type: "application/pdf" });
+  await UI.exportPDF();
+  window.buildPDF = keepBuild;
+  document.createElement = keepCE;
+  const dl = anchors.map(a => a.download).find(n => /\.pdf$/.test(n));
+  // 表紙の記入が空 → 顧客名は抜き、装置名は図名で補う
+  cover.cover = { customer: "", title: "" };
+  const noCover = pdfBaseName();
+  return { dl, today, noCover };
 });
 
 const relForm = await p.evaluate(() => {
@@ -240,6 +270,13 @@ const checks = {
   /* 出力時シンプル図枠の設定どおり、出図 PDF は 2 本とも (社内保存用 = 全ページ、
      顧客提出用 = 仕様を外した短い方) シンプル図枠で描かれる。
      出図が終わったら画面様式 (JIS 標準) に戻っている */
+  /* 出図 PDF の名前 = 日付_顧客名_装置名_版.pdf (表紙の 1・2 行目から) */
+  pdfName: R2.out.length === 2 &&
+    R2.out[0].name === `${R2.today}_テスト顧客株式会社_検査装置一式_社内保存用.pdf` &&
+    R2.out[1].name === `${R2.today}_テスト顧客株式会社_検査装置一式_顧客提出用.pdf`,
+  /* メニューの PDF出力 = 日付_顧客名_装置名.pdf。空欄は抜き、装置名は図名で補う */
+  exportName: EX.dl === `${EX.today}_サンプル商事_搬送装置.pdf` &&
+    EX.noCover === `${EX.today}_名前確認`,
   outPlain: Array.isArray(R2.pdfStyles) && R2.pdfStyles.length === 2 &&
     R2.pdfStyles.every(s => s.style === "plain") &&
     R2.pdfStyles[1].n < R2.pdfStyles[0].n && R2.styleAfter === "std",
@@ -262,7 +299,7 @@ const checks = {
     && R2.out[0].pages === R2.count.all && R2.out[1].pages === R2.count.all - R2.count.spec,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R: { ...R, zipBytes: R.zipBytes.length }, R2, relForm, zipInfo, menuHas: menuHas.slice(0, 200), errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, R: { ...R, zipBytes: R.zipBytes.length }, R2, EX, relForm, zipInfo, menuHas: menuHas.slice(0, 200), errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("release-pack OK");

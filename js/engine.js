@@ -5342,6 +5342,20 @@ async function pageToImage(page, dpi = 200) {
   return { w, h, pw, ph, data: url.slice(url.indexOf(",") + 1) };
 }
 
+/** 出力 PDF のファイル名 "日付_顧客名_装置名" — 顧客名は表紙の 1 行目
+    (客先名)、装置名は表紙の 2 行目 (空欄なら図名)。日付は出力した日
+    (YYYYMMDD)。表紙が無い・客先名が空のときはその部分を抜いてつなぐ */
+function pdfBaseName(d = new Date()) {
+  const p2 = n => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`;
+  const cover = ((App.project && App.project.pages) || []).find(pg => pg.kind === "cover");
+  const cv = (cover && cover.cover) || {};
+  const cust = (cv.customer || "").trim();
+  const dev = ((cv.title !== undefined && cv.title !== "" ? cv.title : App.project.name) || "図面").trim();
+  const safe = t => String(t).replace(/[\\/:*?"<>|]/g, "_");
+  return [date, cust, dev].filter(Boolean).map(safe).join("_");
+}
+
 /** 全ページを 1 本の PDF にまとめる (各ページを紙の実寸で貼る) */
 async function buildPDF(pages, opts = {}) {
   const dpi = opts.dpi || 200;

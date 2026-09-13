@@ -1499,7 +1499,7 @@ UI.exportPDF = async () => {
     applySheet(curPage());        // 図枠を画面用 (JIS) に戻す
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = (App.project.name || "図面").replace(/[\\/:*?"<>|]/g, "_") + ".pdf";
+    a.download = pdfBaseName() + ".pdf";   // 日付_顧客名_装置名 (表紙の 1・2 行目)
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 8000);
     UI.setMsg(`PDF を出力しました (全 ${pages.length} ページ・1 ファイル)`);
