@@ -633,3 +633,146 @@ function aiGenerate(sel) {
   report.push(`生成完了: ${pageIdxs.length} ページ / デバイス ${totalDevs} 点 / 配線 ${totalWires} 本`);
   return { report, pageIdxs };
 }
+
+/* ═══════════ I/O リスト → PLC 入出力接続図の自動作図 ═══════════
+   Excel からの貼り付け (タブ区切り) か CSV を 1 行 1 点で読む:
+     アドレス, コメント (機能欄), 種別 (任意 — 「ランプ」「近接」など)
+   アドレスをユニット枚の端子へ割り付け、ページ (A3 横 1:1.5・2 列) を
+   起こして 下地 + 機能欄 + 現場機器 + 行の配線 まで一括で作る。 */
+
+/** 種別 (または コメント) の語 → 現場機器の記号 id */
+const IO_KIND_MAP = [
+  [/非常停止|E-?STOP/i, "estop"],
+  [/セレクタ|切替|COS/i, "sel_sw"],
+  [/リミット|LS\d|\bLS\b/i, "limit_sw"],
+  [/近接|PROX/i, "prox"],
+  [/光電|PHOTO/i, "photo"],
+  [/圧力|\bPS\b/i, "press_sw"],
+  [/フロート|レベル|\bFS\b/i, "float_sw"],
+  [/サーモ|温度/i, "thermo"],
+  [/押し?ボタン|\bPB\b|ボタン/i, "pb_no"],
+  [/ランプ|表示灯|照明|\bPL\b/i, "lamp"],
+  [/ブザー|\bBZ\b/i, "buzzer"],
+  [/電磁弁|ソレノイド|\bSOL\b|バルブ/i, "sol_valve"],
+  [/ヒータ/i, "heater"],
+  [/リレー|\bCR\b|コイル/i, "coil"],
+];
+function ioKindSym(t) {
+  for (const [re, id] of IO_KIND_MAP) if (re.test(t)) return id;
+  return null;
+}
+
+/** 貼り付けテキスト → 行の配列。見出し行・空行は読み飛ばす */
+function ioListParse(text) {
+  const rows = [];
+  let skipped = 0;
+  String(text || "").split(/\r?\n/).forEach(line => {
+    if (!line.trim()) return;
+    const cells = line.split(/\t|,/).map(c => c.trim());
+    const addr = cells[0] || "";
+    // アドレスの形 (500 / R500 / X0F など) でない行は見出しとみなす
+    if (!/^[RXY]?[0-9A-F]{1,4}$/i.test(addr)) { skipped++; return; }
+    const comment = cells[1] || "";
+    const kindText = cells.slice(2).join(" ").trim();
+    rows.push({ addr, comment,
+      kindSym: (kindText && ioKindSym(kindText)) || (comment && ioKindSym(comment)) || null });
+  });
+  return { rows, skipped };
+}
+
+/** 機種の選択肢 → 割付対象のユニット枚 id */
+function ioUnitIdsFor(model) {
+  if (model === "MELSEC") return ["rx40c7_in", "ry40nt5p_out"];
+  const base = String(model).toLowerCase().replace(/-/g, "_");
+  return [`${base}_in`, `${base}_in1`, `${base}_in2`, `${base}_out`, `${base}_out1`, `${base}_out2`]
+    .filter(id => SYMBOLS_BY_ID[id]);
+}
+
+/** I/O リストから接続図ページを一括生成する。
+    rows = ioListParse().rows / opts = { tag, place (機器も置く) } */
+function ioListGenerate(model, rows, opts = {}) {
+  const ids = ioUnitIdsFor(model);
+  // 端子名 → どの枚のどの端子か
+  const pinOf = new Map();
+  ids.forEach(id => {
+    const sym = SYMBOLS_BY_ID[id];
+    const srows = (sym.ioSheet && sym.ioSheet.rows) || [];
+    // 端子名は pins 側にある (ioSheet.rows は y と io だけ)
+    sym.pins.forEach(pn => {
+      const rr = srows[pn.row];
+      if (rr && rr.io) pinOf.set(String(pn.n).toUpperCase(), { id, n: pn.n });
+    });
+  });
+  const norm = a => {
+    let s2 = String(a || "").trim().toUpperCase().replace(/^R(?=[0-9])/, "");
+    if (/^[0-9]{1,3}$/.test(s2)) s2 = s2.padStart(3, "0");   // 15 → 015
+    return s2;
+  };
+  const perUnit = new Map();
+  const unmatched = [];
+  rows.forEach(r => {
+    const hit = pinOf.get(norm(r.addr));
+    if (!hit) { unmatched.push(r.addr); return; }
+    if (!perUnit.has(hit.id)) perUnit.set(hit.id, new Map());
+    perUnit.get(hit.id).set(hit.n, r);
+  });
+  const inputs = ids.filter(id => perUnit.has(id) && SYMBOLS_BY_ID[id].ioSheet.side === "left");
+  const outputs = ids.filter(id => perUnit.has(id) && SYMBOLS_BY_ID[id].ioSheet.side === "right");
+  const made = [];
+  let sensors3 = 0;
+  const placeGroup = (list, name) => {
+    for (let i = 0; i < list.length; i += 2) {          // 1 ページ = 2 列
+      const w1 = symSheetSpec(SYMBOLS_BY_ID[list[i]]);
+      const pg = newPage(list.length > 2 ? `${name} (${i / 2 + 1})` : name, App.project.pages.length + 1);
+      pg.paper = w1.paper; pg.orient = w1.orient; pg.scale = w1.scale;
+      App.project.pages.push(pg);
+      made.push(pg);
+      applySheet(pg);
+      const fr = frameRect();
+      [list[i], list[i + 1]].forEach((id, slot) => {
+        if (!id) return;
+        const sym = SYMBOLS_BY_ID[id];
+        const sp = sym.ioSheet;
+        // 左列 / 右列。出力は箱が左端、入力はレールが左端 (kv の鏡像規約)
+        const x0 = slot === 0 ? fr.x : fr.x + fr.w / 2;
+        const dx = sp.side === "right"
+          ? Math.ceil((x0 - sym.bounds[0] + 5) / 5) * 5
+          : Math.ceil((x0 + sp.rail + 12) / 5) * 5;
+        const dy = Math.ceil((fr.y + 10) / 5) * 5;
+        const dev = addDevice(pg, id, dx, dy, { tag: opts.tag || "-PLC1" });
+        buildIoScaffold(pg, dev);
+        dev.props = dev.props || {};
+        dev.props.fn = dev.props.fn || {};
+        const rowsFor = perUnit.get(id);
+        const branch = sp.side === "right" ? dev.x + sp.rail - sp.sep : dev.x - sp.rail + sp.sep;
+        sym.pins.forEach(pn => {
+          const rr = sp.rows[pn.row];
+          if (!rr || !rr.io) return;
+          const row = rowsFor.get(pn.n);
+          if (!row) return;
+          if (row.comment) dev.props.fn[pn.n] = row.comment;
+          if (opts.place === false || !row.kindSym || !SYMBOLS_BY_ID[row.kindSym]) return;
+          const rowY = dev.y + pn.y;
+          const fd = addDevice(pg, row.kindSym, dev.x + sp.gapX0, rowY, { rot: 270 });
+          const ps = devPins(fd);
+          /* 3 線式 (近接・光電など) は P24V/N24V/OUT の特殊結線 — 自動では
+             引かず、機器だけ置いて使う人に任せる (誤結線を刷らない) */
+          if (ps.length !== 2) { sensors3++; return; }
+          const left = ps[0].x <= ps[1].x ? ps[0] : ps[1];
+          const right = ps[0].x <= ps[1].x ? ps[1] : ps[0];
+          if (sp.side === "right") {
+            addWire(pg, [[dev.x, rowY], [left.x, rowY]]);
+            addWire(pg, [[right.x, rowY], [branch, rowY]]);
+          } else {
+            addWire(pg, [[branch, rowY], [left.x, rowY]]);
+            addWire(pg, [[right.x, rowY], [dev.x, rowY]]);
+          }
+        });
+      });
+    }
+  };
+  if (inputs.length) placeGroup(inputs, "PLC入力接続図");
+  if (outputs.length) placeGroup(outputs, "PLC出力接続図");
+  App.labelRev++;
+  return { pages: made, placed: rows.length - unmatched.length, unmatched, sensors3 };
+}

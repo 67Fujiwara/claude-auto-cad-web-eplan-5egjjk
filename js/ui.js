@@ -1195,6 +1195,7 @@ const MENUS = {
   ],
   insert: [
     { label: "AI自動作図…", key: "F2", fn: () => UI.openWizard() },
+    { label: "I/OリストからPLC接続図…", key: "", fn: () => UI.openIoImport() },
     { sep: true },
     { label: "ページを追加", key: "", fn: () => UI.addPage() },
     { label: "表紙を追加", key: "", fn: () => UI.addSpecialPage("cover") },
@@ -1952,6 +1953,56 @@ UI.dxfImportDialog = (ents, fileName) => {
 /* ── 線番・電線仕様の自動ルールの設定 ──
    project.meta に保存 — マスターファイルごとコピーされるので、
    御社標準を一度作れば全案件に効く */
+/* ── I/O リスト → PLC 接続図 ── */
+UI.openIoImport = () => {
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">
+      Excel の I/O 表をそのまま貼り付けてください (タブ区切り / CSV)。<br>
+      1 行 1 点: <span class="mono">アドレス, コメント, 種別(任意)</span> —
+      例 <span class="mono">500	上流照明	ランプ</span>。見出し行は読み飛ばします。<br>
+      種別 (またはコメントの語) から現場機器も置いて行の配線まで引きます。
+      近接・光電など 3 線式は機器だけ置きます (結線は特殊なため手で)。
+    </div>
+    <textarea id="ioTxt" rows="12" style="width:100%;box-sizing:border-box" class="mono" placeholder="000	上流CAM1トリガー
+001	上流CAM2トリガー
+500	上流照明	ランプ
+501	シグナルタワー赤	ランプ"></textarea>
+    <div class="prop-grid2" style="margin-top:8px">
+      <div class="prop-row"><label>PLC 機種</label><select id="ioModel">
+        <option>KV-N40AT</option><option>KV-N24AT</option><option>KV-N14AT</option>
+        <option>KV-N14AR</option><option value="MELSEC">三菱 RX40C7 / RY40NT5P</option>
+      </select></div>
+      <div class="prop-row"><label>PLC タグ</label><input id="ioTag" class="mono" value="-PLC1"/></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="ioPlace" checked/><span>現場機器も置いて配線する</span></label></div>
+    </div>
+  </div>`);
+  const foot = h(`<div style="display:flex;gap:10px;width:100%">
+    <span style="flex:1"></span>
+    <button class="btn-solid" id="ioCancel">やめる</button>
+    <button class="btn-primary" id="ioGo">接続図を作る</button>
+  </div>`);
+  const m = UI.openModal({ title: "I/O リストから PLC 接続図", sub: "貼り付けた表からページ・下地・機能欄・機器まで一括生成", body, foot });
+  foot.querySelector("#ioCancel").addEventListener("click", () => m.close());
+  foot.querySelector("#ioGo").addEventListener("click", () => {
+    const { rows, skipped } = ioListParse(body.querySelector("#ioTxt").value);
+    if (!rows.length) { UI.setMsg("読める行がありません — 1 列目がアドレス (500 / X00 など) の行を貼ってください"); return; }
+    commit();
+    const res = ioListGenerate(body.querySelector("#ioModel").value, rows, {
+      tag: body.querySelector("#ioTag").value.trim() || "-PLC1",
+      place: body.querySelector("#ioPlace").checked,
+    });
+    m.close();
+    if (res.pages.length) {
+      App.pageIdx = App.project.pages.indexOf(res.pages[0]);
+      App.selection.clear();
+      UI.renumberPages(); UI.refresh(); zoomFit();
+    }
+    const warn = res.unmatched.length ? ` / 割付できないアドレス ${res.unmatched.length} 件 (${res.unmatched.slice(0, 5).join(", ")}${res.unmatched.length > 5 ? " …" : ""})` : "";
+    const s3 = res.sensors3 ? ` / 3線式 ${res.sensors3} 点は機器のみ (結線は手で)` : "";
+    UI.setMsg(`I/O リストから ${res.pages.length} ページ・${res.placed} 点を割り付けました${warn}${s3}${skipped ? ` / 見出し等 ${skipped} 行を読み飛ばし` : ""}`);
+  });
+};
+
 UI.openAutoRules = () => {
   const meta = projectMeta();
   const rules = wireSpecRules();
