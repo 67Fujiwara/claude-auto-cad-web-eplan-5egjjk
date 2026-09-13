@@ -1402,7 +1402,7 @@ UI.openFile = async () => {
       if (App.sim.running) UI.toggleSim();
       commit();
       App.project = p;
-      mergeProjectSymbols();
+      mergeProjectSymbols(); migrateFrameStyle();
   normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
       saveImportedSymbols();
       App.fileHandle = handle;
@@ -1438,7 +1438,7 @@ UI.openFile = async () => {
         if (App.sim.running) UI.toggleSim(); // 読込確定後にのみ停止
         commit();
         App.project = p;
-        mergeProjectSymbols();
+        mergeProjectSymbols(); migrateFrameStyle();
   normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
         saveImportedSymbols();
         App.fileHandle = null; // input[type=file] 経由は上書き先を持てない
@@ -1473,8 +1473,9 @@ UI.zoomCenter = (f) => {
   const r = Editor.svg.getBoundingClientRect();
   zoomAt(r.left + r.width / 2, r.top + r.height / 2, f);
 };
-UI.print = () => {
-  const svg = exportSheetSVG();
+UI.print = async () => {
+  const svg = await withOutputFrame(() => exportSheetSVG());
+  applySheet(curPage());          // 出力様式で張り替えた図枠を画面用 (JIS) に戻す
   const pm = pageSheetMeta(curPage());
   const paper = pm.paper || "A3";
   const dir = pm.orient === "portrait" ? "portrait" : "landscape";   // 図枠の向きに合わせる
@@ -1493,8 +1494,9 @@ UI.exportPDF = async () => {
   const pages = App.project.pages;
   UI.setMsg("PDF を作っています…");
   try {
-    const blob = await buildPDF(pages, { dpi: 200,
-      onProgress: (i, n) => UI.setMsg(`PDF を作っています… ${i + 1}/${n} ページ`) });
+    const blob = await withOutputFrame(() => buildPDF(pages, { dpi: 200,
+      onProgress: (i, n) => UI.setMsg(`PDF を作っています… ${i + 1}/${n} ページ`) }));
+    applySheet(curPage());        // 図枠を画面用 (JIS) に戻す
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = (App.project.name || "図面").replace(/[\\/:*?"<>|]/g, "_") + ".pdf";
@@ -1505,9 +1507,9 @@ UI.exportPDF = async () => {
     UI.setMsg("PDF の作成に失敗しました — 「PDF出力 (印刷ダイアログ)」をお試しください");
   }
 };
-UI.printAll = () => {
-  const pages = App.project.pages.map((pg, i) =>
-    `<div class="sheet sheet${i}">${exportSheetSVG(pg)}</div>`).join("");
+UI.printAll = async () => {
+  const pages = await withOutputFrame(() => App.project.pages.map((pg, i) =>
+    `<div class="sheet sheet${i}">${exportSheetSVG(pg)}</div>`).join(""));
   // ページごとに用紙が違う場合に備え、名前付き @page で1ページずつ用紙を指定する
   const papers = App.project.pages.map(pg => pageSheetMeta(pg));
   const pageCSS = papers.map((pm, i) =>
@@ -2156,14 +2158,15 @@ function loadImportedSymbols() {
   } catch (e) { /* 破損時は読み飛ばす */ }
 }
 
-UI.exportDXF = () => {
+UI.exportDXF = async () => {
   const base = App.project.name.replace(/[\\/:*?"<>|]/g, "_");
-  App.project.pages.forEach((pg, i) => {
+  // 図枠様式の差し替え中に全ページを描き切ってから、間隔を空けて保存する
+  const files = await withOutputFrame(() => App.project.pages.map(pg =>
+    ({ name: `${base}_p${pg.no}_${pg.name}.dxf`, data: dxfBytes(pageToDXF(pg)) })));
+  applySheet(curPage());          // 図枠を画面用 (JIS) に戻す
+  files.forEach((f, i) => {
     // 連続ダウンロードのブロックを避けるため少しずつ間隔を空ける
-    setTimeout(() => {
-      downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`, dxfBytes(pageToDXF(pg)), "application/dxf");
-      applySheet(curPage());      // 図枠を現在ページに戻す
-    }, i * 400);
+    setTimeout(() => downloadFile(f.name, f.data, "application/dxf"), i * 400);
   });
   UI.setMsg(`DXFを ${App.project.pages.length} ファイル出力します (AutoCADでそのまま開けます)`);
 };
@@ -2501,12 +2504,12 @@ UI.sheetSetup = () => {
     <div class="prop-sect">図枠スタイル</div>
     <div class="prop-grid2">
       <div class="prop-row"><label>様式</label><select id="tbFrameStyle">
-        ${opt("std", meta.frameStyle || "std", "標準 (JIS・区画参照つき)")}
-        ${opt("plain", meta.frameStyle || "std", "シンプル (改訂欄 + 管理番号・頁)")}
+        ${opt("std", meta.outPlain ? "plain" : "std", "標準 (JIS・区画参照つき)")}
+        ${opt("plain", meta.outPlain ? "plain" : "std", "出力時はシンプル図枠 (画面は JIS)")}
       </select></div>
     </div>
-    <div class="prop-note">シンプル様式は下端の帯だけの図枠 — 区画参照・尺度欄・接点ミラー表は出ません。<br>
-      帯には 企業名 / 作成日・製図・検図・承認 / 管理番号 / 頁 (表紙 = 00) と改訂欄 (A〜C) が入ります。</div>
+    <div class="prop-note">画面の編集は常に JIS 標準図枠。シンプル図枠を選ぶと PDF・印刷・DXF・出図の出力時だけ下端の帯の様式に差し替わります。<br>
+      帯には 企業名 / 作成日・製図・検図・承認 / 管理番号 / 頁 (表紙 = 00) と改訂欄 (A〜C) が入り、区画参照・尺度欄・接点ミラー表は出ません。</div>
     <div class="prop-sect">表題欄</div>
     <div class="prop-grid2">
       <div class="prop-row"><label>プロジェクト</label><input id="tbProj" value="${escAttr(App.project.name)}"/></div>
@@ -2657,7 +2660,8 @@ UI.sheetSetup = () => {
     meta.checker = q("#tbChk").value.trim();
     meta.approver = q("#tbAppr").value.trim();
     meta.ctrlNo = q("#tbCtrl").value.trim();
-    meta.frameStyle = q("#tbFrameStyle").value === "plain" ? "plain" : "std";
+    meta.outPlain = q("#tbFrameStyle").value === "plain";
+    delete meta.frameStyle;    // 画面切替の旧形式は使わない (出力時にだけ差し替える)
     meta.date = q("#tbDate").value.trim();
     meta.author = q("#tbAuth").value.trim();
     meta.proj = q("#tbProjMethod").value;
@@ -3108,7 +3112,7 @@ UI.refresh = (rebuildTabs = true) => {
 async function boot() {
   // 前回の図面をそのまま開く (無ければサンプル)。大きな図面は IndexedDB 側から
   App.project = (await loadAutosave()) || demoProject();
-  mergeProjectSymbols();
+  mergeProjectSymbols(); migrateFrameStyle();
   normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
   UI.renumberPages();   // ページ番号と図番を現在の設定に同期
   applySheet(); // 保存された用紙・尺度で作図領域を張る

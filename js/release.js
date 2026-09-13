@@ -126,7 +126,7 @@ UI.finishDesign = () => {
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlDxf" checked/><span>DXF (AutoCAD互換・ページごとに ${pages.length} ファイル)</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfIn" checked/><span>PDF 社内保存用 (すべての図面 ${pages.length} ページを1ファイルに)</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfCus" checked/><span>PDF 顧客提出用 (仕様${nSpec ? ` ${nSpec} ページ` : ""}を外した ${pages.length - nSpec} ページ)${nSpec ? "" : " — この図面に仕様のページはありません"}</span></label></div>
-    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlCusPlain" ${projectMeta().relCusPlain === false ? "" : "checked"}/><span>顧客提出用はシンプル図枠で出力する (改訂欄 + 管理番号・頁の帯)</span></label></div>
+    <div class="prop-note" style="margin:4px 0 0">図枠: ${projectMeta().outPlain ? "出力時はシンプル図枠 (改訂欄 + 管理番号・頁の帯)" : "標準 (JIS)"} — 「図枠・表題欄の設定」の様式で切り替えられます</div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlJson" checked/><span>図面データ (JSON・再編集用)</span></label></div>
     <div class="prop-sect">まとめ方</div>
     <div class="prop-row"><label>出力先</label><select id="rlPack">
@@ -171,10 +171,8 @@ UI.finishDesign = () => {
     meta.rev = q("#rlRev").value.trim() || meta.rev || "0";
     if (q("#rlBy").value.trim()) meta.designer = q("#rlBy").value.trim();
     m.close();
-    meta.relCusPlain = q("#rlCusPlain").checked;    // 次回のダイアログにも覚えさせる
     await UI.runRelease({
       dxf: wantDxf, pdfIn: wantPdfIn, pdfCus: wantPdfCus, json: wantJson, pack, dpi,
-      cusPlain: meta.relCusPlain,
       note: q("#rlNote").value.trim(), rev: meta.rev, by: meta.designer || "",
       errs: errs.length, warns: warns.length, devs, wires, seq,
     });
@@ -198,37 +196,37 @@ UI.runRelease = async (opt) => {
     syncProjectSymbols();
     out.push({ name: `${base}.ecad.json`, data: JSON.stringify(App.project, null, 1) });
   }
-  if (opt.dxf) {
-    pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: dxfBytes(pageToDXF(pg)) }));
-    applySheet(curPage());
-  }
-  /* PDF は 2 通り。社内保存用はすべての図面、顧客提出用は仕様のページを外したもの。
-     ページ構成が同じになるとき (仕様のページが無い図面) は 1 回だけ作って使い回す */
   const pdfKinds = [];
   if (opt.pdfIn !== undefined ? opt.pdfIn : opt.pdf) pdfKinds.push("internal");
   if (opt.pdfCus !== undefined ? opt.pdfCus : opt.pdf) pdfKinds.push("customer");
-  const pdfMade = new Map();
-  for (const kind of pdfKinds) {
-    const label = releaseKindLabel(kind);
-    const list = releasePages(kind, pages);
-    const name = safe(`${base}_${label}.pdf`);
-    const cusPlain = kind === "customer" && opt.cusPlain !== false;
-    // 図枠様式が違えば同じページ構成でも別物 (使い回さない)
-    const key = (cusPlain ? "plain:" : "std:") + list.map(pg => pages.indexOf(pg)).join(",");
-    if (pdfMade.has(key)) { out.push({ name, data: pdfMade.get(key) }); continue; }
-    if (!list.length) { UI.setMsg(`PDF (${label}) に載せるページがありません`); continue; }
-    UI.setMsg(`PDF (${label}) を作っています… (ページ数が多いと少しかかります)`);
-    try {
-      const blob = await withReleaseProject(kind, pgs => buildPDF(pgs, { dpi: opt.dpi || 200,
-        onProgress: (i, n) => UI.setMsg(`PDF (${label}) を作っています… ${i + 1}/${n} ページ`) }),
-        cusPlain ? { frameStyle: "plain" } : {});
-      out.push({ name, data: blob });
-      pdfMade.set(key, blob);
-    } catch (e) {
-      UI.setMsg(`PDF (${label}) の作成に失敗しました — 他の形式だけ出力します`);
+  /* DXF と PDF は「図枠スタイル」の設定どおり — 出力時シンプル図枠 (meta.outPlain)
+     なら、描いている間だけ様式を差し替える (画面と JSON は JIS のまま) */
+  await withOutputFrame(async () => {
+    if (opt.dxf) {
+      pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: dxfBytes(pageToDXF(pg)) }));
     }
-  }
-  if (pdfKinds.length) applySheet(curPage());        // 図枠を表示中のページへ戻す
+    /* PDF は 2 通り。社内保存用はすべての図面、顧客提出用は仕様のページを外したもの。
+       ページ構成が同じになるとき (仕様のページが無い図面) は 1 回だけ作って使い回す */
+    const pdfMade = new Map();
+    for (const kind of pdfKinds) {
+      const label = releaseKindLabel(kind);
+      const list = releasePages(kind, pages);
+      const name = safe(`${base}_${label}.pdf`);
+      const key = list.map(pg => pages.indexOf(pg)).join(",");
+      if (pdfMade.has(key)) { out.push({ name, data: pdfMade.get(key) }); continue; }
+      if (!list.length) { UI.setMsg(`PDF (${label}) に載せるページがありません`); continue; }
+      UI.setMsg(`PDF (${label}) を作っています… (ページ数が多いと少しかかります)`);
+      try {
+        const blob = await withReleaseProject(kind, pgs => buildPDF(pgs, { dpi: opt.dpi || 200,
+          onProgress: (i, n) => UI.setMsg(`PDF (${label}) を作っています… ${i + 1}/${n} ページ`) }));
+        out.push({ name, data: blob });
+        pdfMade.set(key, blob);
+      } catch (e) {
+        UI.setMsg(`PDF (${label}) の作成に失敗しました — 他の形式だけ出力します`);
+      }
+    }
+  });
+  if (opt.dxf || pdfKinds.length) applySheet(curPage());   // 図枠を画面用 (JIS) に戻す
 
   const files = out.map(f => f.name);
   const where = await saveReleaseFiles(out, folder, opt.pack || (FS_DIR_API ? "dir" : "zip"));
@@ -351,7 +349,7 @@ UI.openReleaseHistory = () => {
       await wipStashCurrent();
       commit();
       App.project = p;
-      mergeProjectSymbols();
+      mergeProjectSymbols(); migrateFrameStyle();
       App.pageIdx = 0;
       App.selection.clear();
       UI.renumberPages();
@@ -363,17 +361,16 @@ UI.openReleaseHistory = () => {
       zoomFit();
       UI.setMsg(`設計完了履歴 (${r.stamp}) の図面を開き、作業中に追加しました`);
     })));
-    rows.querySelectorAll(".rl-dxf").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => {
-      // 履歴の図面で一時的に差し替えて DXF を作り、元に戻す
+    rows.querySelectorAll(".rl-dxf").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, async (p, r) => {
+      // 履歴の図面で一時的に差し替えて DXF を作り、元に戻す (様式もその図面の設定どおり)
       const keep = App.project, keepIdx = App.pageIdx;
       App.project = p; App.pageIdx = 0;
       const base = `${(r.project || "図面").replace(/[\\/:*?"<>|]/g, "_")}_rev${r.rev}`;
-      p.pages.forEach((pg, i) => {
-        const text = dxfBytes(pageToDXF(pg));
-        setTimeout(() => downloadFile(`${base}_p${pg.no}_${pg.name}.dxf`.replace(/[\\/:*?"<>|]/g, "_"), text, "application/dxf"), i * 350);
-      });
+      const files = await withOutputFrame(() => p.pages.map(pg =>
+        ({ name: `${base}_p${pg.no}_${pg.name}.dxf`.replace(/[\\/:*?"<>|]/g, "_"), data: dxfBytes(pageToDXF(pg)) })));
       App.project = keep; App.pageIdx = keepIdx;
       applySheet(curPage());
+      files.forEach((f, i) => setTimeout(() => downloadFile(f.name, f.data, "application/dxf"), i * 350));
       UI.setMsg(`履歴 (${r.stamp}) の DXF を ${p.pages.length} ファイル出力します`);
     })));
     rows.querySelectorAll(".rl-json").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => {

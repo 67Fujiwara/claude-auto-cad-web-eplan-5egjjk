@@ -13,6 +13,8 @@
    ・relKeep   : 出図しても元の図面のページ番号・ページ数は変わらない
    ・relOut    : 設計完了で PDF が 2 本 (社内保存用 / 顧客提出用) 出る。
                  顧客提出用の中身は仕様のページぶん少ない
+   ・outPlain  : 「出力時シンプル図枠」の図面では出図 PDF が 2 本とも
+                 シンプル図枠で描かれ、済むと画面様式 (JIS) に戻る
    ・relNew    : 「設計完了して出図」が済むと新規作成へ移る — 出図した
                  図面は「作業中」の枠と設計完了履歴に残る
    ・dupFs     : 記号編集が保存した body (data-h と font-size を両方持つ) を
@@ -131,8 +133,9 @@ const R2 = await p.evaluate(async () => {
     }
     return { how: "テスト", name: "" };
   };
-  /* 顧客提出用 PDF はシンプル図枠で描かれること (社内保存用は今の様式のまま)。
-     buildPDF を横取りして、描画中の様式を版ごとに記録する */
+  /* 「出力時シンプル図枠」(meta.outPlain) を入れると、出図の PDF は 2 本とも
+     シンプル図枠で描かれること。buildPDF を横取りして描画中の様式を記録する */
+  projectMeta().outPlain = true;
   const keepBuild = window.buildPDF;
   const styles = [];
   window.buildPDF = (pgs, opts) => { styles.push({ n: pgs.length, style: frameStyle() }); return keepBuild(pgs, opts); };
@@ -234,10 +237,11 @@ const checks = {
   newBtn: R.newBtn.exists === true && /新規/.test(R.newBtn.label || ""),
   pdfOne: R.pdfOne.type === "application/pdf" && R.pdfOne.pages === R.pdfOne.want && R.pdfOne.want >= 4,
   pdfValid: R.pdfValid.head && R.pdfValid.eof && R.pdfValid.xrefAt && R.pdfValid.objs && R.pdfValid.size > 10000,
-  /* 顧客提出用 = シンプル図枠 (仕様ページを外した短い方)。社内保存用 = 標準のまま。
-     出図が終わったら様式は元 (標準) に戻っている */
-  cusPlain: Array.isArray(R2.pdfStyles) && R2.pdfStyles.length === 2 &&
-    R2.pdfStyles[0].style === "std" && R2.pdfStyles[1].style === "plain" &&
+  /* 出力時シンプル図枠の設定どおり、出図 PDF は 2 本とも (社内保存用 = 全ページ、
+     顧客提出用 = 仕様を外した短い方) シンプル図枠で描かれる。
+     出図が終わったら画面様式 (JIS 標準) に戻っている */
+  outPlain: Array.isArray(R2.pdfStyles) && R2.pdfStyles.length === 2 &&
+    R2.pdfStyles.every(s => s.style === "plain") &&
     R2.pdfStyles[1].n < R2.pdfStyles[0].n && R2.styleAfter === "std",
   zipPack: R.zipPack.type === "application/zip" && R.zipPack.local === 2 && R.zipPack.central === 2 && R.zipPack.end === 1,
   zipRead: zipOK === true,

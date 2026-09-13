@@ -85,7 +85,7 @@ function wipShowProject(p, id) {
   if (App.sim.running) UI.toggleSim();
   App.project = p;
   App.fileHandle = null;
-  mergeProjectSymbols();
+  mergeProjectSymbols(); migrateFrameStyle();
   normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
   UI.renumberPages();
   App.pageIdx = Math.max(0, App.project.pages.findIndex(isDrawingPage));

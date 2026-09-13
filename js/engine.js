@@ -383,6 +383,22 @@ function frameStyle() {
   const m = (App.project && App.project.meta) || {};
   return m.frameStyle === "plain" ? "plain" : "std";
 }
+/** 出力時シンプル図枠 (meta.outPlain): 画面の編集は JIS 標準図枠のまま、
+    PDF・印刷・DXF・出図を作る間だけ様式をシンプルへ差し替える。
+    fn が済んだら必ず元へ戻す (画面は一度も切り替わらない) */
+async function withOutputFrame(fn) {
+  const m = projectMeta();
+  if (!m.outPlain || m.frameStyle === "plain") return fn();
+  m.frameStyle = "plain"; App.labelRev++;
+  try { return await fn(); }
+  finally { delete m.frameStyle; App.labelRev++; }
+}
+/** 旧形式 (meta.frameStyle="plain" が画面にも効いていた頃) の保存データを
+    「画面は JIS・出力だけシンプル」(meta.outPlain) に読み替える */
+function migrateFrameStyle() {
+  const m = projectMeta();
+  if (m.frameStyle === "plain") { m.outPlain = true; delete m.frameStyle; }
+}
 const PLAIN_TB = { h: 20, rowH: 5, company: 64, signL: 14, signV: 30, ctrl: 56, pageW: 18,
   rev: { w: 110, cols: [8, 24, 64, 14] } };
 /** シンプル図枠の帯の割付 + 記入文字。画面と DXF が同じものを描くための共有モデル。
