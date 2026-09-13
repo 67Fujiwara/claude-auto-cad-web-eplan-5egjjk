@@ -1196,6 +1196,7 @@ const MENUS = {
   insert: [
     { label: "AI自動作図…", key: "F2", fn: () => UI.openWizard() },
     { label: "I/OリストからPLC接続図…", key: "", fn: () => UI.openIoImport() },
+    { label: "マスターから図面を呼び出す…", key: "", fn: () => UI.openMasterPages() },
     { sep: true },
     { label: "ページを追加", key: "", fn: () => UI.addPage() },
     { label: "表紙を追加", key: "", fn: () => UI.addSpecialPage("cover") },
@@ -1953,6 +1954,63 @@ UI.dxfImportDialog = (ents, fileName) => {
 /* ── 線番・電線仕様の自動ルールの設定 ──
    project.meta に保存 — マスターファイルごとコピーされるので、
    御社標準を一度作れば全案件に効く */
+/* ── マスターファイルから図面 (ページ) を呼び出す ── */
+UI.openMasterPages = () => {
+  const masters = wipList().filter(r => r.master);
+  if (!masters.length) {
+    UI.setMsg("マスターファイルがありません — 作業中メニューの「マスターファイルとして保存」で標準図面集を作ってください");
+    return;
+  }
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">
+      マスターファイルの中の図面 (ページ) を選んで、今の図面の現在ページの後ろへ写しを差し込みます。<br>
+      マスター側は変わりません。コイル連動は一緒に呼び出したページの中でだけ引き継ぎます。
+    </div>
+    <div class="prop-row"><label>マスターファイル</label><select id="mpFile">
+      ${masters.map(r2 => `<option value="${escAttr(r2.id)}">${escXML(r2.name)}</option>`).join("")}
+    </select></div>
+    <div id="mpPages" style="max-height:300px;overflow:auto;margin-top:8px">読み込み中…</div>
+  </div>`);
+  const foot = h(`<div style="display:flex;gap:10px;width:100%">
+    <button class="btn-solid" id="mpAll">すべて選択</button>
+    <span style="flex:1"></span>
+    <button class="btn-solid" id="mpCancel">やめる</button>
+    <button class="btn-primary" id="mpGo">呼び出す</button>
+  </div>`);
+  const m = UI.openModal({ title: "マスターから図面を呼び出す", sub: "標準図面集からページを選んで差し込む", body, foot });
+  let snap = null;
+  const load = async () => {
+    const id = body.querySelector("#mpFile").value;
+    snap = await relGetSnapshot(id);
+    const box = body.querySelector("#mpPages");
+    if (!snap || !snap.pages) { box.textContent = "この一時保存の中身を読み出せませんでした"; return; }
+    box.innerHTML = snap.pages.map((pg, i) => {
+      const kind = pg.kind ? ` (${{ cover: "表紙", toc: "目次", spec: "仕様", panel: "盤" }[pg.kind] || pg.kind})` : "";
+      const nDev = (pg.devices || []).length, nWire = (pg.wires || []).length;
+      return `<label class="chk" style="display:block;padding:2px 0"><input type="checkbox" class="mpPg" data-i="${i}"/>
+        <span>${i + 1}. ${escXML(pg.name || "無題")}${kind} <span class="rp-dim">機器 ${nDev} / 配線 ${nWire}</span></span></label>`;
+    }).join("");
+  };
+  body.querySelector("#mpFile").addEventListener("change", load);
+  load();
+  foot.querySelector("#mpAll").addEventListener("click", () => {
+    body.querySelectorAll(".mpPg").forEach(c => { c.checked = true; });
+  });
+  foot.querySelector("#mpCancel").addEventListener("click", () => m.close());
+  foot.querySelector("#mpGo").addEventListener("click", () => {
+    if (!snap) return;
+    const idxs = [...body.querySelectorAll(".mpPg")].filter(c => c.checked).map(c => +c.dataset.i);
+    if (!idxs.length) { UI.setMsg("呼び出す図面にチェックを入れてください"); return; }
+    commit();
+    const clones = insertMasterPages(snap, idxs, App.pageIdx + 1);
+    m.close();
+    App.pageIdx = App.project.pages.indexOf(clones[0]);
+    App.selection.clear();
+    UI.renumberPages(); UI.refresh(); zoomFit();
+    UI.setMsg(`マスターから ${clones.length} ページを呼び出しました — タグ・線番はマスターのまま (重複は検図が知らせます)`);
+  });
+};
+
 /* ── I/O リスト → PLC 接続図 ── */
 UI.openIoImport = () => {
   const body = h(`<div>

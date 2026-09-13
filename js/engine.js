@@ -2381,10 +2381,11 @@ function tocRows() {
     同じ id なのに絵が違う定義が来たら (旧式データ: 編集で id を使い回していた)、
     ライブラリ側は触らず「別の版」として取り込み、この図面の機器をその版へ
     付け替える — 読み込んだ図面が他の案件のシンボルを書き換えないため */
-function mergeProjectSymbols() {
-  const list = App.project && App.project.symbols;
-  if (!Array.isArray(list)) return;
+/** シンボル定義の一覧を DB へ併合し、id の付け替え表を返す (図面の写し・
+    マスターからの呼び出しで共用)。中身は従来 mergeProjectSymbols にあった芯 */
+function mergeSymbolList(list) {
   const remap = {};
+  if (!Array.isArray(list)) return remap;
   list.forEach(sym => {
     if (!sym || !sym.id) return;
     const cur = SYMBOLS_BY_ID[sym.id];
@@ -2416,6 +2417,44 @@ function mergeProjectSymbols() {
     const cur = sym && sym.id ? SYMBOLS_BY_ID[sym.id] : null;
     if (cur && cur.retired && !symHasLiveOf(symBaseOf(cur))) { delete cur.retired; symSerTouch(); }
   });
+  return remap;
+}
+/** マスターファイルの図面 (ページ) を今の図面へ呼び出す。
+    ページは写しを at の位置へ挿し込み、id はすべて振り直す (マスター側は
+    変わらない)。コイル連動 (linkTo) と下地の親 (gen) は、同時に呼び出した
+    ページの中でだけ付け替え、外を指すものは外す — 外したコイル連動は
+    検図「コイルにリンクされていません」が知らせるので、静かに嘘の参照が
+    残るより安全 */
+function insertMasterPages(master, pageIdxs, at) {
+  const remapSym = mergeSymbolList(master && master.symbols);
+  const clones = pageIdxs.map(i => JSON.parse(JSON.stringify(master.pages[i])));
+  const idMap = new Map();
+  clones.forEach(pg => {
+    pg.id = uid("pg");
+    delete pg.no;
+    (pg.devices || []).forEach(d => {
+      const nid = uid("d"); idMap.set(d.id, nid); d.id = nid;
+      if (remapSym[d.sym]) d.sym = remapSym[d.sym];
+    });
+    (pg.wires || []).forEach(w => { const nid = uid("w"); idMap.set(w.id, nid); w.id = nid; });
+    (pg.texts || []).forEach(t => { if (t.id) t.id = uid("t"); });
+    (pg.zones || []).forEach(z => { if (z.id) z.id = uid("z"); });
+    (pg.tables || []).forEach(tb2 => { if (tb2.id) tb2.id = uid("tb"); });
+  });
+  clones.forEach(pg => {
+    (pg.devices || []).forEach(d => {
+      if (d.linkTo) { if (idMap.has(d.linkTo)) d.linkTo = idMap.get(d.linkTo); else delete d.linkTo; }
+      if (d.gen) { if (idMap.has(d.gen)) d.gen = idMap.get(d.gen); else delete d.gen; }
+    });
+    (pg.wires || []).forEach(w => { if (w.gen) { if (idMap.has(w.gen)) w.gen = idMap.get(w.gen); else delete w.gen; } });
+  });
+  const pos = Math.max(0, Math.min(App.project.pages.length, at == null ? App.project.pages.length : at));
+  App.project.pages.splice(pos, 0, ...clones);
+  App.labelRev++;
+  return clones;
+}
+function mergeProjectSymbols() {
+  const remap = mergeSymbolList(App.project && App.project.symbols);
   if (Object.keys(remap).length) {
     App.project.pages.forEach(pg => (pg.devices || []).forEach(d => { if (remap[d.sym]) d.sym = remap[d.sym]; }));
   }
