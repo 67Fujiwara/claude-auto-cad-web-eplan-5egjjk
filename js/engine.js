@@ -5311,6 +5311,59 @@ function panelMoveEnts(page, idxs, dxp, dyp) {
     else if (e.t === "text") { e.x += dxp; e.y += dyp; }
   });
 }
+/** entity を書き足し、足した添字の配列を返す */
+function panelAddEnts(page, ents) {
+  const pd = panelEditData(page);
+  const i0 = pd.entities.length;
+  ents.forEach(e => pd.entities.push(e));
+  return ents.map((_, k) => i0 + k);
+}
+/** 作図ツールの entity を組み立てる (線 / 丸 = 中心→半径 / 矢印 = 根→先)。
+    座標はパネル座標 (mm)。矢印は本体 + 羽 2 本の 3 本でひとまとまり */
+function panelDrawEnts(kind, x0, y0, x1, y1) {
+  const r1v = v => Math.round(v * 10) / 10;
+  if (kind === "line") return [{ t: "line", x1: x0, y1: y0, x2: x1, y2: y1 }];
+  if (kind === "circle") {
+    const r = Math.max(0.5, r1v(Math.hypot(x1 - x0, y1 - y0)));
+    return [{ t: "circle", cx: x0, cy: y0, r }];
+  }
+  if (kind === "arrow") {
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    const hl = Math.min(8, Math.max(3, Math.hypot(x1 - x0, y1 - y0) * 0.18));
+    const wing = da => [r1v(x1 - hl * Math.cos(a + da)), r1v(y1 - hl * Math.sin(a + da))];
+    const [wxA, wyA] = wing(0.44), [wxB, wyB] = wing(-0.44);   // 約 25°
+    return [
+      { t: "line", x1: x0, y1: y0, x2: x1, y2: y1 },
+      { t: "line", x1: x1, y1: y1, x2: wxA, y2: wyA },
+      { t: "line", x1: x1, y1: y1, x2: wxB, y2: wyB },
+    ];
+  }
+  return [];
+}
+/** 選んだ entity をまとめて +90° (反時計回り) 回す。基点 (cx0,cy0) はパネル座標 */
+function panelRotateEnts(page, idxs, cx0, cy0) {
+  const pd = panelEditData(page);
+  const rx = (x, y) => Math.round((cx0 - (y - cy0)) * 10) / 10;
+  const ry = (x, y) => Math.round((cy0 + (x - cx0)) * 10) / 10;
+  idxs.forEach(i => {
+    const e = pd.entities[i];
+    if (!e) return;
+    if (e.t === "line") {
+      const a = [e.x1, e.y1], b = [e.x2, e.y2];
+      e.x1 = rx(a[0], a[1]); e.y1 = ry(a[0], a[1]);
+      e.x2 = rx(b[0], b[1]); e.y2 = ry(b[0], b[1]);
+    } else if (e.t === "circle" || e.t === "arc") {
+      const c = [e.cx, e.cy];
+      e.cx = rx(c[0], c[1]); e.cy = ry(c[0], c[1]);
+      if (e.t === "arc") { e.a0 = ((e.a0 + 90) % 360 + 360) % 360; e.a1 = ((e.a1 + 90) % 360 + 360) % 360; }
+    } else if (e.t === "text") {
+      const p = [e.x, e.y];
+      e.x = rx(p[0], p[1]); e.y = ry(p[0], p[1]);
+      e.rot = ((e.rot || 0) + 90) % 360;
+      if (!e.rot) delete e.rot;
+    }
+  });
+}
 /** 選んだ entity を消す */
 function panelDeleteEnts(page, idxs) {
   const pd = panelEditData(page);

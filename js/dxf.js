@@ -253,15 +253,16 @@ function dxfEntity(pairs) {
   return pairs.map(([c, v]) => `${c}\n${v}`).join("\n") + "\n";
 }
 function dxfY(y) { return (SHEET.h - y).toFixed(3); }
-function dxfLine(x1, y1, x2, y2, layer, ltype) {
+function dxfLine(x1, y1, x2, y2, layer, ltype, lw) {
   const pairs = [[0, "LINE"], [8, layer]];
   if (ltype && ltype !== "CONTINUOUS") pairs.push([6, ltype]);
+  if (lw) pairs.push([370, Math.round(lw * 100)]);   // 線の太さ (1/100 mm)
   pairs.push([10, x1.toFixed(3)], [20, dxfY(y1)], [11, x2.toFixed(3)], [21, dxfY(y2)]);
   return dxfEntity(pairs);
 }
-function dxfPoly(pts, layer, ltype) {
+function dxfPoly(pts, layer, ltype, lw) {
   let out = "";
-  for (let i = 0; i < pts.length - 1; i++) out += dxfLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer, ltype);
+  for (let i = 0; i < pts.length - 1; i++) out += dxfLine(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer, ltype, lw);
   return out;
 }
 /** 塗りつぶし矩形 (SOLID)。裁断マークなどに使う */
@@ -655,7 +656,7 @@ function pageToDXF(page) {
           [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)],
           [50, (+e.a0).toFixed(3)], [51, (+e.a1).toFixed(3)]]);
       } else if (e.t === "text") {
-        if (!page.panelText) return;       // 文字は既定で出さない (画面と同じ)
+        if (!page.panelText && !e.note) return;   // 文字は既定で出さない (書き足した注記は常に出す)
         ents += dxfEntity([[0, "TEXT"], [8, "PANEL"], ...col, [7, "JP"],
           [10, X(e.x)], [20, Yd(e.y)], [40, (+e.h).toFixed(3)],
           [1, dxfEscape(e.s)], [50, e.rot || 0]]);
@@ -716,7 +717,7 @@ function pageToDXF(page) {
 
   // ── 破線枠 (盤外エリア / グループ) ── 作図線なので AUXLINE に破線で出す
   (page.zones || []).forEach(z => {
-    ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED");
+    ents += dxfPoly([[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h], [z.x, z.y]], "AUXLINE", "DASHED", z.lw);
     if (z.label) {
       // コメントの位置と文字高は画面と同じ (つまんで動かした lx/ly・labelSize に追従)
       const lp = zoneLabelPos(z);

@@ -276,8 +276,9 @@ function zonesSVG(page, opts = {}) {
     const selected = !print && App.selection.has(z.id);
     const zk = objScale(z);            // 尺度の違うページから貼った枠の倍率
     const zdash = zk !== 1 ? WIRE_STYLES.dash.dash.split(" ").map(v => v * fr * zk).join(" ") : dash;
+    const zlw = z.lw || LINE_W.thin;       // 破線枠の太さ (プロパティで変更できる)
     out += `<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="${2 * fr * zk}" fill="none"
-      stroke="${selected ? SEL : INK}" stroke-width="${(selected ? LINE_W.thick : LINE_W.thin) * fr * zk}" stroke-dasharray="${zdash}"/>`;
+      stroke="${selected ? SEL : INK}" stroke-width="${(selected ? Math.max(LINE_W.thick, zlw) : zlw) * fr * zk}" stroke-dasharray="${zdash}"/>`;
     if (z.label) {
       const lp = zoneLabelPos(z);
       out += `<text x="${lp.x}" y="${lp.y}" font-size="${svgFontSizeFor(z.label, lp.size)}" fill="${INK}" font-family="sans-serif">${escXML(z.label)}</text>`;
@@ -1120,8 +1121,8 @@ function panelSVG(page) {
       out += `<path d="M${x1},${y1} A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
     } else if (e.t === "text") {
       // 機器の型式などの文字は既定で出さない (図が読みにくくなるため)。
-      // プロパティ「文字も描く」で戻せる
-      if (!page.panelText) return;
+      // プロパティ「文字も描く」で戻せる。書き足した注記 (note) は常に出す
+      if (!page.panelText && !e.note) return;
       const rot = e.rot ? ` transform="rotate(${-e.rot} ${X(e.x)} ${Y(e.y)})"` : "";
       out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}>${escXML(e.s)}</text>`;
     }
@@ -1208,6 +1209,19 @@ function overlaySVG(page) {
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
   // ラバーバンド (右→左ドラッグは交差選択: 緑破線)
+  // パネル図の作図プレビュー
+  if (page.kind === "panel" && Editor.drag && Editor.drag.type === "panelDraw") {
+    const pn2 = page.panel;
+    const { ox, oy } = panelOrigin(page);
+    const X = v => ox + v, Y = v => oy + (pn2.extent.h - v);
+    const d2 = Editor.drag;
+    out += `<g fill="none" stroke="#1f7ae0" stroke-width="${0.3 * sheetScale()}" stroke-dasharray="1.5 1">`;
+    panelDrawEnts(d2.kind, d2.p0.x, d2.p0.y, d2.p1.x, d2.p1.y).forEach(e2 => {
+      if (e2.t === "line") out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>`;
+      else if (e2.t === "circle") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}"/>`;
+    });
+    out += `</g>`;
+  }
   // パネル図の選択強調 (ドラッグ中は移動先へずらして描く)
   if (page.kind === "panel" && panelSelIdxs()) {
     const pn = page.panel;
@@ -1697,6 +1711,28 @@ function onMouseDown(e) {
     requestRender();
     return;
   }
+  // パネル図の作図モード (プロパティの 線/丸/矢印/文字 ボタンで入る)
+  if (Editor.panelDraw && curPage().kind === "panel") {
+    const pgD = curPage();
+    const { ox, oy } = panelOrigin(pgD);
+    const px = Math.round(w.x - ox), py = Math.round(pgD.panel.extent.h - (w.y - oy));
+    if (Editor.panelDraw.kind === "text") {
+      const s = prompt("書き足す文字", "");
+      if (s !== null && s.trim()) {
+        commit();
+        const idxs = panelAddEnts(pgD, [{ t: "text", x: px, y: py, h: 5, s: s.trim(), note: true }]);
+        Editor.panelSel = { pageId: pgD.id, idxs: new Set(idxs) };
+        UI.setMsg("文字を書き足しました (クリックで続けて記入 / Esc で終了)");
+        UI.showProps(); requestRender();
+      }
+      return;
+    }
+    Editor.drag = { type: "panelDraw", kind: Editor.panelDraw.kind,
+      p0: { x: px, y: py }, p1: { x: px, y: py }, shift: e.shiftKey,
+      snapshot: snapshotProject() };
+    requestRender();
+    return;
+  }
   const hit = hitTest(w.x, w.y);
   if (hit) {
     const id = hit.obj.id;
@@ -1873,6 +1909,19 @@ function onMouseMove(e) {
     d.dx = Math.round(w.x - d.startW.x);
     d.dy = Math.round(w.y - d.startW.y);        // 1mm 刻みで動かす
     if (d.dx || d.dy) d.moved = true;
+    requestRender();
+    return;
+  }
+  if (d.type === "panelDraw") {
+    const pgD = curPage();
+    const { ox, oy } = panelOrigin(pgD);
+    let px = Math.round(w.x - ox), py = Math.round(pgD.panel.extent.h - (w.y - oy));
+    d.shift = e.shiftKey;
+    if (d.shift && (d.kind === "line" || d.kind === "arrow")) {
+      // Shift = まっすぐ (長い方の軸に沿わせる)
+      if (Math.abs(px - d.p0.x) >= Math.abs(py - d.p0.y)) py = d.p0.y; else px = d.p0.x;
+    }
+    d.p1 = { x: px, y: py };
     requestRender();
     return;
   }
@@ -2102,6 +2151,24 @@ function onMouseUp(e) {
       App.redoStack.length = 0;
       saveLocal();
       UI.setMsg(`図形を動かしました (X ${d.dx >= 0 ? "+" : ""}${d.dx} / Y ${-d.dy >= 0 ? "+" : ""}${-d.dy} mm)`);
+    }
+    UI.showProps();
+    requestRender();
+    return;
+  }
+  if (d.type === "panelDraw") {
+    const pgD = curPage();
+    if (Math.hypot(d.p1.x - d.p0.x, d.p1.y - d.p0.y) >= 1) {
+      const ents = panelDrawEnts(d.kind, d.p0.x, d.p0.y, d.p1.x, d.p1.y);
+      if (ents.length) {
+        const idxs = panelAddEnts(pgD, ents);
+        App.undoStack.push(d.snapshot);
+        if (App.undoStack.length > 100) App.undoStack.shift();
+        App.redoStack.length = 0;
+        saveLocal();
+        Editor.panelSel = { pageId: pgD.id, idxs: new Set(idxs) };
+        UI.setMsg(`${d.kind === "line" ? "線" : d.kind === "circle" ? "丸" : "矢印"}を書き足しました (続けて描けます / Esc で終了)`);
+      }
     }
     UI.showProps();
     requestRender();
@@ -2358,6 +2425,25 @@ function rotateSelection() {
   if (Editor.ghost) {
     Editor.ghost.rot = ((Editor.ghost.rot || 0) + 90) % 360;
     requestRender();
+    return;
+  }
+  const pIdxs = panelSelIdxs();
+  if (!App.selection.size && pIdxs) {
+    // パネル図の図形: まとまりの中心まわりに +90°
+    commit();
+    const pgR = curPage();
+    const pdR = panelDataOf(pgR);
+    let b0 = null;
+    pIdxs.forEach(i => {
+      const b = panelEntBox(pdR.entities[i]);
+      if (!b) return;
+      if (!b0) b0 = { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h };
+      else { b0.x0 = Math.min(b0.x0, b.x); b0.y0 = Math.min(b0.y0, b.y);
+        b0.x1 = Math.max(b0.x1, b.x + b.w); b0.y1 = Math.max(b0.y1, b.y + b.h); }
+    });
+    if (b0) panelRotateEnts(pgR, pIdxs, Math.round((b0.x0 + b0.x1) / 2), Math.round((b0.y0 + b0.y1) / 2));
+    UI.setMsg("図形を 90° 回しました (R でもう 90°)");
+    UI.showProps(); requestRender();
     return;
   }
   const page = curPage();
