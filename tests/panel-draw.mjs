@@ -3,13 +3,18 @@
    ・zoneLw  : 破線枠のプロパティに「線の太さ」が出て、画面 SVG と DXF
               (lineweight 370) の両方に効く
    ・lineTool: プロパティの「線」ボタン → ドラッグで線が引ける (1mm 刻み)。
-              描いた線は選択済みになる
+              描いた線は選択済みになり、モードは 1 回で終わる (残ったままだと
+              次のドラッグが全部線になる)。作図ボタンは選択中も出ている
    ・circle  : 「丸」= 中心からドラッグで半径
    ・arrow   : 「矢印」= 根→先。本体 + 羽 2 本の 3 本がひとまとまりになる
    ・textTool: 「文字」= クリックで記入。panelText オフでも画面と DXF に出る
               (書き足した注記は常に見える)
    ・rotate  : 選んだ図形を R (rotateSelection) で 90° 回せる。undo で戻る
    ・textEdit: 文字を選ぶとプロパティで内容・高さを直せる
+   ・width   : 描いた線・矢印を選んで「線の太さ」を変えると画面 SVG と
+              DXF (lineweight 370) に効く
+   ・toolFix : 配線ツール中でも作図ボタンを押すと選択ツールへ切り替わって
+              描ける (切り替えないとクリックが図面側に取られる)
    ・esc     : Esc で作図モードが終わる */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
@@ -92,7 +97,8 @@ const L1 = await p.evaluate(([mk]) => {
   const ents = panelDataOf(pg).entities;
   const e = ents[mk.n0];
   const sel = panelSelIdxs();
-  return { n: ents.length, e, selN: sel ? sel.size : 0, mode: Editor.panelDraw && Editor.panelDraw.kind };
+  return { n: ents.length, e, selN: sel ? sel.size : 0, mode: Editor.panelDraw && Editor.panelDraw.kind,
+    btns: document.querySelectorAll(".pnDraw").length };
 }, [R]);
 
 // 丸・矢印: モードを切り替えてドラッグ
@@ -167,6 +173,43 @@ const TE = await p.evaluate(async () => {
   return { fields: true, s: e.s, h: e.h };
 });
 
+/* ── 太さの変更 (描いた線 + 矢印の 4 本) ── */
+const LW = await p.evaluate(async ([mk]) => {
+  const pg = curPage();
+  const idxs = [];
+  panelDataOf(pg).entities.forEach((e, i) => { if (i >= mk.n0 && e.t === "line") idxs.push(i); });
+  Editor.panelSel = { pageId: pg.id, idxs: new Set(idxs) };
+  UI.showProps();
+  await new Promise(r => setTimeout(r, 150));
+  const inp = document.getElementById("pPnLw");
+  if (!inp) return { field: false };
+  inp.value = "0.7";
+  inp.dispatchEvent(new Event("change", { bubbles: true }));
+  await new Promise(r => setTimeout(r, 100));
+  const es = panelDataOf(pg).entities;
+  applySheet(pg);
+  const f = sheetScale();
+  const svg = panelSVG(pg);
+  const dxf = pageToDXF(pg).split(/\r?\n/);
+  const i370 = dxf.indexOf("370");
+  return { field: true, n: idxs.length, allW: idxs.every(i => es[i].w === 0.7),
+    svgW: svg.includes(`stroke-width="${0.7 * f}"`),
+    dxf370: i370 >= 0 && dxf[i370 + 1] === "70" };
+}, [R]);
+
+/* ── 配線ツール中でもボタンで描ける (選択ツールへ自動切替) ── */
+const TF = await p.evaluate(async () => {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  Editor.panelSel = null; App.selection.clear();
+  UI.setTool("wire");
+  UI.showProps();
+  await new Promise(r => setTimeout(r, 120));
+  const btn = document.querySelector('.pnDraw[data-k="arrow"]');
+  if (!btn) return { btn: false };
+  btn.click();
+  return { btn: true, tool: App.tool, mode: Editor.panelDraw && Editor.panelDraw.kind };
+});
+
 /* ── Esc で作図モード終了 ── */
 const ES = await p.evaluate(() => {
   Editor.panelDraw = { kind: "line" };
@@ -180,7 +223,8 @@ const checks = {
   zoneLw: ZL.field === true && ZL.lw === 0.7 && ZL.svgW === true && ZL.dxf370 === true,
   lineTool: R.btn === "line,circle,arrow,text" && L1.n === R.n0 + 1 &&
     L1.e && L1.e.t === "line" && near(L1.e.x1, 200) && near(L1.e.y1, 100) &&
-    near(L1.e.x2, 230) && near(L1.e.y2, 100) && L1.selN === 1 && L1.mode === "line",
+    near(L1.e.x2, 230) && near(L1.e.y2, 100) && L1.selN === 1 &&
+    L1.mode === null && L1.btns === 4,
   circle: !!L2.circ && near(L2.circ.cx, 400) && near(L2.circ.cy, 200) && near(L2.circ.r, 30, 1.5),
   arrow: L2.arrows.length === 3 && L2.arrows.every(e => e.t === "line") &&
     near(L2.arrows[0].x1, 100) && near(L2.arrows[0].x2, 140) &&
@@ -197,10 +241,13 @@ const checks = {
     RO.back.x1 === RO.before.x1 && RO.back.y1 === RO.before.y1 &&
     RO.back.x2 === RO.before.x2 && RO.back.y2 === RO.before.y2,
   textEdit: TE.fields === true && TE.s === "改訂A" && TE.h === 7,
+  width: LW.field === true && LW.n === 4 && LW.allW === true &&
+    LW.svgW === true && LW.dxf370 === true,
+  toolFix: TF.btn === true && TF.tool === "select" && TF.mode === "arrow",
   esc: ES.mode === null,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, ZL, R: { ...R, line: 0, circ: 0, arrw: 0, txt: 0 }, L1, L2, TX, RO, TE, ES, errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, ZL, R: { ...R, line: 0, circ: 0, arrw: 0, txt: 0 }, L1, L2, TX, RO, TE, LW, TF, ES, errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("panel-draw OK");

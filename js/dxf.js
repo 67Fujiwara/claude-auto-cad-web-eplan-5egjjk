@@ -645,14 +645,15 @@ function pageToDXF(page) {
     };
     (pd.entities || []).forEach(e => {
       const col = aciOf(e) || [];
+      const lwp = e.w ? [[370, Math.round(e.w * 100)]] : [];   // 書き足した図形の太さ
       if (e.t === "line") {
-        ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col,
+        ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col, ...lwp,
           [10, X(e.x1)], [20, Yd(e.y1)], [11, X(e.x2)], [21, Yd(e.y2)]]);
       } else if (e.t === "circle") {
-        ents += dxfEntity([[0, "CIRCLE"], [8, "PANEL"], ...col,
+        ents += dxfEntity([[0, "CIRCLE"], [8, "PANEL"], ...col, ...lwp,
           [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)]]);
       } else if (e.t === "arc") {
-        ents += dxfEntity([[0, "ARC"], [8, "PANEL"], ...col,
+        ents += dxfEntity([[0, "ARC"], [8, "PANEL"], ...col, ...lwp,
           [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)],
           [50, (+e.a0).toFixed(3)], [51, (+e.a1).toFixed(3)]]);
       } else if (e.t === "text") {

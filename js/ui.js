@@ -328,7 +328,19 @@ UI.showProps = (focusTag = false) => {
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
   const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
-  /* パネル図の図形 (機器・穴のまとまり) を選んでいるとき: その編集 */
+  /** パネル図の作図ボタン (設定パネル・選択パネルの両方に出す)。
+    どのツールからでも押した時点で選択ツールへ切り替える —
+    配線・文字ツールのままだとクリックが図面側に取られて描けない */
+function bindPnDraw(pane) {
+  pane.querySelectorAll(".pnDraw").forEach(b => b.addEventListener("click", () => {
+    UI.setTool("select");
+    panelDrawSet(b.dataset.k);
+    const nm = { line: "線", circle: "丸 (中心からドラッグ)", arrow: "矢印 (根→先)", text: "文字" }[b.dataset.k];
+    UI.setMsg(`作図: ${nm} — 図の上で${b.dataset.k === "text" ? "クリック" : "ドラッグ"} (1 回描くと選択に戻ります / Esc で中止)`);
+  }));
+}
+
+/* パネル図の図形 (機器・穴のまとまり) を選んでいるとき: その編集 */
   if (page.kind === "panel" && page.panel && !App.selection.size && panelSelIdxs()) {
     const idxs = [...panelSelIdxs()];
     const pd = panelDataOf(page);
@@ -349,9 +361,18 @@ UI.showProps = (focusTag = false) => {
       <div class="prop-sect">文字</div>
       <div class="prop-row"><label>内容</label><input id="pPnTs" value="${escAttr(one.s || "")}"/></div>
       <div class="prop-row"><label>高さ (mm)</label><input id="pPnTh" class="mono" type="number" step="0.5" min="1" value="${one.h || 5}"/></div>` : ""}
+      ${ents.some(e2 => e2.t !== "text") ? `
+      <div class="prop-row"><label>線の太さ (mm)</label><input id="pPnLw" class="mono" type="number" step="0.05" min="0.1" max="2" value="${(ents.find(e2 => e2.t !== "text") || {}).w || 0.25}"/></div>` : ""}
       <div class="prop-row" style="margin-top:8px;display:flex;gap:6px">
         <button class="btn-solid" id="pPnRot" style="flex:1">回転 90° (R)</button>
         <button class="btn-solid" id="pPnDel" style="flex:1">削除 (Delete)</button>
+      </div>
+      <div class="prop-sect">書き足し (作図)</div>
+      <div class="prop-row" style="display:flex;gap:6px">
+        <button class="btn-solid pnDraw" data-k="line" style="flex:1">線</button>
+        <button class="btn-solid pnDraw" data-k="circle" style="flex:1">丸</button>
+        <button class="btn-solid pnDraw" data-k="arrow" style="flex:1">矢印</button>
+        <button class="btn-solid pnDraw" data-k="text" style="flex:1">文字</button>
       </div>
       <div class="prop-note">ドラッグで移動 (1mm 刻み)・矢印キー 5mm・Shift+矢印 0.5mm。Shift+クリックで追加選択、Esc で解除。</div>`;
     const applyCircle = () => {
@@ -385,8 +406,21 @@ UI.showProps = (focusTag = false) => {
       const el = pane.querySelector(sel2);
       if (el) el.addEventListener("change", applyText);
     });
+    const lwInp = pane.querySelector("#pPnLw");
+    if (lwInp) lwInp.addEventListener("change", () => {
+      commit();
+      const pd2 = panelEditData(page);
+      const n = Math.min(2, Math.max(0.1, parseFloat(lwInp.value) || 0.25));
+      idxs.forEach(i => {
+        const e2 = pd2.entities[i];
+        if (!e2 || e2.t === "text") return;
+        if (Math.abs(n - 0.25) < 1e-9) delete e2.w; else e2.w = n;
+      });
+      UI.refresh(false);
+    });
     pane.querySelector("#pPnRot").addEventListener("click", () => rotateSelection());
     pane.querySelector("#pPnDel").addEventListener("click", () => deleteSelection());
+    bindPnDraw(pane);
     return;
   }
   /* Panel Studio の図面ページ: 縮尺の選び直しと白黒設定 */
@@ -412,7 +446,7 @@ UI.showProps = (focusTag = false) => {
         <button class="btn-solid pnDraw" data-k="arrow" style="flex:1">矢印</button>
         <button class="btn-solid pnDraw" data-k="text" style="flex:1">文字</button>
       </div>
-      <div class="prop-note">ボタンを押してから図の上でドラッグ (文字はクリック)。続けて描けます — Esc で終了。線・矢印は Shift でまっすぐ。描いた図形はクリックで選んで移動 (ドラッグ/矢印キー)・回転 (R)・削除 (Delete) できます。</div>
+      <div class="prop-note">ボタンを押してから図の上でドラッグ (文字はクリック) — 1 回描くと選択ツールに戻ります。線・矢印は Shift でまっすぐ。描いた図形はクリックで選んで移動 (ドラッグ/矢印キー)・回転 (R)・削除 (Delete)、太さ・内容はプロパティで変えられます。</div>
       <div class="prop-note">図は作図領域の中央に置かれます。縮尺は読み込み時に標準縮尺から自動で選んでいます (ここでは細かい刻みで選び直せます)。</div>`;
     pane.querySelector("#pPnScale").addEventListener("change", e => {
       commit();
@@ -431,11 +465,7 @@ UI.showProps = (focusTag = false) => {
       if (e.target.checked) pg2.panelText = true; else delete pg2.panelText;
       UI.refresh(false);
     });
-    pane.querySelectorAll(".pnDraw").forEach(b => b.addEventListener("click", () => {
-      Editor.panelDraw = { kind: b.dataset.k };
-      const nm = { line: "線", circle: "丸 (中心からドラッグ)", arrow: "矢印 (根→先)", text: "文字" }[b.dataset.k];
-      UI.setMsg(`作図: ${nm} — 図の上で${b.dataset.k === "text" ? "クリック" : "ドラッグ"} (続けて描けます / Esc で終了)`);
-    }));
+    bindPnDraw(pane);
     return;
   }
   /* 表紙・目次・仕様のページは回路を選ばないので、ページの内容そのものを
@@ -3147,7 +3177,7 @@ UI.setupKeys = () => {
         if (App.sim.running) { UI.toggleSim(); return; }
         if (Editor.wireDraft) { cancelDraft(); return; } // 1段階目: 作図キャンセル (ツール維持)
         if (Editor.ghost) { cancelDraft(); UI.setTool("select"); return; }
-        App.selection.clear(); Editor.panelSel = null; Editor.panelDraw = null; UI.showProps(); requestRender();
+        App.selection.clear(); Editor.panelSel = null; panelDrawSet(null); UI.showProps(); requestRender();
         UI.setTool("select");
         return;
       case "F2": e.preventDefault(); UI.openWizard(); return;

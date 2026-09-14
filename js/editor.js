@@ -1106,19 +1106,20 @@ function panelSVG(page) {
   };
   const X = v => ox + v, Y = v => oy + (pn.extent.h - v);
   const sw = LINE_W.thin * f;            // 紙の上で 0.25mm になる線幅
+  const swOf = e => (e.w ? e.w * f : sw);   // 書き足した図形はプロパティで太さを変えられる
   let out = `<g data-panel="1">`;
   (pd.entities || []).forEach(e => {
     const c = colOf(e);
     if (e.t === "line") {
-      out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
+      out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
     } else if (e.t === "circle") {
-      out += `<circle cx="${X(e.cx)}" cy="${Y(e.cy)}" r="${e.r}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
+      out += `<circle cx="${X(e.cx)}" cy="${Y(e.cy)}" r="${e.r}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
     } else if (e.t === "arc") {
       const da = ((e.a1 - e.a0) % 360 + 360) % 360;
       const P = a2 => [X(e.cx + e.r * Math.cos(a2 * Math.PI / 180)), Y(e.cy + e.r * Math.sin(a2 * Math.PI / 180))];
       const [x1, y1] = P(e.a0), [x2, y2] = P(e.a1);
       // 反時計回り (見た目) = 画面 (y 下向き) では sweep-flag 0
-      out += `<path d="M${x1},${y1} A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}" stroke="${c}" stroke-width="${sw}" fill="none"/>`;
+      out += `<path d="M${x1},${y1} A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
     } else if (e.t === "text") {
       // 機器の型式などの文字は既定で出さない (図が読みにくくなるため)。
       // プロパティ「文字も描く」で戻せる。書き足した注記 (note) は常に出す
@@ -1143,6 +1144,13 @@ function panelSVG(page) {
   if (_panelSvgCache.size > 12) _panelSvgCache.clear();
   _panelSvgCache.set(ck, out);
   return out;
+}
+
+/** パネル図の作図モードの入り切り (カーソルも合わせる)。
+    描き終わり・Esc・ボタンで必ずここを通す */
+function panelDrawSet(kind) {
+  Editor.panelDraw = kind ? { kind } : null;
+  if (Editor.svg) Editor.svg.style.cursor = kind ? "crosshair" : "";
 }
 
 /** パネル図の図形選択 (entity 添字の集合)。ページが替わったら無効扱い */
@@ -1722,7 +1730,8 @@ function onMouseDown(e) {
         commit();
         const idxs = panelAddEnts(pgD, [{ t: "text", x: px, y: py, h: 5, s: s.trim(), note: true }]);
         Editor.panelSel = { pageId: pgD.id, idxs: new Set(idxs) };
-        UI.setMsg("文字を書き足しました (クリックで続けて記入 / Esc で終了)");
+        panelDrawSet(null);         // 1 回で終了 — 次はまたボタンから (誤記入を防ぐ)
+        UI.setMsg("文字を書き足しました — 内容・高さはプロパティで直せます");
         UI.showProps(); requestRender();
       }
       return;
@@ -2158,7 +2167,8 @@ function onMouseUp(e) {
   }
   if (d.type === "panelDraw") {
     const pgD = curPage();
-    if (Math.hypot(d.p1.x - d.p0.x, d.p1.y - d.p0.y) >= 1) {
+    if (pgD.kind === "panel" && pgD.panel &&
+        Math.hypot(d.p1.x - d.p0.x, d.p1.y - d.p0.y) >= 1) {
       const ents = panelDrawEnts(d.kind, d.p0.x, d.p0.y, d.p1.x, d.p1.y);
       if (ents.length) {
         const idxs = panelAddEnts(pgD, ents);
@@ -2167,7 +2177,10 @@ function onMouseUp(e) {
         App.redoStack.length = 0;
         saveLocal();
         Editor.panelSel = { pageId: pgD.id, idxs: new Set(idxs) };
-        UI.setMsg(`${d.kind === "line" ? "線" : d.kind === "circle" ? "丸" : "矢印"}を書き足しました (続けて描けます / Esc で終了)`);
+        /* 1 回描いたらモードを抜ける — 残したままだと、描いた後に図形を
+           つまもうとしたドラッグが全部新しい線になってしまう */
+        panelDrawSet(null);
+        UI.setMsg(`${d.kind === "line" ? "線" : d.kind === "circle" ? "丸" : "矢印"}を書き足しました — 太さはプロパティで変更、もう 1 本はボタンから`);
       }
     }
     UI.showProps();
