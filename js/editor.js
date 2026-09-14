@@ -1091,15 +1091,13 @@ function panelSVG(page) {
      entities は不変・数万要素になり得るので、描画条件が同じ間は SVG を使い回す */
   const pn = page.panel;
   if (!pn) return "";
-  const ck = `${pn.dataKey || page.id}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}`;
+  const pd = panelDataOf(page);
+  const ck = `${pn.dataKey || page.id}|r${pd.rev || 0}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}`;
   const hit = _panelSvgCache.get(ck);
   if (hit !== undefined) return hit;
   const f = sheetScale();
-  const area = panelAreaRect();
-  const w = pn.extent.w, h = pn.extent.h;
-  const ox = area.x + (area.w - w) / 2, oy = area.y + (area.h - h) / 2;
+  const { ox, oy } = panelOrigin(page);
   const mono = !!page.panelMono;
-  const pd = panelDataOf(page);
   const colOf = e => {
     if (mono) return INK;
     const ly = pd.layers && pd.layers[e.layer];
@@ -1144,6 +1142,14 @@ function panelSVG(page) {
   if (_panelSvgCache.size > 12) _panelSvgCache.clear();
   _panelSvgCache.set(ck, out);
   return out;
+}
+
+/** パネル図の図形選択 (entity 添字の集合)。ページが替わったら無効扱い */
+function panelSelIdxs() {
+  const s = Editor.panelSel;
+  const page = curPage();
+  if (!s || !page || page.id !== s.pageId || page.kind !== "panel" || !s.idxs.size) return null;
+  return s.idxs;
 }
 
 function overlaySVG(page) {
@@ -1202,6 +1208,28 @@ function overlaySVG(page) {
     devPinsOf(g).forEach(p => { out += `<circle cx="${p.x}" cy="${p.y}" r="0.9" fill="${SEL}"/>`; });
   }
   // ラバーバンド (右→左ドラッグは交差選択: 緑破線)
+  // パネル図の選択強調 (ドラッグ中は移動先へずらして描く)
+  if (page.kind === "panel" && panelSelIdxs()) {
+    const pn = page.panel;
+    const pd = panelDataOf(page);
+    const { ox, oy } = panelOrigin(page);
+    const dpm = Editor.drag && Editor.drag.type === "panelMove" ? Editor.drag : null;
+    const f2 = sheetScale();
+    const X = v => ox + v, Y = v => oy + (pn.extent.h - v);
+    let n2 = 0;
+    out += `<g fill="none" stroke="#1f7ae0" stroke-width="${0.35 * f2}"` +
+      (dpm && (dpm.dx || dpm.dy) ? ` opacity="0.75" transform="translate(${dpm.dx} ${dpm.dy})"` : "") + `>`;
+    panelSelIdxs().forEach(i => {
+      if (n2++ > 1500) return;               // 巨大なまとまりは枠だけにせず打ち切る (描画を守る)
+      const e2 = pd.entities[i];
+      if (!e2) return;
+      if (e2.t === "line") out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>`;
+      else if (e2.t === "circle") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}"/>`;
+      else if (e2.t === "arc") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}" stroke-dasharray="1 1"/>`;
+      else if (e2.t === "text") { const b2 = panelEntBox(e2); out += `<rect x="${X(b2.x)}" y="${Y(b2.y + b2.h)}" width="${b2.w}" height="${b2.h}"/>`; }
+    });
+    out += `</g>`;
+  }
   if (Editor.drag && Editor.drag.type === "rubber") {
     const { x0, y0, x1, y1 } = Editor.drag;
     const crossing = x1 < x0;
@@ -1679,6 +1707,7 @@ function onMouseDown(e) {
       App.selection.clear();
       App.selection.add(id);
     }
+    if (!e.shiftKey) Editor.panelSel = null;
     // 移動ドラッグ準備。選択済みの表を動かさずに放したら間口の記入を開く
     // (Excel と同じ流儀 — ダブルクリックが環境で拾われないときの保険にもなる)
     Editor.drag = {
@@ -1690,7 +1719,24 @@ function onMouseDown(e) {
     UI.showProps();
     requestRender();
   } else {
-    if (!e.shiftKey) App.selection.clear();
+    // パネル図の図形 (機器・穴のまとまり) — 図枠側の従来要素が無いときに拾う
+    const pgP = curPage();
+    const cl = pgP.kind === "panel" ? panelClusterAt(pgP, w.x, w.y) : null;
+    if (cl) {
+      const s = (Editor.panelSel && Editor.panelSel.pageId === pgP.id)
+        ? Editor.panelSel : { pageId: pgP.id, idxs: new Set() };
+      const allIn = [...cl.idxs].every(i => s.idxs.has(i));
+      if (e.shiftKey) cl.idxs.forEach(i => (allIn ? s.idxs.delete(i) : s.idxs.add(i)));
+      else if (!allIn) s.idxs = new Set(cl.idxs);
+      Editor.panelSel = s;
+      if (!e.shiftKey) App.selection.clear();
+      Editor.drag = { type: "panelMove", startW: w, dx: 0, dy: 0, moved: false,
+        snapshot: snapshotProject() };
+      UI.showProps();
+      requestRender();
+      return;
+    }
+    if (!e.shiftKey) { App.selection.clear(); Editor.panelSel = null; }
     Editor.drag = { type: "rubber", x0: w.x, y0: w.y, x1: w.x, y1: w.y, additive: e.shiftKey };
     UI.showProps();
     requestRender();
@@ -1820,6 +1866,13 @@ function onMouseMove(e) {
   }
   if (d.type === "rubber") {
     d.x1 = w.x; d.y1 = w.y;
+    requestRender();
+    return;
+  }
+  if (d.type === "panelMove") {
+    d.dx = Math.round(w.x - d.startW.x);
+    d.dy = Math.round(w.y - d.startW.y);        // 1mm 刻みで動かす
+    if (d.dx || d.dy) d.moved = true;
     requestRender();
     return;
   }
@@ -2040,6 +2093,20 @@ function onMouseUp(e) {
     requestRender();
     return;
   }
+  if (d.type === "panelMove") {
+    const idxs = panelSelIdxs();
+    if (d.moved && idxs && (d.dx || d.dy)) {
+      panelMoveEnts(curPage(), idxs, d.dx, -d.dy);   // パネル座標は y 上向き
+      App.undoStack.push(d.snapshot);
+      if (App.undoStack.length > 100) App.undoStack.shift();
+      App.redoStack.length = 0;
+      saveLocal();
+      UI.setMsg(`図形を動かしました (X ${d.dx >= 0 ? "+" : ""}${d.dx} / Y ${-d.dy >= 0 ? "+" : ""}${-d.dy} mm)`);
+    }
+    UI.showProps();
+    requestRender();
+    return;
+  }
   if (d.type === "rubber") {
     const page = curPage();
     const crossing = d.x1 < d.x0; // 右→左ドラッグ = 交差選択 (AutoCAD流)
@@ -2079,6 +2146,22 @@ function onMouseUp(e) {
           : rectHit(z.x, z.y, z.w, z.h);
         if (hit) App.selection.add(z.id);
       });
+      // パネル図の図形 (まとまり単位)。窓 = 全部入る / 交差 = 触れる
+      if (page.kind === "panel" && page.panel) {
+        const pn = page.panel;
+        const { ox, oy } = panelOrigin(page);
+        const s = (d.additive && Editor.panelSel && Editor.panelSel.pageId === page.id)
+          ? Editor.panelSel : { pageId: page.id, idxs: new Set() };
+        panelClusters(page).forEach(cl => {
+          const b = cl.box;
+          const wx0 = ox + b.x, wx1 = wx0 + b.w;
+          const wy0 = oy + (pn.extent.h - b.y - b.h), wy1 = wy0 + b.h;
+          const take = crossing ? (wx0 <= x1 && x0 <= wx1 && wy0 <= y1 && y0 <= wy1)
+            : (wx0 >= x0 && wx1 <= x1 && wy0 >= y0 && wy1 <= y1);
+          if (take) cl.idxs.forEach(i => s.idxs.add(i));
+        });
+        Editor.panelSel = s.idxs.size ? s : (d.additive ? Editor.panelSel : null);
+      }
       UI.showProps();
     }
     requestRender();
@@ -2238,6 +2321,17 @@ function placeGhost() {
 /* ══════════════ 編集操作 ══════════════ */
 function deleteSelection() {
   if (App.sim.running) { UI.setMsg("シミュレーション中は編集できません (Escで終了)"); return; }
+  const pIdxs = panelSelIdxs();
+  if (!App.selection.size && pIdxs) {
+    commit();
+    const n = pIdxs.size;
+    panelDeleteEnts(curPage(), [...pIdxs]);
+    Editor.panelSel = null;
+    UI.setMsg(`パネル図の図形を削除しました (${n} 要素)`);
+    UI.showProps();
+    requestRender();
+    return;
+  }
   if (!App.selection.size) return;
   commit();
   const page = curPage();
@@ -2523,6 +2617,13 @@ function pasteClipboard() {
 
 function nudgeSelection(dx, dy) {
   if (App.sim.running) return;
+  const pIdxs = panelSelIdxs();
+  if (!App.selection.size && pIdxs) {
+    commit();
+    panelMoveEnts(curPage(), pIdxs, dx, -dy);   // パネル座標は y 上向き
+    requestRender();
+    return;
+  }
   if (!App.selection.size) return;
   commit();
   const attach = buildMoveAttachment();

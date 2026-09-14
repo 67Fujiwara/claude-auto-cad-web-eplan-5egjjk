@@ -2141,15 +2141,21 @@ function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
 let _symSer = { key: "", text: "[]" };
 let _symSerEpoch = 0;
 function symSerTouch() { _symSerEpoch++; }
-let _pdSer = { key: "", text: "null" };
+const _pdSerMap = new WeakMap();
 let _pdEpoch = 0;
 function panelSerTouch() { _pdEpoch++; }
-/** パネルデータの直列化 (キー一覧が同じなら前回の文字列を使い回す) */
+/** パネルデータの直列化。同じ実体 (オブジェクト) は書き換えのたびに
+    panelSerTouch が epoch を進める約束なので、実体×epoch で文字列を使い回す。
+    undo で差し替わった実体は別物として直列化し直す — キー一覧だけで見て
+    いた頃は、復元直後の控えが編集前の古い文字列になってしまっていた */
 function serializePanelData(pd) {
   if (!pd) return "null";
-  const key = _pdEpoch + "|" + Object.keys(pd).join(",");
-  if (_pdSer.key !== key) _pdSer = { key, text: JSON.stringify(pd) };
-  return _pdSer.text;
+  let hit = _pdSerMap.get(pd);
+  if (!hit || hit.epoch !== _pdEpoch) {
+    hit = { epoch: _pdEpoch, text: JSON.stringify(pd) };
+    _pdSerMap.set(pd, hit);
+  }
+  return hit.text;
 }
 function serializeSymbols(list) {
   const arr = Array.isArray(list) ? list : [];
@@ -5152,6 +5158,164 @@ function panelNormalize(project) {
 function panelScaleN(page) {
   const m = /^1:([\d.]+)$/.exec(String(page.scale || ""));
   return m ? parseFloat(m[1]) : 1;
+}
+
+/* ── パネル図の編集 (図形のまとまり単位で選択・移動・削除) ──
+   entities は線・円・弧・文字のフラットな列で id を持たない。編集の単位は
+   「外接箱が 1mm 以内に接している要素のまとまり」— 機器 1 個・穴 1 個が
+   そのまま 1 まとまりになる。undo の控えとはデータ実体を共有し得るので、
+   書く前に必ず写しへ替える (panelEditData) */
+
+/** パネル座標系 (左下 0,0・y 上向き) の紙の上での原点。applySheet 済みの前提 */
+function panelOrigin(page) {
+  const pn = page.panel;
+  const area = panelAreaRect();
+  return { ox: area.x + (area.w - pn.extent.w) / 2,
+    oy: area.y + (area.h - pn.extent.h) / 2 };
+}
+/** entity の外接箱 (パネル座標)。文字は概算の箱 */
+function panelEntBox(e) {
+  if (e.t === "line") {
+    return { x: Math.min(e.x1, e.x2), y: Math.min(e.y1, e.y2),
+      w: Math.abs(e.x1 - e.x2), h: Math.abs(e.y1 - e.y2) };
+  }
+  if (e.t === "circle" || e.t === "arc")
+    return { x: e.cx - e.r, y: e.cy - e.r, w: e.r * 2, h: e.r * 2 };
+  if (e.t === "text") {
+    const h = e.h || 3;
+    return { x: e.x, y: e.y, w: Math.max(1, String(e.s || "").length * h * 0.7), h };
+  }
+  return null;
+}
+const _panelClu = new Map();
+/** 図形のまとまり (外接箱が触れている要素の連結)。編集のたびに rev で引き直す */
+function panelClusters(page) {
+  const pn = page.panel;
+  if (!pn) return [];
+  const pd = panelDataOf(page);
+  const key = `${pn.dataKey || page.id}|r${pd.rev || 0}`;
+  const hit = _panelClu.get(key);
+  if (hit) return hit;
+  const ents = pd.entities || [];
+  const boxes = ents.map(panelEntBox);
+  const parent = ents.map((_, i) => i);
+  const find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const TOL = 1, CELL = 25;
+  const grid = new Map();
+  boxes.forEach((b, i) => {
+    if (!b) return;
+    const gx0 = Math.floor((b.x - TOL) / CELL), gx1 = Math.floor((b.x + b.w + TOL) / CELL);
+    const gy0 = Math.floor((b.y - TOL) / CELL), gy1 = Math.floor((b.y + b.h + TOL) / CELL);
+    for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+      const k = gx + ":" + gy;
+      let arr = grid.get(k);
+      if (!arr) grid.set(k, arr = []);
+      arr.push(i);
+    }
+  });
+  const ov = (a, b) => a.x - TOL <= b.x + b.w && b.x - TOL <= a.x + a.w &&
+    a.y - TOL <= b.y + b.h && b.y - TOL <= a.y + a.h;
+  grid.forEach(arr => {
+    for (let i = 1; i < arr.length; i++)
+      for (let j = 0; j < i; j++) {
+        const ri = find(arr[i]), rj = find(arr[j]);
+        if (ri !== rj && ov(boxes[arr[i]], boxes[arr[j]])) parent[rj] = ri;
+      }
+  });
+  const byRoot = new Map();
+  ents.forEach((_, i) => {
+    if (!boxes[i]) return;
+    const r = find(i);
+    let g = byRoot.get(r);
+    if (!g) byRoot.set(r, g = []);
+    g.push(i);
+  });
+  const out = [...byRoot.values()].map(idxs => {
+    const b0 = { x: Infinity, y: Infinity, x1: -Infinity, y1: -Infinity };
+    idxs.forEach(i => { const b = boxes[i];
+      b0.x = Math.min(b0.x, b.x); b0.y = Math.min(b0.y, b.y);
+      b0.x1 = Math.max(b0.x1, b.x + b.w); b0.y1 = Math.max(b0.y1, b.y + b.h); });
+    return { idxs, set: new Set(idxs),
+      box: { x: b0.x, y: b0.y, w: b0.x1 - b0.x, h: b0.y1 - b0.y } };
+  });
+  if (_panelClu.size > 8) _panelClu.clear();
+  _panelClu.set(key, out);
+  return out;
+}
+/** パネル座標 (px,py) に tol 以内で最も近い entity の添字 (無ければ -1) */
+function panelHitIdx(page, px, py, tol) {
+  const pd = panelDataOf(page);
+  const segD = (x, y, x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1;
+    const L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / L2)) : 0;
+    return Math.hypot(x - (x1 + t * dx), y - (y1 + t * dy));
+  };
+  let best = -1, bd = tol;
+  (pd.entities || []).forEach((e, i) => {
+    let d = Infinity;
+    if (e.t === "line") d = segD(px, py, e.x1, e.y1, e.x2, e.y2);
+    else if (e.t === "circle" || e.t === "arc") {
+      const dc = Math.hypot(px - e.cx, py - e.cy);
+      d = Math.abs(dc - e.r);
+      if (e.t === "circle" && dc < e.r && e.r <= tol * 3) d = 0;   // 小さな穴は中を突いても掴める
+      if (e.t === "arc") {
+        const a = ((Math.atan2(py - e.cy, px - e.cx) * 180 / Math.PI) % 360 + 360) % 360;
+        const a0 = ((e.a0 % 360) + 360) % 360, da = ((e.a1 - e.a0) % 360 + 360) % 360;
+        if ((((a - a0) % 360) + 360) % 360 > da) {
+          const P = a2 => [e.cx + e.r * Math.cos(a2 * Math.PI / 180), e.cy + e.r * Math.sin(a2 * Math.PI / 180)];
+          const [ex0, ey0] = P(e.a0), [ex1, ey1] = P(e.a1);
+          d = Math.min(Math.hypot(px - ex0, py - ey0), Math.hypot(px - ex1, py - ey1));
+        }
+      }
+    } else if (e.t === "text") {
+      const b = panelEntBox(e);
+      d = (px >= b.x - tol && px <= b.x + b.w + tol && py >= b.y - tol && py <= b.y + b.h + tol) ? 0 : Infinity;
+    }
+    if (d <= bd) { bd = d; best = i; }
+  });
+  return best;
+}
+/** 紙の座標 (wx,wy) の下の図形のまとまり。無ければ null */
+function panelClusterAt(page, wx, wy) {
+  const pn = page.panel;
+  if (!pn) return null;
+  const { ox, oy } = panelOrigin(page);
+  const idx = panelHitIdx(page, wx - ox, pn.extent.h - (wy - oy), 2.5 * sheetScale());
+  if (idx < 0) return null;
+  return panelClusters(page).find(c => c.set.has(idx)) || null;
+}
+/** 編集用のデータ。undo の控えと実体 (入れ物 project.panelData ごと)
+    共有し得るので、入れ物もシートの中身も写しへ替えてから返す —
+    入れ物へ直接書くと、復元で使い回された控えの実体まで化ける */
+function panelEditData(page) {
+  const pn = page.panel;
+  if (pn.entities) panelNormalize(App.project);   // 旧形式 (ページ内直書き) を移す
+  const pds = App.project.panelData || {};
+  const cur = pds[pn.dataKey] || { entities: [], layers: {} };
+  const copy = { entities: (cur.entities || []).map(e => ({ ...e })),
+    layers: cur.layers || {}, rev: (cur.rev || 0) + 1 };
+  App.project.panelData = { ...pds, [pn.dataKey]: copy };
+  panelSerTouch();
+  App.labelRev++;
+  return copy;
+}
+/** 選んだ entity をパネル座標で動かす (dyp は上向きが正) */
+function panelMoveEnts(page, idxs, dxp, dyp) {
+  const pd = panelEditData(page);
+  idxs.forEach(i => {
+    const e = pd.entities[i];
+    if (!e) return;
+    if (e.t === "line") { e.x1 += dxp; e.y1 += dyp; e.x2 += dxp; e.y2 += dyp; }
+    else if (e.t === "circle" || e.t === "arc") { e.cx += dxp; e.cy += dyp; }
+    else if (e.t === "text") { e.x += dxp; e.y += dyp; }
+  });
+}
+/** 選んだ entity を消す */
+function panelDeleteEnts(page, idxs) {
+  const pd = panelEditData(page);
+  const del = new Set(idxs);
+  pd.entities = pd.entities.filter((_, i) => !del.has(i));
 }
 /** entities の座標が 0〜extent に収まっているか (はみ出しの数を返す) */
 function panelBoundsCheck(sheet) {

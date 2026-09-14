@@ -328,6 +328,44 @@ UI.showProps = (focusTag = false) => {
   const selTexts = page.texts.filter(t => App.selection.has(t.id));
   const selZones = pageZones(page).filter(z => App.selection.has(z.id));
 
+  /* パネル図の図形 (機器・穴のまとまり) を選んでいるとき: その編集 */
+  if (page.kind === "panel" && page.panel && !App.selection.size && panelSelIdxs()) {
+    const idxs = [...panelSelIdxs()];
+    const pd = panelDataOf(page);
+    const ents = idxs.map(i => pd.entities[i]).filter(Boolean);
+    const one = ents.length === 1 ? ents[0] : null;
+    const nClu = panelClusters(page).filter(c => idxs.some(i => c.set.has(i))).length;
+    pane.innerHTML = `
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">パネル図の図形</div><div class="t2">${nClu} まとまり / ${ents.length} 要素</div></div></div>
+      ${one && one.t === "circle" ? `
+      <div class="prop-sect">穴 (円) の寸法</div>
+      <div class="prop-grid2">
+        <div class="prop-row"><label>中心 X</label><input id="pPnCx" class="mono" type="number" step="0.5" value="${one.cx}"/></div>
+        <div class="prop-row"><label>中心 Y</label><input id="pPnCy" class="mono" type="number" step="0.5" value="${one.cy}"/></div>
+        <div class="prop-row"><label>径 φ</label><input id="pPnDia" class="mono" type="number" step="0.1" min="0.2" value="${Math.round(one.r * 20) / 10}"/></div>
+      </div>
+      <div class="prop-note">パネルの左下を 0,0 とした実寸 (mm)。Y は上向きです。</div>` : ""}
+      <div class="prop-row" style="margin-top:8px"><button class="btn-solid" id="pPnDel" style="width:100%">選択した図形を削除 (Delete)</button></div>
+      <div class="prop-note">ドラッグで移動 (1mm 刻み)・矢印キー 5mm・Shift+矢印 0.5mm。Shift+クリックで追加選択、Esc で解除。</div>`;
+    const applyCircle = () => {
+      const cx = pane.querySelector("#pPnCx"), cy = pane.querySelector("#pPnCy"), di = pane.querySelector("#pPnDia");
+      commit();
+      const pd2 = panelEditData(page);
+      const e2 = pd2.entities[idxs[0]];
+      if (e2 && e2.t === "circle") {
+        if (cx) e2.cx = parseFloat(cx.value) || 0;
+        if (cy) e2.cy = parseFloat(cy.value) || 0;
+        if (di) e2.r = Math.max(0.1, (parseFloat(di.value) || e2.r * 2) / 2);
+      }
+      UI.refresh(false);
+    };
+    ["#pPnCx", "#pPnCy", "#pPnDia"].forEach(sel2 => {
+      const el = pane.querySelector(sel2);
+      if (el) el.addEventListener("change", applyCircle);
+    });
+    pane.querySelector("#pPnDel").addEventListener("click", () => deleteSelection());
+    return;
+  }
   /* Panel Studio の図面ページ: 縮尺の選び直しと白黒設定 */
   /* 何か選んでいるとき (置いた文字など) は通常のプロパティを出す —
      ここで打ち切ると文字高の変更などに届かなくなる */
@@ -3070,16 +3108,16 @@ UI.setupKeys = () => {
         if (App.sim.running) { UI.toggleSim(); return; }
         if (Editor.wireDraft) { cancelDraft(); return; } // 1段階目: 作図キャンセル (ツール維持)
         if (Editor.ghost) { cancelDraft(); UI.setTool("select"); return; }
-        App.selection.clear(); UI.showProps(); requestRender();
+        App.selection.clear(); Editor.panelSel = null; UI.showProps(); requestRender();
         UI.setTool("select");
         return;
       case "F2": e.preventDefault(); UI.openWizard(); return;
       /* 矢印 = 5mm 格子。Shift+矢印 = 0.5mm の微調整 —
          端子の張り出しが 5mm の倍数でない記号を配線と真横に合わせるため */
-      case "ArrowLeft": if (App.selection.size) { e.preventDefault(); nudgeSelection(e.shiftKey ? -FINE : -GRID, 0); } return;
-      case "ArrowRight": if (App.selection.size) { e.preventDefault(); nudgeSelection(e.shiftKey ? FINE : GRID, 0); } return;
-      case "ArrowUp": if (App.selection.size) { e.preventDefault(); nudgeSelection(0, e.shiftKey ? -FINE : -GRID); } return;
-      case "ArrowDown": if (App.selection.size) { e.preventDefault(); nudgeSelection(0, e.shiftKey ? FINE : GRID); } return;
+      case "ArrowLeft": if (App.selection.size || panelSelIdxs()) { e.preventDefault(); nudgeSelection(e.shiftKey ? -FINE : -GRID, 0); } return;
+      case "ArrowRight": if (App.selection.size || panelSelIdxs()) { e.preventDefault(); nudgeSelection(e.shiftKey ? FINE : GRID, 0); } return;
+      case "ArrowUp": if (App.selection.size || panelSelIdxs()) { e.preventDefault(); nudgeSelection(0, e.shiftKey ? -FINE : -GRID); } return;
+      case "ArrowDown": if (App.selection.size || panelSelIdxs()) { e.preventDefault(); nudgeSelection(0, e.shiftKey ? FINE : GRID); } return;
       case " ":
         if (!Editor.spaceHeld) { Editor.spaceHeld = true; document.getElementById("canvas").style.cursor = "grab"; }
         e.preventDefault();
