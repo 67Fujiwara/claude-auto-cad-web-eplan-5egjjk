@@ -1112,6 +1112,10 @@ function panelSVG(page) {
     const c = colOf(e);
     if (e.t === "line") {
       out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
+    } else if (e.t === "arrow") {
+      const hd = panelArrowHead(e, f);
+      out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(hd.bc.x)},${Y(hd.bc.y)}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>` +
+        `<path d="M${X(hd.tip.x)},${Y(hd.tip.y)} L${X(hd.b1.x)},${Y(hd.b1.y)} L${X(hd.b2.x)},${Y(hd.b2.y)} Z" fill="${c}" stroke="none"/>`;
     } else if (e.t === "circle") {
       out += `<circle cx="${X(e.cx)}" cy="${Y(e.cy)}" r="${e.r}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
     } else if (e.t === "arc") {
@@ -1226,6 +1230,11 @@ function overlaySVG(page) {
     out += `<g fill="none" stroke="#1f7ae0" stroke-width="${0.3 * sheetScale()}" stroke-dasharray="1.5 1">`;
     panelDrawEnts(d2.kind, d2.p0.x, d2.p0.y, d2.p1.x, d2.p1.y).forEach(e2 => {
       if (e2.t === "line") out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>`;
+      else if (e2.t === "arrow") {
+        const hd = panelArrowHead(e2, sheetScale());
+        out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>` +
+          `<path d="M${X(hd.tip.x)},${Y(hd.tip.y)} L${X(hd.b1.x)},${Y(hd.b1.y)} L${X(hd.b2.x)},${Y(hd.b2.y)} Z"/>`;
+      }
       else if (e2.t === "circle") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}"/>`;
     });
     out += `</g>`;
@@ -1245,7 +1254,7 @@ function overlaySVG(page) {
       if (n2++ > 1500) return;               // 巨大なまとまりは枠だけにせず打ち切る (描画を守る)
       const e2 = pd.entities[i];
       if (!e2) return;
-      if (e2.t === "line") out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>`;
+      if (e2.t === "line" || e2.t === "arrow") out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>`;
       else if (e2.t === "circle") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}"/>`;
       else if (e2.t === "arc") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}" stroke-dasharray="1 1"/>`;
       else if (e2.t === "text") { const b2 = panelEntBox(e2); out += `<rect x="${X(b2.x)}" y="${Y(b2.y + b2.h)}" width="${b2.w}" height="${b2.h}"/>`; }
@@ -1728,7 +1737,7 @@ function onMouseDown(e) {
       const s = prompt("書き足す文字", "");
       if (s !== null && s.trim()) {
         commit();
-        const idxs = panelAddEnts(pgD, [{ t: "text", x: px, y: py, h: 5, s: s.trim(), note: true }]);
+        const idxs = panelAddEnts(pgD, [{ t: "text", x: px, y: py, h: 5, s: s.trim(), note: true, add: true }]);
         Editor.panelSel = { pageId: pgD.id, idxs: new Set(idxs) };
         panelDrawSet(null);         // 1 回で終了 — 次はまたボタンから (誤記入を防ぐ)
         UI.setMsg("文字を書き足しました — 内容・高さはプロパティで直せます");

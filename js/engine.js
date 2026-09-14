@@ -5175,7 +5175,7 @@ function panelOrigin(page) {
 }
 /** entity の外接箱 (パネル座標)。文字は概算の箱 */
 function panelEntBox(e) {
-  if (e.t === "line") {
+  if (e.t === "line" || e.t === "arrow") {
     return { x: Math.min(e.x1, e.x2), y: Math.min(e.y1, e.y2),
       w: Math.abs(e.x1 - e.x2), h: Math.abs(e.y1 - e.y2) };
   }
@@ -5203,7 +5203,7 @@ function panelClusters(page) {
   const TOL = 1, CELL = 25;
   const grid = new Map();
   boxes.forEach((b, i) => {
-    if (!b) return;
+    if (!b || ents[i].add) return;   // 書き足した図形は束ねない (それだけで 1 つ)
     const gx0 = Math.floor((b.x - TOL) / CELL), gx1 = Math.floor((b.x + b.w + TOL) / CELL);
     const gy0 = Math.floor((b.y - TOL) / CELL), gy1 = Math.floor((b.y + b.h + TOL) / CELL);
     for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
@@ -5225,7 +5225,7 @@ function panelClusters(page) {
   const byRoot = new Map();
   ents.forEach((_, i) => {
     if (!boxes[i]) return;
-    const r = find(i);
+    const r = find(i);   // add はグリッドに入れていないので自分だけの根になる
     let g = byRoot.get(r);
     if (!g) byRoot.set(r, g = []);
     g.push(i);
@@ -5254,7 +5254,7 @@ function panelHitIdx(page, px, py, tol) {
   let best = -1, bd = tol;
   (pd.entities || []).forEach((e, i) => {
     let d = Infinity;
-    if (e.t === "line") d = segD(px, py, e.x1, e.y1, e.x2, e.y2);
+    if (e.t === "line" || e.t === "arrow") d = segD(px, py, e.x1, e.y1, e.x2, e.y2);
     else if (e.t === "circle" || e.t === "arc") {
       const dc = Math.hypot(px - e.cx, py - e.cy);
       d = Math.abs(dc - e.r);
@@ -5306,7 +5306,7 @@ function panelMoveEnts(page, idxs, dxp, dyp) {
   idxs.forEach(i => {
     const e = pd.entities[i];
     if (!e) return;
-    if (e.t === "line") { e.x1 += dxp; e.y1 += dyp; e.x2 += dxp; e.y2 += dyp; }
+    if (e.t === "line" || e.t === "arrow") { e.x1 += dxp; e.y1 += dyp; e.x2 += dxp; e.y2 += dyp; }
     else if (e.t === "circle" || e.t === "arc") { e.cx += dxp; e.cy += dyp; }
     else if (e.t === "text") { e.x += dxp; e.y += dyp; }
   });
@@ -5319,26 +5319,34 @@ function panelAddEnts(page, ents) {
   return ents.map((_, k) => i0 + k);
 }
 /** 作図ツールの entity を組み立てる (線 / 丸 = 中心→半径 / 矢印 = 根→先)。
-    座標はパネル座標 (mm)。矢印は本体 + 羽 2 本の 3 本でひとまとまり */
+    座標はパネル座標 (mm)。add = 書き足した図形の印 — 他の図形と重なっても
+    束ねない (作図した線が既存図形とグループになってしまうため)。
+    矢印は専用の 1 図形 — 先端の三角は描くときに太さから作るので、
+    太さを変えても先端がつぶれない */
 function panelDrawEnts(kind, x0, y0, x1, y1) {
   const r1v = v => Math.round(v * 10) / 10;
-  if (kind === "line") return [{ t: "line", x1: x0, y1: y0, x2: x1, y2: y1 }];
+  if (kind === "line") return [{ t: "line", x1: x0, y1: y0, x2: x1, y2: y1, add: true }];
   if (kind === "circle") {
     const r = Math.max(0.5, r1v(Math.hypot(x1 - x0, y1 - y0)));
-    return [{ t: "circle", cx: x0, cy: y0, r }];
+    return [{ t: "circle", cx: x0, cy: y0, r, add: true }];
   }
-  if (kind === "arrow") {
-    const a = Math.atan2(y1 - y0, x1 - x0);
-    const hl = Math.min(8, Math.max(3, Math.hypot(x1 - x0, y1 - y0) * 0.18));
-    const wing = da => [r1v(x1 - hl * Math.cos(a + da)), r1v(y1 - hl * Math.sin(a + da))];
-    const [wxA, wyA] = wing(0.44), [wxB, wyB] = wing(-0.44);   // 約 25°
-    return [
-      { t: "line", x1: x0, y1: y0, x2: x1, y2: y1 },
-      { t: "line", x1: x1, y1: y1, x2: wxA, y2: wyA },
-      { t: "line", x1: x1, y1: y1, x2: wxB, y2: wyB },
-    ];
-  }
+  if (kind === "arrow") return [{ t: "arrow", x1: x0, y1: y0, x2: x1, y2: y1, add: true }];
   return [];
+}
+/** 矢印の先端 (塗り三角)。太さ (e.w = 紙の上の mm) に釣り合う大きさで、
+    f は縮尺の倍率 (実寸に直す)。軸線は三角の根 (bc) まで描く */
+function panelArrowHead(e, f) {
+  const wmm = (e.w || LINE_W.thin) * f;
+  const len = Math.max(0.1, Math.hypot(e.x2 - e.x1, e.y2 - e.y1));
+  const hl = Math.min(Math.max(wmm * 4, 2.5 * f), Math.max(len * 0.45, 0.5));
+  const ux = (e.x2 - e.x1) / len, uy = (e.y2 - e.y1) / len;
+  const hw = hl * 0.42;                       // 先端の開き (約 23°)
+  const bcx = e.x2 - hl * ux, bcy = e.y2 - hl * uy;
+  return { hl,
+    tip: { x: e.x2, y: e.y2 },
+    bc: { x: bcx, y: bcy },
+    b1: { x: bcx - hw * uy, y: bcy + hw * ux },
+    b2: { x: bcx + hw * uy, y: bcy - hw * ux } };
 }
 /** 選んだ entity をまとめて +90° (反時計回り) 回す。基点 (cx0,cy0) はパネル座標 */
 function panelRotateEnts(page, idxs, cx0, cy0) {
@@ -5348,7 +5356,7 @@ function panelRotateEnts(page, idxs, cx0, cy0) {
   idxs.forEach(i => {
     const e = pd.entities[i];
     if (!e) return;
-    if (e.t === "line") {
+    if (e.t === "line" || e.t === "arrow") {
       const a = [e.x1, e.y1], b = [e.x2, e.y2];
       e.x1 = rx(a[0], a[1]); e.y1 = ry(a[0], a[1]);
       e.x2 = rx(b[0], b[1]); e.y2 = ry(b[0], b[1]);

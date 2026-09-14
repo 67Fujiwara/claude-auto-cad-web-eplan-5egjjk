@@ -649,6 +649,15 @@ function pageToDXF(page) {
       if (e.t === "line") {
         ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col, ...lwp,
           [10, X(e.x1)], [20, Yd(e.y1)], [11, X(e.x2)], [21, Yd(e.y2)]]);
+      } else if (e.t === "arrow") {
+        const hd = panelArrowHead(e, sheetScale());
+        ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col, ...lwp,
+          [10, X(e.x1)], [20, Yd(e.y1)], [11, X(hd.bc.x)], [21, Yd(hd.bc.y)]]);
+        ents += dxfEntity([[0, "SOLID"], [8, "PANEL"], ...col,
+          [10, X(hd.b1.x)], [20, Yd(hd.b1.y)],
+          [11, X(hd.b2.x)], [21, Yd(hd.b2.y)],
+          [12, X(hd.tip.x)], [22, Yd(hd.tip.y)],
+          [13, X(hd.tip.x)], [23, Yd(hd.tip.y)]]);
       } else if (e.t === "circle") {
         ents += dxfEntity([[0, "CIRCLE"], [8, "PANEL"], ...col, ...lwp,
           [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)]]);
