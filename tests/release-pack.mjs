@@ -7,6 +7,8 @@
    ・zipRead   : ZIP の中身が壊れていない (CRC と大きさが合う)
    ・menu      : ファイルメニューに「PDF出力 (全ページを1ファイル)」がある
    ・relForm   : 設計完了の画面に PDF の 2 パターン (社内保存用 / 顧客提出用) がある
+   ・checker   : 設計完了の画面に検図者の欄があり、記入して出図すると
+                全ページの表題欄の検図 (署名) に入る
    ・relPages  : 顧客提出用のページ = 全ページ − 仕様のページ (社内保存用は全ページ)
    ・relToc    : 顧客提出用の目次には仕様の行が無い (社内保存用には有る)
    ・relNo     : 用紙右下の「n / N」はその版の通し。図番は両方で同じ
@@ -187,6 +189,34 @@ const relForm = await p.evaluate(() => {
   return { labs, ids };
 });
 
+/* ── 検図者の記入 → 全ページの表題欄へ ── */
+const CH = await p.evaluate(async () => {
+  App.project = newProject("検図者確認"); UI.renumberPages();
+  projectMeta().checker = "";
+  const keepRun = UI.runRelease;
+  let ran = null;
+  UI.runRelease = async () => { ran = { chk: projectMeta().checker }; };
+  window.confirm = () => true;
+  UI.finishDesign();
+  await new Promise(r => setTimeout(r, 200));
+  // 前のブロックのダイアログが残っていることがある — 最後に開いた方を使う
+  const last = sel => { const a = document.querySelectorAll(sel); return a[a.length - 1]; };
+  const inp = last("#rlChk");
+  if (!inp) { UI.runRelease = keepRun; return { field: false }; }
+  inp.value = "検図タロウ";
+  last("#rlBy").value = "設計ハナコ";
+  last("#rlOk").click();
+  await new Promise(r => setTimeout(r, 250));
+  UI.runRelease = keepRun;
+  const meta = projectMeta();
+  const cover = App.project.pages[0];
+  const draw = App.project.pages.find(isDrawingPage);
+  applySheet(cover); const s1 = sheetSVG(cover, { print: true });
+  applySheet(draw); const s2 = sheetSVG(draw, { print: true });
+  return { field: true, ran, chk: meta.checker, by: meta.designer,
+    cover: s1.includes("検図タロウ"), draw: s2.includes("検図タロウ") };
+});
+
 const menuHas = await p.evaluate(() => {
   document.querySelector('#menubar .menu[data-menu="file"]').click();
   const items = [...document.querySelectorAll(".dropdown .dd-item")].map(e => e.textContent);
@@ -283,6 +313,11 @@ const checks = {
   zipPack: R.zipPack.type === "application/zip" && R.zipPack.local === 2 && R.zipPack.central === 2 && R.zipPack.end === 1,
   zipRead: zipOK === true,
   menu: menuHas.includes("PDF出力 (全ページを1ファイル)"),
+  /* 検図者を記入して出図 → runRelease の時点で meta に入り、表紙も回路ページも
+     表題欄に検図者名が出る (図面全体のメタなので全ページに反映) */
+  checker: CH.field === true && !!CH.ran && CH.ran.chk === "検図タロウ" &&
+    CH.chk === "検図タロウ" && CH.by === "設計ハナコ" &&
+    CH.cover === true && CH.draw === true,
   relForm: relForm.ids.includes("rlPdfIn") && relForm.ids.includes("rlPdfCus")
     && relForm.labs.some(t => /社内保存用/.test(t)) && relForm.labs.some(t => /顧客提出用/.test(t)),
   relPages: R2.count.spec >= 2 && R2.count.int === R2.count.all
@@ -299,7 +334,7 @@ const checks = {
     && R2.out[0].pages === R2.count.all && R2.out[1].pages === R2.count.all - R2.count.spec,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R: { ...R, zipBytes: R.zipBytes.length }, R2, EX, relForm, zipInfo, menuHas: menuHas.slice(0, 200), errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, R: { ...R, zipBytes: R.zipBytes.length }, R2, EX, CH, relForm, zipInfo, menuHas: menuHas.slice(0, 200), errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("release-pack OK");
