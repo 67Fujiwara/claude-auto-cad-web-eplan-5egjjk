@@ -13,7 +13,9 @@
    ・holeProps: 穴 (円) を 1 つ選ぶとプロパティに中心 X/Y と径が出て、
                書き換えると図が動く
    ・svgSync  : 編集後の panelSVG は新しい座標で描かれる (キャッシュが
-               編集で無効になる) */
+               編集で無効になる)
+   ・cusPdf   : 顧客提出用 PDF からは「加工穴のみ」のページが外れる
+               (板金加工用の指示 — 見せる意味がない)。社内保存用は全ページ */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -67,6 +69,11 @@ const R = await p.evaluate(() => {
   const hitDev = panelClusterAt(pg, ox + 125, oy + (400 - 200));   // 機器の下辺の上
   const hitNone = panelClusterAt(pg, ox + 450, oy + (400 - 300)); // 何もない所
   out.hit = { dev: hitDev ? hitDev.idxs.length : 0, none: hitNone === null };
+  // 顧客提出用 PDF: 加工穴のみのページは外れる (社内保存用は全ページ)
+  out.cusPdf = {
+    int: releasePages("internal").filter(p2 => p2.kind === "panel").length,
+    cus: releasePages("customer").filter(p2 => p2.kind === "panel").map(p2 => p2.panel.sheetId).join(","),
+  };
   out.devIdxs = devClu ? devClu.idxs : [];
   out.pgId = pg.id;
   return out;
@@ -168,6 +175,7 @@ const checks = {
   clusters: R.clusters.n === 4 && R.clusters.dev === 5 &&
     R.clusters.hole === true && R.clusters.text === true,
   hit: R.hit.dev === 5 && R.hit.none === true,
+  cusPdf: R.cusPdf.int === 4 && R.cusPdf.cus === "cabinet_full,plate_full",
   /* 右 5mm → x1 105。Shift+↑ は画面の上向き = パネル座標 +0.5 */
   nudge: K.afterRight.x1 === 105 && K.afterRight.y1 === 200 &&
     K.afterUp.x1 === 105 && K.afterUp.y1 === 200.5,

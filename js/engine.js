@@ -5469,7 +5469,11 @@ function releaseKindLabel(kind) {
 /** その版に載せるページ (顧客提出用は仕様のページを外す) */
 function releasePages(kind, pages) {
   const src = pages || (App.project ? App.project.pages : []) || [];
-  return kind === "customer" ? src.filter(pg => pg.kind !== "spec") : src.slice();
+  if (kind !== "customer") return src.slice();
+  /* 顧客提出用: 仕様のページと、加工穴のみのパネル図 (板金加工用の指示で
+     お客さまに見せる意味がない) を外す */
+  return src.filter(pg => pg.kind !== "spec" &&
+    !(pg.kind === "panel" && pg.panel && /_holes$/.test(String(pg.panel.sheetId || ""))));
 }
 /** その版のページだけを載せた図面として fn を走らせる (目次と「n / N」を合わせる)。
     ページは写しを使うので、元の図面のページ番号は書き換わらない。 */

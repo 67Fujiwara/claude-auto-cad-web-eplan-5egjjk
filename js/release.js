@@ -105,7 +105,7 @@ UI.finishDesign = () => {
   const warns = issues.filter(i => i.sev === "warn");
   const meta = projectMeta();
   const pages = App.project.pages;
-  const nSpec = pages.length - releasePages("customer", pages).length;
+  const nDrop = pages.length - releasePages("customer", pages).length;   // 仕様 + 加工穴のみ
   const devs = pages.reduce((n, p) => n + p.devices.length, 0);
   const wires = pages.reduce((n, p) => n + condWires(p).length, 0);
 
@@ -125,7 +125,7 @@ UI.finishDesign = () => {
     <div class="prop-sect">出力するもの</div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlDxf" checked/><span>DXF (AutoCAD互換・ページごとに ${pages.length} ファイル)</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfIn" checked/><span>PDF 社内保存用 (すべての図面 ${pages.length} ページを1ファイルに)</span></label></div>
-    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfCus" checked/><span>PDF 顧客提出用 (仕様${nSpec ? ` ${nSpec} ページ` : ""}を外した ${pages.length - nSpec} ページ)${nSpec ? "" : " — この図面に仕様のページはありません"}</span></label></div>
+    <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfCus" checked/><span>PDF 顧客提出用 (仕様・加工穴のみ${nDrop ? ` ${nDrop} ページ` : ""}を外した ${pages.length - nDrop} ページ)${nDrop ? "" : " — 外すページはありません"}</span></label></div>
     <div class="prop-note" style="margin:4px 0 0">図枠: ${projectMeta().outPlain ? "出力時はシンプル図枠 (改訂欄 + 管理番号・頁の帯)" : "標準 (JIS)"} — 「図枠・表題欄の設定」の様式で切り替えられます</div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlJson" checked/><span>図面データ (JSON・再編集用)</span></label></div>
     <div class="prop-sect">まとめ方</div>
