@@ -17,8 +17,8 @@
    ・multi    : 外部 I/F は複数チェックでき、もう一度押すと外れる
    ・ifDetail : チェックした I/F ごとに詳細の箇条書き欄が出て、クリックで書ける。
                 外すとその行も消える
-   ・ifGrow   : 1 行書き込むと追記用の空き行が増える — 同じ I/F が複数あっても
-                続けて書ける
+   ・ifGrow   : 書いた行だけが出る (空きの追記行は無い)。2 行目は
+                行の右端の ＋ から書き足せる
    ・ifCompact: 途中の行を消すと後ろの行が詰まる (空きの枠が残らない)
    ・matOne   : 材質は鉄・ステンレスのどれか 1 つ — 片方を選ぶと
                 もう片方の ◯ が消える。新規図面はステンレス側が未選択
@@ -218,13 +218,14 @@ R.ifDetail.after = await p.evaluate(() => ({
   memo: curPage().spec.memo.extif_2,
   drawn: kindSVG(curPage()).includes("・他装置: 検査装置と Ethernet 接続"),
 }));
-/* 1 行書き込んだので、追記用の空き行が増えているはず */
+/* 書いた行だけが出る (「クリックして追記」の空き行は無い)。
+   2 行目は行の右端の ＋ から書き足す */
 R.ifGrow = await p.evaluate(() => ({
   boxes: (Editor.specBoxes || []).filter(o => o.memo && o.memo.startsWith("extif_2")).map(o => o.memo),
   rows: (kindSVG(curPage()).match(/・他装置:/g) || []).length,
 }));
 await p.evaluate(() => { window.prompt = () => "PLC リンク (2 台目)"; });
-R.ifGrow.clicked = await clickBox2('o.memo === "extif_2_1"');
+R.ifGrow.clicked = await clickBox2('o.bulletAdd && /他装置/.test(o.bulletAdd.label)');
 R.ifGrow.after = await p.evaluate(() => ({
   memo: curPage().spec.memo.extif_2_1,
   rows: (kindSVG(curPage()).match(/・他装置:/g) || []).length,
@@ -322,12 +323,12 @@ const checks = {
   ifDetail: R.ifDetail.rows === 1 && R.ifDetail.clicked === true
     && R.ifDetail.after.memo === "検査装置と Ethernet 接続" && R.ifDetail.after.drawn === true
     && R.ifDetail.afterUncheck.has === false,
-  ifGrow: JSON.stringify(R.ifGrow.boxes) === JSON.stringify(["extif_2", "extif_2_1"])
-    && R.ifGrow.rows === 2 && R.ifGrow.clicked === true
-    && R.ifGrow.after.memo === "PLC リンク (2 台目)" && R.ifGrow.after.rows === 3
+  ifGrow: JSON.stringify(R.ifGrow.boxes) === JSON.stringify(["extif_2"])
+    && R.ifGrow.rows === 1 && R.ifGrow.clicked === true
+    && R.ifGrow.after.memo === "PLC リンク (2 台目)" && R.ifGrow.after.rows === 2
     && R.ifGrow.after.drawn === true,
   ifCompact: R.ifCompact.clicked === true && R.ifCompact.after.first === "PLC リンク (2 台目)"
-    && R.ifCompact.after.second === null && R.ifCompact.after.rows === 2,
+    && R.ifCompact.after.second === null && R.ifCompact.after.rows === 1,
   matOne: R.matOne.def.fe === 0 && R.matOne.def.sus === -1 &&
     R.matOne.pickSus === true && R.matOne.afterSus.fe === -1 && R.matOne.afterSus.sus === 2 &&
     R.matOne.pickFe === true && R.matOne.afterFe.fe === 0 && R.matOne.afterFe.sus === -1,
