@@ -2304,6 +2304,8 @@ const SPEC_SHEET2 = [
     { t: "施工範囲", kind: "opts", k: "extwork",
       noteK: "extwork_term", noteLabel: "端末処理",
       opts: ["端子台準備", "ケーブル準備 (接続は顧客対応)", "すべて弊社対応"] },
+    { t: "HUB 通信速度", kind: "opts", k: "hubspd",
+      opts: ["1Gbps 以下", "2.5Gbps", "10Gbps", "営業準備"] },
   ] },
 ];
 

@@ -9,7 +9,9 @@
               OK なら消えて後ろの行が詰まる
    ・work    : 外部 I/F に「施工範囲」(端子台準備 / ケーブル準備 (接続は
               顧客対応) / すべて弊社対応) が入り、選べる。端末処理の記入欄が
-              あり、書くと図面に出る */
+              あり、書くと図面に出る
+   ・hub     : 「HUB 通信速度」(1Gbps 以下 / 2.5Gbps / 10Gbps / 営業準備) が
+              あり、クリックで選べる */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -48,6 +50,9 @@ const R = await p.evaluate(() => {
   out.work = { screen: ["施工範囲", "端子台準備", "ケーブル準備 (接続は顧客対応)", "すべて弊社対応", "端末処理"]
       .every(t => screen.includes(t)),
     grp: specGroups().some(g => g.k === "extwork" && !g.multi) };
+  out.hub = { screen: ["HUB 通信速度", "1Gbps 以下", "2.5Gbps", "10Gbps", "営業準備"]
+      .every(t => screen.includes(t)),
+    grp: specGroups().some(g => g.k === "hubspd" && !g.multi) };
   // 端末処理の記入 → 図面に出る
   pg.spec.memo.extwork_term = "圧着端子 R2-4 で処理";
   const s2 = specSVG(pg);
@@ -60,7 +65,9 @@ const R = await p.evaluate(() => {
   const addUp = boxes2.find(b2 => b2.bulletAdd && /上流/.test(b2.bulletAdd.label));
   const delUp = boxes2.find(b2 => b2.bulletDel && b2.bulletDel.val === "運転許可信号");
   const wk1 = boxes2.find(b2 => b2.k === "extwork" && b2.i === 1);
-  out.pts = { add: addUp && W2C(addUp), del: delUp && W2C(delUp), wk1: wk1 && W2C(wk1) };
+  const hub2 = boxes2.find(b2 => b2.k === "hubspd" && b2.i === 2);
+  out.pts = { add: addUp && W2C(addUp), del: delUp && W2C(delUp), wk1: wk1 && W2C(wk1),
+    hub2: hub2 && W2C(hub2) };
   return out;
 });
 
@@ -101,6 +108,11 @@ await p.mouse.click(R.pts.wk1.x, R.pts.wk1.y);
 await p.waitForTimeout(120);
 const WK = await p.evaluate(() => curPage().spec.sel.extwork);
 
+// HUB 通信速度の 3 番 (10Gbps) をクリックで選ぶ
+await p.mouse.click(R.pts.hub2.x, R.pts.hub2.y);
+await p.waitForTimeout(120);
+const HB = await p.evaluate(() => curPage().spec.sel.hubspd);
+
 const checks = {
   noPageErrors: errs.length === 0,
   /* 空きの追記行なし。上流 = 書いた 2 行だけ、下流 = 空の 1 行 (ラベルだけ) */
@@ -112,9 +124,10 @@ const checks = {
   delBtn: KEEP === "運転許可信号" &&
     DEL.vals === "非常停止の連絡|扉インターロック" && DEL.first === "非常停止の連絡",
   work: R.work.screen === true && R.work.grp === true && R.work.note === true && WK === 1,
+  hub: R.hub.screen === true && R.hub.grp === true && HB === 2,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
-console.log(JSON.stringify({ checks, R: { ...R, pts: 0 }, ADD, KEEP, DEL, WK, errs: errs.slice(0, 3) }, null, 1));
+console.log(JSON.stringify({ checks, R: { ...R, pts: 0 }, ADD, KEEP, DEL, WK, HB, errs: errs.slice(0, 3) }, null, 1));
 await b.close();
 if (bad.length) { console.error("FAIL:", bad.map(([k]) => k).join(", ")); process.exit(1); }
 console.log("spec-extif OK");
