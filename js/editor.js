@@ -750,7 +750,7 @@ function tocSVG(page) {
 }
 /* 仕様 — 紙の仕様書と同じ表組みのチェックシート。番号を押すと ◯ が移り、
    記入欄 (特記事項・指定色など) はプロパティで書く。画面・印刷で同じ絵。 */
-function specSVG(page) {
+function specSVG(page, print) {
   /* 1 回目で下端までの高さを測り、2 回目に用紙いっぱいへ広げて描く
      (紙の様式のままだと A3 では下半分が空いてしまうため) */
   const b = sheetInner(), f = sheetScale();
@@ -760,7 +760,9 @@ function specSVG(page) {
   /* 広げすぎない: 行の高さは 14mm まで (9mm × 1.55)。中身の少ない様式まで
      間延びさせると、紙の書式として見苦しくなる */
   const k = used > 0 ? Math.max(1, Math.min(1.55, (bottom - top) / used)) : 1;
-  return specSheetSVG(page, k, true).svg;
+  /* record = 画面のときだけ。印刷・PDF・DXF ではクリック枠を記録せず、
+     箇条書きの ＋/− も描かない (出力に出してはいけない) */
+  return specSheetSVG(page, k, !print).svg;
 }
 /** 仕様シートの本体。k = 用紙いっぱいに広げる倍率 / record = クリック枠を記録するか */
 function specSheetSVG(page, k, record) {
@@ -987,7 +989,7 @@ function specSheetSVG(page, k, record) {
           const v = memo[blk.noteK] || "";
           const nLines = v ? v.split("\n") : [""];
           nLines.forEach((ln, li) => {
-            const label2 = li === 0 ? `備考: ${ln || (v ? "" : "(クリックして記入)")}` : ln;
+            const label2 = li === 0 ? `${blk.noteLabel || "備考"}: ${ln || (v ? "" : "(クリックして記入)")}` : ln;
             out += box(x0, y, colW, RH) +
               txt(x0, y + RH / 2 + TH * 0.36 * f, colW, label2, "start", v ? TH : TH * 0.8);
             if (record) Editor.specBoxes.push({ x: x0, y, w: colW, h: RH,
@@ -1007,21 +1009,37 @@ function specSheetSVG(page, k, record) {
           out += txt(x0, y + RH / 2 + TH * 0.36 * f, colW, "(上でチェックすると、その項目の記入欄が出ます)");
           y += RH;
         } else {
-          /* I/F ごとに、書いた行 + 追記用の空き 1 行。1 行書き込むと
-             次の空き行が現れるので、同じ I/F が何本あっても書き足せる */
+          /* I/F ごとに書いた行だけを出す (「クリックして追記」の空き行は
+             出さない — 見た目が悪い)。画面では行の右端に薄い ＋/− を置き、
+             ＋ = その I/F へ 1 行追記、− = その行を削除 (文字が入っていれば
+             確認してから)。印刷・PDF・DXF (record なし) には ＋/− を出さない */
           picked.forEach(i => {
             const name = (grp && grp.opts[i]) || String(i + 1);
             const vals = specBullets(page.spec, blk.of, i);
-            for (let r = 0; r <= vals.length; r++) {
+            const rows = vals.length ? vals : [""];
+            rows.forEach((v, r) => {
               const key = specBulletKey(blk.of, i, r);
-              const filled = r < vals.length;
               out += box(x0, y, colW, RH);
-              out += txt(x0, y + RH / 2 + TH * 0.36 * f, colW,
-                `・${name}: ${filled ? vals[r] : (r ? "(クリックして追記)" : "(クリックして記入)")}`, "start");
-              if (record) Editor.specBoxes.push({ x: x0, y, w: colW, h: RH, memo: key,
-                label: `${name} の詳細 ${r + 1}` });
+              out += txt(x0, y + RH / 2 + TH * 0.36 * f, colW, `・${name}: ${v}`, "start");
+              if (record) {
+                Editor.specBoxes.push({ x: x0, y, w: colW - S(16), h: RH, memo: key,
+                  label: `${name} の詳細 ${r + 1}` });
+                const bs = S(7);
+                const by2 = y + RH / 2 + TH * 0.36 * f;
+                const plusX = x0 + colW - bs * 2 - S(1);
+                out += `<text x="${plusX + bs / 2}" y="${by2}" font-size="${svgFontSizeFor("＋", TH * f)}" text-anchor="middle" fill="#a9b2bd" font-family="sans-serif">＋</text>`;
+                Editor.specBoxes.push({ x: plusX, y, w: bs, h: RH,
+                  bulletAdd: { key: specBulletKey(blk.of, i, vals.length),
+                    label: `${name} の詳細 ${vals.length + 1}` } });
+                if (v) {
+                  const minX = x0 + colW - bs - S(0.5);
+                  out += `<text x="${minX + bs / 2}" y="${by2}" font-size="${svgFontSizeFor("−", TH * f)}" text-anchor="middle" fill="#a9b2bd" font-family="sans-serif">−</text>`;
+                  Editor.specBoxes.push({ x: minX, y, w: bs, h: RH,
+                    bulletDel: { key, val: v } });
+                }
+              }
               y += RH;
-            }
+            });
           });
         }
       } else if (blk.kind === "fields") {
@@ -1074,10 +1092,10 @@ function tubeFigSVG(cx, cy, f) {
   return o;
 }
 /** 頭 3 枚の中身 (図枠の内側に描く) */
-function kindSVG(page) {
+function kindSVG(page, print) {
   if (page.kind === "cover") return coverSVG(page);
   if (page.kind === "toc") return tocSVG(page);
-  if (page.kind === "spec") return specSVG(page);
+  if (page.kind === "spec") return specSVG(page, print);
   if (page.kind === "panel") return panelSVG(page);
   return "";
 }
@@ -1604,6 +1622,32 @@ function onMouseDown(e) {
       if (box) {
         const pg = curPage();
         pg.spec = pg.spec || defaultSpec();
+        // 箇条書きの ＋ (1 行追記) / − (その行を削除 — 文字があれば確認)
+        if (box.bulletAdd) {
+          const v = prompt(box.bulletAdd.label, "");
+          if (v === null) return;
+          commit();
+          pg.spec.memo = pg.spec.memo || {};
+          const t = v.trim();
+          if (t) pg.spec.memo[box.bulletAdd.key] = t;
+          specCompactBullets(pg.spec);
+          requestRender();
+          UI.showProps();
+          UI.setMsg(t ? "詳細を追記しました" : "空のままなので追記しませんでした");
+          return;
+        }
+        if (box.bulletDel) {
+          if (box.bulletDel.val &&
+              !confirm(`「${box.bulletDel.val}」を削除します。よろしいですか？`)) return;
+          commit();
+          pg.spec.memo = pg.spec.memo || {};
+          delete pg.spec.memo[box.bulletDel.key];
+          specCompactBullets(pg.spec);
+          requestRender();
+          UI.showProps();
+          UI.setMsg("詳細を削除しました");
+          return;
+        }
         if (box.memo) {
           // 複数行の欄 (備考) は Enter で改行できるテキストエリアで編集する
           if (box.multiline) { UI.editSpecNote(pg, box); return; }
@@ -2764,7 +2808,7 @@ function exportSheetSVG(page = null) {
   const body =
     `<g>${sheetSVG(page, { print: true })}</g><g>${zonesSVG(page, { print: true })}</g><g>${tablesSVG(page, { print: true })}</g>` +
     // 表紙・目次・仕様の中身。画面と同じものを出す (入れ忘れると出図が白紙になる)
-    `<g>${kindSVG(page)}</g>` +
+    `<g>${kindSVG(page, true)}</g>` +
     `<g>${wiresSVG(page, { print: true })}</g><g>${devicesSVG(page, { print: true })}</g><g>${textsSVG(page, { print: true })}</g>`;
   // viewBox は用紙そのもの (余白を足すと印刷時に尺度がずれるため)
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SHEET.w} ${SHEET.h}" width="${SHEET.w / sheetScale()}mm" height="${SHEET.h / sheetScale()}mm" font-family="sans-serif">${body}</svg>`;

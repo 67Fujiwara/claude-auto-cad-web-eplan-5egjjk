@@ -687,7 +687,7 @@ function pageToDXF(page) {
   // ── 表紙・目次・仕様 (フォームページ) の中身 ──
   // 画面の SVG は自前生成で語彙が決まっている (rect / path M,L,H,V / text /
   // ellipse / circle のみ) ので、それを読み替えて DXF に出す
-  if (!isDrawingPage(page)) ents += formSVGToDXF(kindSVG(page));
+  if (!isDrawingPage(page)) ents += formSVGToDXF(kindSVG(page, true));
 
   // ── 図面上の表 (罫線 + 間口の文字。1 行目 = タイトル) ──
   pageTables(page).forEach(tb => {
