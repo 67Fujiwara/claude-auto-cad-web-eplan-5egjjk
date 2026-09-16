@@ -1,0 +1,269 @@
+<!--
+  Admin.html — 管理画面（?view=admin）
+  最初に admin_pin を要求（通ったら sessionStorage に保持）。
+  機能: 工具の追加 / 編集 / 削除、QR 用 URL（コピー・QR 画像）、QR 一括印刷、設定編集、直近50件のログ。
+  QR 描画は CDN の qrcode.js（読み込めなくても URL は必ず表示）。
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base target="_top">
+  <title><?= pageTitle ?></title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<?!= include_('Common', { appUrl: appUrl }) ?>
+<div class="wrap">
+  <h1>管理</h1>
+  <div id="msg"></div>
+
+  <!-- PIN 入力 -->
+  <form id="gate" class="card">
+    <label for="pin">PIN</label>
+    <input type="password" id="pin" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required>
+    <button type="submit" class="btn full">入る</button>
+  </form>
+
+  <div id="main" hidden>
+    <div id="urlWarn"></div>
+
+    <h2>工具の追加</h2>
+    <form id="addForm" class="card">
+      <div class="row">
+        <input type="text" id="addName" placeholder="工具名" required>
+        <button type="submit" class="btn small">追加</button>
+      </div>
+    </form>
+
+    <h2>工具</h2>
+    <div class="row" style="margin: 0 0 10px">
+      <button type="button" class="btn small gray" id="printBtn">QRを一括印刷</button>
+      <button type="button" class="btn small gray" id="reloadBtn">更新</button>
+    </div>
+    <div id="tools" class="muted">読み込み中…</div>
+
+    <h2>設定</h2>
+    <div class="card">
+      <label>管理者</label>
+      <div class="row">
+        <button type="button" class="btn small" id="typeHuman" data-type="human">human（人）</button>
+        <button type="button" class="btn small" id="typeAi" data-type="ai">ai（AI）</button>
+      </div>
+      <div class="muted" id="aiNote" style="margin-top:6px"></div>
+
+      <label for="managerEmail">管理者メール</label>
+      <div class="row">
+        <input type="email" id="managerEmail">
+        <button type="button" class="btn small" id="saveEmail">保存</button>
+      </div>
+
+      <label for="newPin">PIN（4〜6桁）</label>
+      <div class="row">
+        <input type="text" id="newPin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6">
+        <button type="button" class="btn small" id="savePin">保存</button>
+      </div>
+
+      <label for="appUrlInput">Web アプリ URL（app_url）</label>
+      <div class="row">
+        <input type="text" id="appUrlInput" placeholder="https://script.google.com/macros/s/…/exec">
+        <button type="button" class="btn small" id="saveUrl">保存</button>
+      </div>
+    </div>
+
+    <h2>貸出ログ（直近50件）</h2>
+    <div class="card scroll">
+      <table>
+        <thead><tr><th>日時</th><th>操作</th><th>工具</th><th>使用者</th><th>返却日</th><th>備考</th></tr></thead>
+        <tbody id="logs"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  const PIN_KEY = 'tr_admin_pin';
+  let PIN = storeGet('session', PIN_KEY) || '';
+  let DATA = null;
+
+  const gate = document.getElementById('gate');
+  const main = document.getElementById('main');
+
+  // ---- PIN ----
+  gate.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const pin = document.getElementById('pin').value.trim();
+    showMsg('msg', '確認中…', 'info');
+    try {
+      await call('adminVerifyPin', pin);
+      PIN = pin;
+      storeSet('session', PIN_KEY, pin);
+      showMsg('msg', '');
+      enter();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  });
+
+  async function enter() {
+    gate.hidden = true;
+    main.hidden = false;
+    await load();
+  }
+
+  async function load() {
+    try {
+      DATA = await call('adminGetData', PIN);
+      renderAll();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+      if (/PIN/.test(e.message || '')) { storeDel('session', PIN_KEY); PIN = ''; gate.hidden = false; main.hidden = true; }
+    }
+  }
+
+  function renderAll() {
+    renderTools(DATA.tools);
+    renderSettings(DATA.settings);
+    renderLogs(DATA.logs);
+    const w = document.getElementById('urlWarn');
+    w.innerHTML = DATA.settings.app_url ? '' :
+      '<div class="msg err">app_url が未設定です。デプロイ後の Web アプリ URL を下の設定で保存してください（QR・メールのリンクに使います）。</div>';
+  }
+
+  // ---- 工具 ----
+  function renderTools(tools) {
+    const box = document.getElementById('tools');
+    box.className = '';
+    if (!tools.length) { box.innerHTML = '<div class="muted">工具がありません</div>'; return; }
+    box.innerHTML = tools.map(t => {
+      const status = t.inUse
+        ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
+        : '<span class="badge free">空き</span>';
+      return '<div class="card" data-id="' + esc(t.id) + '">' +
+        '<div class="head"><b>' + esc(t.id) + '</b> ' + status + '</div>' +
+        '<div class="row">' +
+        '<input type="text" class="nameInput" value="' + esc(t.name) + '">' +
+        '<button type="button" class="btn small" data-act="save">保存</button>' +
+        '<button type="button" class="btn small red" data-act="del"' + (t.inUse ? ' disabled' : '') + '>削除</button>' +
+        '</div>' +
+        (t.inUse ? '<div class="muted" style="margin-top:6px">' + esc(t.email) + '</div>' : '') +
+        '<div class="row"><div class="qr" data-url="' + esc(t.qrUrl) + '"></div>' +
+        '<div style="flex:1;min-width:160px"><div class="mono">' + esc(t.qrUrl) + '</div>' +
+        '<button type="button" class="btn small gray" data-act="copy" style="margin-top:6px">URLをコピー</button></div></div>' +
+        '</div>';
+    }).join('');
+    drawQr(box);
+  }
+
+  function drawQr(root) {
+    if (typeof QRCode === 'undefined') return; // CDN が読めない環境は URL 表示のみ
+    root.querySelectorAll('.qr').forEach(el => {
+      el.innerHTML = '';
+      try { new QRCode(el, { text: el.dataset.url, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.M }); } catch (e) {}
+    });
+  }
+
+  document.getElementById('tools').addEventListener('click', async function (ev) {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    const card = b.closest('.card');
+    const id = card.dataset.id;
+    const act = b.dataset.act;
+    try {
+      if (act === 'copy') {
+        const ok = await copyText(card.querySelector('.qr').dataset.url);
+        showMsg('msg', ok ? 'コピーしました' : 'コピーできませんでした。URL を長押しして選択してください', ok ? 'ok' : 'err');
+        return;
+      }
+      if (act === 'save') {
+        const name = card.querySelector('.nameInput').value;
+        await call('adminUpdateTool', PIN, id, name);
+        showMsg('msg', id + ' を保存しました', 'ok');
+      } else if (act === 'del') {
+        if (!confirm(id + ' を削除しますか？')) return;
+        await call('adminDeleteTool', PIN, id);
+        showMsg('msg', id + ' を削除しました', 'ok');
+      }
+      await load();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  });
+
+  document.getElementById('addForm').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const input = document.getElementById('addName');
+    try {
+      const t = await call('adminAddTool', PIN, input.value);
+      input.value = '';
+      showMsg('msg', t.id + ' ' + t.name + ' を追加しました', 'ok');
+      await load();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  });
+
+  document.getElementById('printBtn').addEventListener('click', function () {
+    window.open(APP_URL + '?view=print&pin=' + encodeURIComponent(PIN), '_blank');
+  });
+  document.getElementById('reloadBtn').addEventListener('click', load);
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch (e2) { return false; }
+    }
+  }
+
+  // ---- 設定 ----
+  function renderSettings(s) {
+    document.getElementById('typeHuman').classList.toggle('active', s.manager_type !== 'ai');
+    document.getElementById('typeAi').classList.toggle('active', s.manager_type === 'ai');
+    document.getElementById('aiNote').textContent = s.manager_type === 'ai'
+      ? (s.claude_api_key_set ? '通知は AI（Claude）が処理します' : 'claude_api_key が未設定のため、実際にはメール通知になります（設定シートで入力）')
+      : '通知は管理者メールに送ります';
+    document.getElementById('managerEmail').value = s.manager_email;
+    document.getElementById('newPin').value = s.admin_pin;
+    document.getElementById('appUrlInput').value = s.app_url;
+  }
+
+  async function saveSettings(patch, okText) {
+    try {
+      const s = await call('adminSaveSettings', PIN, patch);
+      if (patch.admin_pin) { PIN = s.admin_pin; storeSet('session', PIN_KEY, PIN); }
+      showMsg('msg', okText, 'ok');
+      await load();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  }
+  document.getElementById('typeHuman').addEventListener('click', () => saveSettings({ manager_type: 'human' }, '管理者を human にしました'));
+  document.getElementById('typeAi').addEventListener('click', () => saveSettings({ manager_type: 'ai' }, '管理者を ai にしました'));
+  document.getElementById('saveEmail').addEventListener('click', () => saveSettings({ manager_email: document.getElementById('managerEmail').value }, '管理者メールを保存しました'));
+  document.getElementById('savePin').addEventListener('click', () => saveSettings({ admin_pin: document.getElementById('newPin').value }, 'PIN を変更しました'));
+  document.getElementById('saveUrl').addEventListener('click', () => saveSettings({ app_url: document.getElementById('appUrlInput').value }, 'app_url を保存しました'));
+
+  // ---- ログ ----
+  function renderLogs(logs) {
+    const tb = document.getElementById('logs');
+    if (!logs.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">ログはありません</td></tr>'; return; }
+    tb.innerHTML = logs.map(l =>
+      '<tr><td>' + esc(l.at) + '</td><td>' + esc(l.op) + '</td><td>' + esc(l.name) + '</td><td>' + esc(l.user) + '</td><td>' + esc(l.due) + '</td><td>' + esc(l.note) + '</td></tr>'
+    ).join('');
+  }
+
+  // ---- 起動 ----
+  if (PIN) enter();
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<!--
+  Result.html — 結果ページ
+  メール内リンク（?action=return / ?action=extend）の処理結果や、エラーを表示する。
+  data = { ok: true|false, title, message }
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base target="_top">
+  <title><?= pageTitle ?></title>
+</head>
+<body>
+<?!= include_('Common', { appUrl: appUrl }) ?>
+<div class="wrap">
+  <h1><?= data.title ?></h1>
+  <div class="card">
+    <div class="msg <?= data.ok ? 'ok' : 'err' ?>"><?= data.message ?></div>
+    <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
+  </div>
+</div>
+</body>
+</html>

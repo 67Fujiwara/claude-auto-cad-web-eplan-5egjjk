@@ -1,0 +1,61 @@
+<!--
+  Print.html — QR 一括印刷ページ（?view=print&pin=1234）
+  全工具の QR と工具名を A4 に並べる。管理画面の「QRを一括印刷」から開く。
+  QR 描画は CDN の qrcode.js。読み込めない環境では URL 文字列のみ表示される。
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base target="_top">
+  <title><?= pageTitle ?></title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: #000; background: #fff; }
+    .bar { padding: 10px; background: #f4f4f4; border-bottom: 1px solid #ddd; display: flex; gap: 10px; align-items: center; }
+    .btn { font-size: 16px; padding: 10px 16px; border: none; border-radius: 8px; background: #1a73e8; color: #fff; cursor: pointer; }
+    .page { padding: 10mm; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; }
+    .item { border: 1px dashed #999; padding: 4mm; text-align: center; break-inside: avoid; page-break-inside: avoid; }
+    .qr { display: flex; justify-content: center; min-height: 36mm; }
+    .qr img, .qr canvas { width: 36mm !important; height: 36mm !important; }
+    .name { font-size: 14pt; font-weight: bold; margin-top: 2mm; word-break: break-all; }
+    .id { font-size: 10pt; color: #444; }
+    .url { font-size: 6pt; color: #666; word-break: break-all; margin-top: 1mm; }
+    .note { color: #c00; font-size: 12px; }
+    @page { size: A4; margin: 10mm; }
+    @media print {
+      .bar { display: none; }
+      .page { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="bar">
+  <button class="btn" onclick="window.print()">印刷</button>
+  <span><?= data.tools.length ?> 件</span>
+  <span class="note" id="note" hidden>QR ライブラリを読み込めませんでした。URL のみ表示しています。</span>
+</div>
+<div class="page">
+  <div class="grid">
+  <? data.tools.forEach(function (t) { ?>
+    <div class="item">
+      <div class="qr" data-url="<?= t.qrUrl ?>"></div>
+      <div class="name"><?= t.name ?></div>
+      <div class="id"><?= t.id ?></div>
+      <div class="url"><?= t.qrUrl ?></div>
+    </div>
+  <? }); ?>
+  </div>
+</div>
+<script>
+  (function () {
+    if (typeof QRCode === 'undefined') { document.getElementById('note').hidden = false; return; }
+    document.querySelectorAll('.qr').forEach(function (el) {
+      try { new QRCode(el, { text: el.dataset.url, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M }); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!--
+  List.html — 一覧画面（?view=list）
+  工具ごとに1カード。空き＝緑、使用中＝赤「〇〇さん 9/20まで」、超過＝濃い赤「超過」バッジ。
+  使用中の工具には「返却」（確認ダイアログ付き）と「延長」（+3日 / +7日 / 日付指定）。
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base target="_top">
+  <title><?= pageTitle ?></title>
+</head>
+<body>
+<?!= include_('Common', { appUrl: appUrl }) ?>
+<div class="wrap">
+  <div class="head">
+    <h1>工具一覧</h1>
+    <button class="btn small gray" id="reload" type="button">更新</button>
+  </div>
+  <div id="msg"></div>
+  <div id="cards" class="muted">読み込み中…</div>
+</div>
+<script>
+  let TODAY = '';
+  const cards = document.getElementById('cards');
+
+  async function loadList() {
+    try {
+      const r = await call('apiListTools');
+      TODAY = r.today;
+      renderList(r.tools);
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  }
+
+  function renderList(tools) {
+    if (!tools.length) {
+      cards.innerHTML = '<div class="muted">工具が登録されていません</div>';
+      return;
+    }
+    cards.className = '';
+    cards.innerHTML = tools.map(t => {
+      const badge = t.inUse
+        ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
+        : '<span class="badge free">空き</span>';
+      const actions = t.inUse ? (
+        '<div class="row">' +
+        '<button class="btn small gray" data-act="return" data-id="' + esc(t.id) + '" data-name="' + esc(t.name) + '">返却</button>' +
+        '<button class="btn small" data-act="extend" data-days="3" data-id="' + esc(t.id) + '">+3日</button>' +
+        '<button class="btn small" data-act="extend" data-days="7" data-id="' + esc(t.id) + '">+7日</button>' +
+        '<button class="btn small" data-act="pick" data-id="' + esc(t.id) + '">日付指定</button>' +
+        '</div>' +
+        '<div class="row" id="pick-' + esc(t.id) + '" hidden>' +
+        '<input type="date" id="date-' + esc(t.id) + '" min="' + esc(TODAY) + '" value="' + esc(t.due) + '">' +
+        '<button class="btn small" data-act="extendDate" data-id="' + esc(t.id) + '">延長</button>' +
+        '</div>'
+      ) : (
+        '<div class="row"><a class="btn small green" href="' + esc(APP_URL) + '?tool=' + encodeURIComponent(t.id) + '" target="_top">借りる</a></div>'
+      );
+      return '<div class="card">' +
+        '<div class="head"><div><b>' + esc(t.name) + '</b> <span class="muted">' + esc(t.id) + '</span></div><div>' + badge + '</div></div>' +
+        actions +
+        '</div>';
+    }).join('');
+  }
+
+  cards.addEventListener('click', async function (ev) {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    const id = b.dataset.id;
+    const act = b.dataset.act;
+    if (act === 'pick') {
+      const box = document.getElementById('pick-' + id);
+      box.hidden = !box.hidden;
+      return;
+    }
+    try {
+      if (act === 'return') {
+        if (!confirm(b.dataset.name + ' を返却しますか？')) return;
+        setBusy(true);
+        const t = await call('apiReturn', id);
+        showMsg('msg', t.name + ' を返却しました', 'ok');
+      } else if (act === 'extend') {
+        setBusy(true);
+        const t = await call('apiExtend', id, Number(b.dataset.days), null);
+        showMsg('msg', t.name + ' を ' + fmtMd(t.due) + ' まで延長しました', 'ok');
+      } else if (act === 'extendDate') {
+        const date = document.getElementById('date-' + id).value;
+        if (!date) { alert('日付を選んでください'); return; }
+        setBusy(true);
+        const t = await call('apiExtend', id, null, date);
+        showMsg('msg', t.name + ' を ' + fmtMd(t.due) + ' まで延長しました', 'ok');
+      }
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    } finally {
+      setBusy(false);
+      loadList();
+    }
+  });
+
+  function setBusy(on) {
+    cards.querySelectorAll('button').forEach(b => { b.disabled = on; });
+  }
+
+  document.getElementById('reload').addEventListener('click', () => { showMsg('msg', ''); loadList(); });
+  loadList();
+</script>
+</body>
+</html>

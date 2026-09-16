@@ -1,0 +1,85 @@
+<!--
+  Request.html — 貸出申請画面（?tool=T001）
+  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・メール・返却日を入力して「依頼」。
+  名前・メールは localStorage に保存して次回自動入力する。
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <base target="_top">
+  <title><?= pageTitle ?></title>
+</head>
+<body>
+<?!= include_('Common', { appUrl: appUrl }) ?>
+<div class="wrap">
+<? if (!data.tool) { ?>
+  <h1>貸出申請</h1>
+  <div class="msg err">工具が見つかりません（<?= data.toolId ?>）</div>
+  <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
+<? } else { ?>
+  <h1><?= data.tool.name ?></h1>
+  <div class="muted"><?= data.tool.id ?></div>
+
+  <? if (data.tool.inUse) { ?>
+    <div class="card">
+      <span class="badge used">使用中</span>
+      <? if (data.tool.overdue) { ?><span class="badge over">超過</span><? } ?>
+      <div style="margin-top:8px"><?= data.tool.user ?>さんが <?= data.tool.dueLabel ?> まで使用中</div>
+    </div>
+    <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
+  <? } else { ?>
+    <form id="form" class="card">
+      <span class="badge free">空き</span>
+      <label for="name">名前</label>
+      <input type="text" id="name" autocomplete="name" required>
+      <label for="email">メール</label>
+      <input type="email" id="email" autocomplete="email" required>
+      <label>開始日</label>
+      <div><?= data.today ?>（今日）</div>
+      <label for="due">返却日</label>
+      <input type="date" id="due" min="<?= data.today ?>" value="<?= data.defaultDue ?>" required>
+      <div id="msg"></div>
+      <button type="submit" id="submit" class="btn full">依頼</button>
+    </form>
+    <div id="done" class="card" hidden>
+      <div class="msg ok" id="doneText"></div>
+      <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
+    </div>
+  <? } ?>
+<? } ?>
+</div>
+<script>
+  const TOOL_ID = <?!= toJson_(data.toolId) ?>;
+  (function () {
+    const form = document.getElementById('form');
+    if (!form) return;
+    const nameEl = document.getElementById('name');
+    const emailEl = document.getElementById('email');
+    const dueEl = document.getElementById('due');
+    const btn = document.getElementById('submit');
+
+    // 前回の入力を復元
+    nameEl.value = storeGet('local', 'tr_name') || '';
+    emailEl.value = storeGet('local', 'tr_email') || '';
+
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      btn.disabled = true;
+      showMsg('msg', '送信中…', 'info');
+      storeSet('local', 'tr_name', nameEl.value.trim());
+      storeSet('local', 'tr_email', emailEl.value.trim());
+      try {
+        const t = await call('apiRequest', TOOL_ID, nameEl.value, emailEl.value, dueEl.value);
+        form.hidden = true;
+        document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。';
+        document.getElementById('done').hidden = false;
+      } catch (e) {
+        showMsg('msg', e.message || String(e), 'err');
+        btn.disabled = false;
+      }
+    });
+  })();
+</script>
+</body>
+</html>

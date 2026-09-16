@@ -1,0 +1,82 @@
+<!--
+  Common.html — 全画面共通のパーツ（CSS・上部リンク・JS ヘルパー）
+  各画面の body 先頭から include_('Common', { appUrl: appUrl }) で差し込む（注: このコメント内に <? ?> を書くと評価されてしまう）。
+  テンプレート変数 appUrl（Web アプリの URL）を受け取る。
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Helvetica Neue", "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 16px; color: #202124; background: #f4f4f4; }
+  .nav { display: flex; gap: 16px; padding: 8px 12px; font-size: 13px; background: #fff; border-bottom: 1px solid #ddd; }
+  .nav a { color: #1a73e8; text-decoration: none; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 12px; }
+  h1 { font-size: 20px; margin: 8px 0 12px; }
+  h2 { font-size: 16px; margin: 24px 0 8px; border-left: 4px solid #1a73e8; padding-left: 8px; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  label { display: block; font-size: 14px; margin: 12px 0 4px; }
+  input[type=text], input[type=email], input[type=date], input[type=password], input[type=number], select {
+    width: 100%; font-size: 16px; padding: 10px; border: 1px solid #bbb; border-radius: 6px; background: #fff;
+  }
+  .btn { display: inline-block; font-size: 16px; padding: 12px 16px; min-height: 48px; border: none; border-radius: 8px;
+         background: #1a73e8; color: #fff; cursor: pointer; text-decoration: none; text-align: center; line-height: 1.4; }
+  .btn.full { width: 100%; margin-top: 12px; }
+  .btn.gray { background: #e0e0e0; color: #202124; }
+  .btn.red { background: #d93025; }
+  .btn.green { background: #1e8e3e; }
+  .btn.small { font-size: 14px; padding: 8px 12px; min-height: 42px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.active { outline: 3px solid #1a73e8; outline-offset: 2px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+  .row > input { flex: 1; min-width: 120px; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 13px; color: #fff; white-space: nowrap; }
+  .badge.free { background: #1e8e3e; }
+  .badge.used { background: #d93025; }
+  .badge.over { background: #7a0000; font-weight: bold; }
+  .msg { padding: 10px; border-radius: 6px; margin: 10px 0; font-size: 14px; }
+  .msg.err { background: #fce8e6; color: #c5221f; }
+  .msg.ok { background: #e6f4ea; color: #137333; }
+  .msg.info { background: #e8f0fe; color: #174ea6; }
+  .muted { color: #5f6368; font-size: 13px; }
+  .mono { font-family: monospace; font-size: 12px; word-break: break-all; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: left; white-space: nowrap; }
+  [hidden] { display: none !important; }
+</style>
+<div class="nav">
+  <a href="<?= appUrl ?>?view=list" target="_top">一覧</a>
+  <a href="<?= appUrl ?>?view=admin" target="_top">管理</a>
+</div>
+<script>
+  // Web アプリの URL（画面遷移・QR 用）
+  const APP_URL = <?!= toJson_(appUrl) ?>;
+
+  // HTML エスケープ
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  // 'yyyy-MM-dd' → '9/20'
+  function fmtMd(ymd) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+    return m ? (Number(m[2]) + '/' + Number(m[3])) : (ymd || '');
+  }
+  // メッセージ表示。kind = 'ok' | 'err' | 'info'、text が空なら消す
+  function showMsg(el, text, kind) {
+    if (typeof el === 'string') el = document.getElementById(el);
+    if (!el) return;
+    if (!text) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="msg ' + (kind || 'info') + '">' + esc(text) + '</div>';
+  }
+  // google.script.run を Promise 化: await call('apiListTools', ...)
+  function call(fn) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    return new Promise((resolve, reject) => {
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn].apply(null, args);
+    });
+  }
+  // localStorage / sessionStorage（ブラウザ設定で使えない環境でも落ちないように、参照自体を try で包む）
+  // kind = 'local' | 'session'
+  function storeGet(kind, key) { try { return window[kind + 'Storage'].getItem(key); } catch (e) { return null; } }
+  function storeSet(kind, key, val) { try { window[kind + 'Storage'].setItem(key, val); } catch (e) {} }
+  function storeDel(kind, key) { try { window[kind + 'Storage'].removeItem(key); } catch (e) {} }
+</script>
