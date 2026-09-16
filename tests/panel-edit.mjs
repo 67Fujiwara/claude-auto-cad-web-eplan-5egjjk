@@ -18,7 +18,10 @@
                (板金加工用の指示 — 見せる意味がない)。社内保存用は全ページ
    ・dxfClean : パネルページの DXF は専用変換だけ — SVG 経由の二重出力
                (同じ線が PANEL と FRAME_THIN に 2 回、円が TEXT にもう 1 回)
-               が無い。線種テーブルは CONTINUOUS (0 番・実線) だけ */
+               が無い。線種テーブルは CONTINUOUS (0 番・実線) だけ
+   ・machining: 加工用DXF (外形と穴だけ) — レイヤ 0・左下原点の実寸・
+               文字と注記なし・線種 CONTINUOUS のみ。メニューから
+               パネルページのぶんだけ出る */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -206,6 +209,36 @@ const DX = await p.evaluate(() => {
     frameThin0: b2.cnt["LINE/FRAME_THIN"] || 0 };
 });
 
+/* ── 加工用DXF (外形と穴だけ) ── */
+const MC = await p.evaluate(async () => {
+  const cab = App.project.pages.find(p2 => p2.kind === "panel" && p2.panel.sheetId === "cabinet_full");
+  // 書き足した注記 (線・文字) は加工データに入らないこと
+  panelAddEnts(cab, panelDrawEnts("line", -50, -50, -40, -50));
+  panelAddEnts(cab, [{ t: "text", x: 10, y: 10, h: 5, s: "注記ヴ", note: true, add: true }]);
+  const d = panelToMachiningDXF(cab);
+  const ls = d.split("\n");
+  const pairs = [];
+  for (let i = 0; i < ls.length - 1; i += 2) pairs.push([ls[i], ls[i + 1]]);
+  const cnt = {};
+  let cur = null;
+  const lays = new Set();
+  pairs.forEach(pr => {
+    if (pr[0] === "0") { cur = pr[1]; if (!["SECTION","ENDSEC","TABLE","ENDTAB","EOF","LTYPE","LAYER"].includes(cur)) cnt[cur] = (cnt[cur] || 0) + 1; }
+    else if (pr[0] === "8" && cur !== "LAYER") lays.add(pr[1]);
+  });
+  // メニューからの一括出力 (保存を横取り)
+  const got = [];
+  const keepDl = window.downloadFile;
+  window.downloadFile = (name) => got.push(name);
+  UI.exportMachiningDXF();
+  await new Promise(r => setTimeout(r, 4 * 400 + 300));
+  window.downloadFile = keepDl;
+  return { cnt, lays: [...lays].join(","),
+    noText: !d.includes("MCCB") && !d.includes("注記ヴ") && !d.includes("-50.000"),
+    origin: d.includes("0.000") && !d.includes("1090"),
+    files: got.length, named: got.every(n => /_加工用\.dxf$/.test(n)) };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
   import: R.import.added === 4 && R.import.has === true,
@@ -218,6 +251,9 @@ const checks = {
      線種テーブルは CONTINUOUS のみ */
   dxfClean: DX.lt === "CONTINUOUS" && DX.panelLines === 9 && DX.circPanel === 1 &&
     DX.circText === 0 && DX.frameThin === DX.frameThin0,
+  /* 加工用: 線 9・円 1 だけ (文字なし)・レイヤ 0 のみ・パネルページ 4 枚ぶん出る */
+  machining: MC.cnt.LINE === 9 && MC.cnt.CIRCLE === 1 && !MC.cnt.TEXT &&
+    MC.lays === "0" && MC.noText === true && MC.files === 4 && MC.named === true,
   /* 右 5mm → x1 105。Shift+↑ は画面の上向き = パネル座標 +0.5 */
   nudge: K.afterRight.x1 === 105 && K.afterRight.y1 === 200 &&
     K.afterUp.x1 === 105 && K.afterUp.y1 === 200.5,

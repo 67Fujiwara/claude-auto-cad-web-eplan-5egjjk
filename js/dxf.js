@@ -360,6 +360,40 @@ function dxfEscape(text) {
   }
   return out;
 }
+/** 加工機取込み用の最小 DXF (パネルの外形と穴だけ)。
+    穴加工サービス (日東工業 cabista など) は「面の外形 + 丸穴の円・左下原点」
+    だけを想定しているので、図枠・表題欄・文字・裁断マーク・書き足した注記は
+    入れない。原点 = パネルの左下 (0,0)・実寸 1:1・レイヤ 0・線種 CONTINUOUS のみ */
+function panelToMachiningDXF(page) {
+  const pd = panelDataOf(page);
+  const n3 = v => (+v).toFixed(3);
+  let ents = "";
+  (pd.entities || []).forEach(e => {
+    if (e.add || e.t === "text") return;      // 注記・文字は加工データに入れない
+    if (e.t === "line") {
+      ents += dxfEntity([[0, "LINE"], [8, "0"],
+        [10, n3(e.x1)], [20, n3(e.y1)], [11, n3(e.x2)], [21, n3(e.y2)]]);
+    } else if (e.t === "circle") {
+      ents += dxfEntity([[0, "CIRCLE"], [8, "0"],
+        [10, n3(e.cx)], [20, n3(e.cy)], [40, n3(e.r)]]);
+    } else if (e.t === "arc") {
+      ents += dxfEntity([[0, "ARC"], [8, "0"],
+        [10, n3(e.cx)], [20, n3(e.cy)], [40, n3(e.r)],
+        [50, n3(e.a0)], [51, n3(e.a1)]]);
+    }
+  });
+  return [
+    "0", "SECTION", "2", "TABLES",
+    "0", "TABLE", "2", "LTYPE", "70", "1",
+    "0", "LTYPE", "2", "CONTINUOUS", "70", "0", "3", "Solid line", "72", "65", "73", "0", "40", "0.000",
+    "0", "ENDTAB",
+    "0", "TABLE", "2", "LAYER", "70", "1",
+    "0", "LAYER", "2", "0", "70", "0", "62", "7", "6", "CONTINUOUS",
+    "0", "ENDTAB", "0", "ENDSEC",
+    "0", "SECTION", "2", "ENTITIES",
+  ].join("\n") + "\n" + ents + "0\nENDSEC\n0\nEOF\n";
+}
+
 /** フォームページの SVG (自前生成) を DXF エンティティへ読み替える */
 function formSVGToDXF(svg) {
   let ents = "";

@@ -1266,6 +1266,7 @@ const MENUS = {
     { label: "DXF取り込み (図面に作図)…", key: "", fn: () => UI.importDXF() },
     { label: "Panel Studio の図面を差し込む… (JSON / ZIP)", key: "", fn: () => UI.importPanelStudio() },
     { label: "DXF出力 (AutoCAD互換・全ページ)", key: "", fn: () => UI.exportDXF() },
+    { label: "加工用DXF出力 (キャビネット・中板の外形と穴だけ)", key: "", fn: () => UI.exportMachiningDXF() },
     
     { label: "PDF出力 (全ページを1ファイル)", key: "", fn: () => UI.exportPDF() },
     { label: "PDF出力 (印刷ダイアログ)…", key: "", fn: () => UI.printAll() },
@@ -2264,6 +2265,19 @@ function loadImportedSymbols() {
     if (migrated) saveImportedSymbols();   // 版の形に直したものを保存し直す
   } catch (e) { /* 破損時は読み飛ばす */ }
 }
+
+/** パネル図 (キャビネット・中板) を加工機取込み用の最小 DXF で出す。
+    図枠・文字なし・左下原点・実寸 — 穴加工サービスにそのまま渡せる */
+UI.exportMachiningDXF = () => {
+  const pages = App.project.pages.filter(pg => pg.kind === "panel" && pg.panel);
+  if (!pages.length) { UI.setMsg("キャビネット・中板のページがありません (挿入 → 制御盤配置図の読み込みで取り込めます)"); return; }
+  const base = App.project.name.replace(/[\\/:*?"<>|]/g, "_");
+  pages.forEach((pg, i) => {
+    setTimeout(() => downloadFile(`${base}_p${pg.no}_${pg.name}_加工用.dxf`,
+      dxfBytes(panelToMachiningDXF(pg)), "application/dxf"), i * 400);
+  });
+  UI.setMsg(`加工用DXFを ${pages.length} ファイル出力します (外形と穴だけ・左下原点・1:1 — 図枠や文字は入れません)`);
+};
 
 UI.exportDXF = async () => {
   const base = App.project.name.replace(/[\\/:*?"<>|]/g, "_");
