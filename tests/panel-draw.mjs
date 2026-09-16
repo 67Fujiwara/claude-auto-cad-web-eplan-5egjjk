@@ -50,8 +50,16 @@ const ZL = await p.evaluate(async () => {
   const svg = zonesSVG(pg, { print: true });
   const dxf = pageToDXF(pg).split(/\r?\n/);
   const i370 = dxf.indexOf("370");
+  // 破線枠を使ったページの線種テーブルには DASHED が載る (使った線種は残す)
+  const ltNames = [];
+  dxf.forEach((v, i2) => {
+    if (v === "LTYPE" && dxf[i2 - 1] === "0") {
+      for (let j = i2 + 1; j < i2 + 20; j++) if (dxf[j] === "2") { ltNames.push(dxf[j + 1]); break; }
+    }
+  });
   return { field: true, lw: z.lw,
     svgW: svg.includes(`stroke-width="${0.7 * fr}"`),
+    hasDashed: ltNames.includes("DASHED"),
     dxf370: i370 >= 0 && dxf[i370 + 1] === "70" };
 });
 
@@ -244,7 +252,8 @@ const ES = await p.evaluate(() => {
 const near = (v, want, tol = 1.2) => typeof v === "number" && Math.abs(v - want) <= tol;
 const checks = {
   noPageErrors: errs.length === 0,
-  zoneLw: ZL.field === true && ZL.lw === 0.7 && ZL.svgW === true && ZL.dxf370 === true,
+  zoneLw: ZL.field === true && ZL.lw === 0.7 && ZL.svgW === true && ZL.dxf370 === true &&
+    ZL.hasDashed === true,
   lineTool: R.btn === "line,circle,arrow,text" && L1.n === R.n0 + 1 &&
     L1.e && L1.e.t === "line" && near(L1.e.x1, 200) && near(L1.e.y1, 100) &&
     near(L1.e.x2, 230) && near(L1.e.y2, 100) && L1.selN === 1 &&

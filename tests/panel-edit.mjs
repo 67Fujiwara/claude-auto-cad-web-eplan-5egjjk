@@ -15,7 +15,10 @@
    ・svgSync  : 編集後の panelSVG は新しい座標で描かれる (キャッシュが
                編集で無効になる)
    ・cusPdf   : 顧客提出用 PDF からは「加工穴のみ」のページが外れる
-               (板金加工用の指示 — 見せる意味がない)。社内保存用は全ページ */
+               (板金加工用の指示 — 見せる意味がない)。社内保存用は全ページ
+   ・dxfClean : パネルページの DXF は専用変換だけ — SVG 経由の二重出力
+               (同じ線が PANEL と FRAME_THIN に 2 回、円が TEXT にもう 1 回)
+               が無い。線種テーブルは CONTINUOUS (0 番・実線) だけ */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -169,6 +172,40 @@ const HP = await p.evaluate(async () => {
     svgNew: svg.includes(`cx="${ox + 310}"`), svgOld: svg.includes(`cx="${ox + 300}"`) };
 });
 
+/* ── DXF: 二重出力なし・線種は初期 (CONTINUOUS) だけ ── */
+const DX = await p.evaluate(() => {
+  const parse = dxf => {
+    const ls = dxf.split(/\r?\n/);
+    const pairs = [];
+    for (let i = 0; i < ls.length - 1; i += 2) pairs.push([ls[i], ls[i + 1]]);
+    const lt = [];
+    pairs.forEach((pr, i) => {
+      if (pr[0] === "0" && pr[1] === "LTYPE") {
+        for (let j = i + 1; j < Math.min(i + 12, pairs.length); j++)
+          if (pairs[j][0] === "2") { lt.push(pairs[j][1]); break; }
+      }
+    });
+    const ei = pairs.findIndex(pr => pr[0] === "2" && pr[1] === "ENTITIES");
+    const cnt = {};
+    let cur = null;
+    pairs.slice(ei).forEach(pr => {
+      if (pr[0] === "0") cur = pr[1];
+      else if (pr[0] === "8") { const k = cur + "/" + pr[1]; cnt[k] = (cnt[k] || 0) + 1; }
+    });
+    return { lt, cnt };
+  };
+  const cab = App.project.pages.find(p2 => p2.kind === "panel" && p2.panel.sheetId === "cabinet_full");
+  const plate = App.project.pages.find(p2 => p2.kind === "panel" && p2.panel.sheetId === "plate_full");
+  applySheet(cab); const a = parse(pageToDXF(cab));
+  applySheet(plate); const b2 = parse(pageToDXF(plate));   // 中身 0 件 → 図枠だけの基準
+  return { lt: a.lt.join(","),
+    panelLines: a.cnt["LINE/PANEL"] || 0,
+    circPanel: a.cnt["CIRCLE/PANEL"] || 0,
+    circText: a.cnt["CIRCLE/TEXT"] || 0,
+    frameThin: a.cnt["LINE/FRAME_THIN"] || 0,
+    frameThin0: b2.cnt["LINE/FRAME_THIN"] || 0 };
+});
+
 const checks = {
   noPageErrors: errs.length === 0,
   import: R.import.added === 4 && R.import.has === true,
@@ -176,6 +213,11 @@ const checks = {
     R.clusters.hole === true && R.clusters.text === true,
   hit: R.hit.dev === 5 && R.hit.none === true,
   cusPdf: R.cusPdf.int === 4 && R.cusPdf.cus === "cabinet_full,plate_full",
+  /* 線 9 本は PANEL だけ・円は PANEL だけ (TEXT への複製なし)。
+     FRAME_THIN は中身 0 件のページ (図枠だけ) と同数 = 中身が漏れていない。
+     線種テーブルは CONTINUOUS のみ */
+  dxfClean: DX.lt === "CONTINUOUS" && DX.panelLines === 9 && DX.circPanel === 1 &&
+    DX.circText === 0 && DX.frameThin === DX.frameThin0,
   /* 右 5mm → x1 105。Shift+↑ は画面の上向き = パネル座標 +0.5 */
   nudge: K.afterRight.x1 === 105 && K.afterRight.y1 === 200 &&
     K.afterUp.x1 === 105 && K.afterUp.y1 === 200.5,

@@ -36,7 +36,16 @@ function dxfLtypeFor(dash) {
   }
   return __dxfDynLtypes.get(key).name;
 }
-function dxfLtypeList() { return DXF_LTYPES.concat([...__dxfDynLtypes.values()]); }
+/* この 1 ページの出力で実際に使った線種。テーブルには CONTINUOUS + 使った
+   ものだけを載せる — 使っていない破線や他ページの固有寸法まで並べると、
+   受け取り側 CAD の線種一覧がゴミだらけになる (キャビネット・中板の DXF は
+   実線だけ = 初期の線種のまま開ける) */
+let __dxfUsedLt = new Set();
+function dxfLtypeUse(name) { if (name && name !== "CONTINUOUS") __dxfUsedLt.add(name); return name; }
+function dxfLtypeList() {
+  return DXF_LTYPES.concat([...__dxfDynLtypes.values()])
+    .filter(lt => lt.name === "CONTINUOUS" || __dxfUsedLt.has(lt.name));
+}
 function dxfLtypeTable() {
   const f = contentScale();   // 線種は図面内容と同じ倍率
   return dxfLtypeList().map(lt0 => {
@@ -255,7 +264,7 @@ function dxfEntity(pairs) {
 function dxfY(y) { return (SHEET.h - y).toFixed(3); }
 function dxfLine(x1, y1, x2, y2, layer, ltype, lw) {
   const pairs = [[0, "LINE"], [8, layer]];
-  if (ltype && ltype !== "CONTINUOUS") pairs.push([6, ltype]);
+  if (ltype && ltype !== "CONTINUOUS") pairs.push([6, dxfLtypeUse(ltype)]);
   if (lw) pairs.push([370, Math.round(lw * 100)]);   // 線の太さ (1/100 mm)
   pairs.push([10, x1.toFixed(3)], [20, dxfY(y1)], [11, x2.toFixed(3)], [21, dxfY(y2)]);
   return dxfEntity(pairs);
@@ -293,13 +302,13 @@ function dxfArc(cx, cy, r, t1, dt, layer, ltype) {
   // 画面で角度が増える向き = DXF では減る向き。DXF の ARC は必ず反時計回り
   const [s0, s1] = dt >= 0 ? [b2, a] : [a, b2];
   const p = [[0, "ARC"], [8, layer]];
-  if (ltype) p.push([6, ltype]);
+  if (ltype) p.push([6, dxfLtypeUse(ltype)]);
   p.push([10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)], [50, s0.toFixed(3)], [51, s1.toFixed(3)]);
   return dxfEntity(p);
 }
 function dxfCircle(cx, cy, r, layer, ltype) {
   const p = [[0, "CIRCLE"], [8, layer]];
-  if (ltype) p.push([6, ltype]);
+  if (ltype) p.push([6, dxfLtypeUse(ltype)]);
   p.push([10, cx.toFixed(3)], [20, dxfY(cy)], [40, r.toFixed(3)]);
   return dxfEntity(p);
 }
@@ -506,6 +515,7 @@ function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
 /** 1ページ → DXF 文字列 */
 function pageToDXF(page) {
   applySheet(page);          // ページごとの用紙・尺度
+  __dxfUsedLt = new Set();   // このページで使った線種を数え直す
   let ents = "";
   const { w, h, margin: mg, marginLeft: ml, cols, rows } = SHEET;
   const meta = projectMeta();
@@ -687,7 +697,9 @@ function pageToDXF(page) {
   // ── 表紙・目次・仕様 (フォームページ) の中身 ──
   // 画面の SVG は自前生成で語彙が決まっている (rect / path M,L,H,V / text /
   // ellipse / circle のみ) ので、それを読み替えて DXF に出す
-  if (!isDrawingPage(page)) ents += formSVGToDXF(kindSVG(page, true));
+  /* パネルページは上の専用変換 (entities → DXF) が全部を描いている。
+     SVG 経由でもう一度読み替えると、全ての線・円が二重に出てしまう */
+  if (!isDrawingPage(page) && page.kind !== "panel") ents += formSVGToDXF(kindSVG(page, true));
 
   // ── 図面上の表 (罫線 + 間口の文字。1 行目 = タイトル) ──
   pageTables(page).forEach(tb => {
