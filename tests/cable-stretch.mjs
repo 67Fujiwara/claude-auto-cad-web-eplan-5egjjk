@@ -22,6 +22,12 @@ const R = await p.evaluate(()=>{
   UI.showProps();
   const inp = document.querySelector("#pSpan");
   out.propUI = !!inp && { value: inp.value, step: inp.step, max: inp.max };
+  // 40 芯まで指定できる (囲み 205mm)。上限を超えた値は 40 に丸まる
+  if (inp) { inp.value = "40"; inp.dispatchEvent(new Event("change", { bubbles: true })); }
+  out.max40 = { sym: pg.devices[0].sym, cores: symSpanToCores(symOf(pg.devices[0].sym).span),
+    inputMax: out.propUI && +out.propUI.max,
+    over: symSpanToCores(symStretchSpan(SYMBOLS_BY_ID.cable_core, symCoresToSpan(48))),
+    shield40: symSpanToCores(symStretchSpan(SYMBOLS_BY_ID.shield, 205)) };
   if (inp) { inp.value = "14"; inp.dispatchEvent(new Event("change", { bubbles: true })); }   // 14芯
   out.afterUI = { sym: pg.devices[0].sym, cores: symSpanToCores(symOf(pg.devices[0].sym).span),
                   bounds: symOf(pg.devices[0].sym).bounds };
@@ -87,6 +93,8 @@ const checks = {
   variantOutline: R2.variant.hasOutline === true,
   rendered: R2.rendered.cable === true && R2.rendered.shield === true,
   uiCores: R2.afterUI.cores === 14,
+  max40: R2.max40.sym === "cable_core@205" && R2.max40.cores === 40 &&
+    R2.max40.inputMax === 40 && R2.max40.over === 40 && R2.max40.shield40 === 40,
   reload: Array.isArray(R2.reload.resolved) && R2.reload.bodyBack === true,
   bomCoreRows: R2.bom.length >= 1 && R2.bom.every(r=>/芯/.test(r.name)),
   labels: !bad.length,
