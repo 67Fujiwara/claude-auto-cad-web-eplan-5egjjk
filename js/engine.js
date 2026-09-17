@@ -2222,6 +2222,65 @@ function newPage(name, no, kind) {
 /** 図面ページ (回路を描くページ) か。表紙・目次・仕様は作図の対象外 */
 function isDrawingPage(page) { return !page || !page.kind; }
 
+/* ── 機器リスト (制御盤に使う機器の一覧ページ) ──
+   Excel の表 (№/部品名/型式/メーカー/個数) を丸ごと貼り付けて取り込む。
+   行は meta.partsRows に持ち、機器リストのページが並び順に
+   PARTS_PER_PAGE 行ずつ受け持つ — 入りきらなければ 2 枚目・3 枚目と
+   自動でページが増える。図番は書類側の A 系列 */
+const PARTS_PER_PAGE = 30;   // A3 横・行 7mm の見やすい寸法で 1 枚に入る行数
+function partsRows() {
+  const m = projectMeta();
+  return Array.isArray(m.partsRows) ? m.partsRows : [];
+}
+/** Excel からの貼り付け (タブ区切り) を行に読み替える。
+    見出し行と先頭の № は読み飛ばす (№ は振り直す)。個数の空欄は 1 */
+function partsParse(text) {
+  const rows = [];
+  String(text || "").split(/\r?\n/).forEach(ln => {
+    if (!ln.trim()) return;
+    let c = ln.split("\t").map(s => s.trim());
+    if (c.length < 2) c = ln.split(",").map(s => s.trim());
+    if (c.some(v => /^(部品名|型式|メーカー|個数|№|No\.?)$/i.test(v))) return;
+    if (/^\d+$/.test(c[0] || "")) c = c.slice(1);
+    if (!c[0]) return;
+    rows.push({ name: c[0], model: c[1] || "", maker: c[2] || "",
+      qty: c[3] !== undefined && String(c[3]).trim() !== "" ? String(c[3]).trim() : "1" });
+  });
+  return rows;
+}
+/** 行数に合わせて機器リストのページを整える (増やす / 余りを消す) */
+function partsEnsurePages(rows) {
+  projectMeta().partsRows = rows;
+  const need = Math.max(1, Math.ceil(rows.length / PARTS_PER_PAGE));
+  const pages = App.project.pages;
+  const cur = pages.filter(pg => pg.kind === "parts");
+  for (let i = cur.length; i < need; i++) {
+    const pg = newPage(i ? `機器リスト (${i + 1})` : "機器リスト", pages.length + 1, "parts");
+    let at = -1;
+    pages.forEach((p2, j) => { if (DWG_FRONT_KINDS.has(p2.kind)) at = j; });
+    pages.splice(at + 1, 0, pg);
+  }
+  if (cur.length > need) {
+    const extra = new Set(pages.filter(pg => pg.kind === "parts").slice(need));
+    App.project.pages = pages.filter(pg => !extra.has(pg));
+  }
+  App.labelRev++;
+  return App.project.pages.filter(pg => pg.kind === "parts");
+}
+/** このページが受け持つ行 (機器リストの何枚目かで決まる) */
+function partsSlice(page) {
+  const list = App.project.pages.filter(pg => pg.kind === "parts");
+  const i = Math.max(0, list.indexOf(page));
+  return { start: i * PARTS_PER_PAGE,
+    rows: partsRows().slice(i * PARTS_PER_PAGE, (i + 1) * PARTS_PER_PAGE) };
+}
+/** 今の行を Excel へ貼り戻せるタブ区切りに (編集ダイアログの初期値) */
+function partsToTSV() {
+  const head = "№\t部品名\t型式\tメーカー\t個数";
+  return [head, ...partsRows().map((r, i) =>
+    `${i + 1}\t${r.name}\t${r.model}\t${r.maker}\t${r.qty}`)].join("\n");
+}
+
 /* ══════════════ 標準の頭 3 枚 (表紙・目次・仕様) ══════════════
    実務の図面集の作法にそろえる:
    ・表紙 … 客先名と装置名。図枠は他ページと同じものを使う
@@ -2782,8 +2841,8 @@ function sheetRow(y) {
 /** このページに印字される図番 (表題欄・DXF・印刷で共通) */
 /** 既定の図番 (表題欄で基準の図番を入れない場合)。
     表紙・目次・仕様 = A 系列 / 回路図面 = B 系列で、それぞれ 1 から数える */
-// panel = Panel Studio の盤配置図。回路ではなく書類側の A 系列で数える
-const DWG_FRONT_KINDS = new Set(["cover", "toc", "spec", "panel"]);
+// panel = Panel Studio の盤配置図 / parts = 機器リスト。どちらも書類側の A 系列で数える
+const DWG_FRONT_KINDS = new Set(["cover", "toc", "spec", "panel", "parts"]);
 function defaultDwgNo(page) {
   const pages = (App.project && App.project.pages) || [page];
   const front = DWG_FRONT_KINDS.has(page.kind);

@@ -476,8 +476,11 @@ function bindPnDraw(pane) {
     const memo = sp.memo || {};
     const cov = page.cover || {};
     pane.innerHTML = `
-      <div class="prop-head"><div><b>${page.kind === "cover" ? "表紙" : page.kind === "toc" ? "目次" : "仕様"}</b>
+      <div class="prop-head"><div><b>${page.kind === "cover" ? "表紙" : page.kind === "toc" ? "目次" : page.kind === "parts" ? "機器リスト" : "仕様"}</b>
         <div class="rp-dim">図面集の頭に置くページ (回路は描きません)</div></div></div>
+      ${page.kind === "parts" ? `
+        <div class="prop-row" style="margin-top:8px"><button class="btn-solid" id="plEdit" style="width:100%">Excel 貼り付けで編集…</button></div>
+        <div class="prop-note">今の内容 (${partsRows().length} 件) がタブ区切りで入った状態で開きます。Excel へ貼り戻すこともできます。</div>` : ""}
       ${page.kind === "cover" ? `
         <div class="prop-sect">表紙の文字</div>
         <div class="prop-row"><label>客先名 (1 行目)</label><input id="cvCust" value="${escAttr(cov.customer || "")}" placeholder="例: ○○株式会社 △△工場"/></div>
@@ -496,6 +499,8 @@ function bindPnDraw(pane) {
       const el = pane.querySelector(id);
       if (el) el.addEventListener("change", () => { commit(); fn(el.value); UI.refresh(false); });
     };
+    const plBtn = pane.querySelector("#plEdit");
+    if (plBtn) plBtn.addEventListener("click", () => UI.openPartsList());
     bindPg("#cvCust", v => { page.cover = page.cover || {}; page.cover.customer = v.trim(); });
     bindPg("#cvTitle", v => { page.cover = page.cover || {}; page.cover.title = v.trim(); });
     pane.querySelectorAll(".spMemo").forEach(el => el.addEventListener("change", () => {
@@ -1305,6 +1310,7 @@ const MENUS = {
     { label: "AI自動作図…", key: "F2", fn: () => UI.openWizard() },
     { label: "I/OリストからPLC接続図…", key: "", fn: () => UI.openIoImport() },
     { label: "マスターから図面を呼び出す…", key: "", fn: () => UI.openMasterPages() },
+    { label: "機器リスト (Excel 貼り付け)…", key: "", fn: () => UI.openPartsList() },
     { sep: true },
     { label: "ページを追加", key: "", fn: () => UI.addPage() },
     { label: "表紙を追加", key: "", fn: () => UI.addSpecialPage("cover") },
@@ -2095,7 +2101,7 @@ UI.openMasterPages = () => {
     const box = body.querySelector("#mpPages");
     if (!snap || !snap.pages) { box.textContent = "この一時保存の中身を読み出せませんでした"; return; }
     box.innerHTML = snap.pages.map((pg, i) => {
-      const kind = pg.kind ? ` (${{ cover: "表紙", toc: "目次", spec: "仕様", panel: "盤" }[pg.kind] || pg.kind})` : "";
+      const kind = pg.kind ? ` (${{ cover: "表紙", toc: "目次", spec: "仕様", panel: "盤", parts: "機器" }[pg.kind] || pg.kind})` : "";
       const nDev = (pg.devices || []).length, nWire = (pg.wires || []).length;
       return `<label class="chk" style="display:block;padding:2px 0"><input type="checkbox" class="mpPg" data-i="${i}"/>
         <span>${i + 1}. ${escXML(pg.name || "無題")}${kind} <span class="rp-dim">機器 ${nDev} / 配線 ${nWire}</span></span></label>`;
@@ -2268,6 +2274,39 @@ function loadImportedSymbols() {
 
 /** パネル図 (キャビネット・中板) を加工機取込み用の最小 DXF で出す。
     図枠・文字なし・左下原点・実寸 — 穴加工サービスにそのまま渡せる */
+/** 機器リスト (制御盤に使う機器の一覧) — Excel の表を丸ごと貼り付けて
+    取り込む。A 図番の書類ページになり、入りきらなければ 2 枚目・3 枚目と
+    自動で増える。開き直すと今の内容がタブ区切りで入っていて直せる */
+UI.openPartsList = () => {
+  const cur = partsRows();
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">Excel の表 (№・部品名・型式・メーカー・個数) を全部選んでコピーし、そのまま貼り付けてください。見出し行と № は自動で読み飛ばして振り直します。1 ページ ${PARTS_PER_PAGE} 行 — 超えたぶんは 2 枚目・3 枚目のページに続きます。</div>
+    <textarea id="plTxt" spellcheck="false" style="width:100%;height:280px;font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);padding:8px;white-space:pre" placeholder="1	漏電遮断器	NV32-SVF 2P 15A 30mA	三菱電機	1
+2	サーキットプロテクタ	CP30-BA 2P 1-M 5A A	三菱電機	3"></textarea>
+    ${cur.length ? `<div class="prop-note">今の機器リスト (${cur.length} 件) を初期値として入れています — 直して取り込むと置き換わります。</div>` : ""}
+  </div>`);
+  if (cur.length) body.querySelector("#plTxt").value = partsToTSV();
+  const foot = h(`<div>
+    <button class="btn-solid" id="plCancel">キャンセル</button>
+    <button class="btn-solid primary" id="plGo">取り込む</button></div>`);
+  const m = UI.openModal({ title: "機器リスト (部品表)", sub: "制御盤に使用している機器の一覧 — A 図番の書類ページになります", body, foot, wide: true });
+  foot.querySelector("#plCancel").addEventListener("click", m.close);
+  foot.querySelector("#plGo").addEventListener("click", () => {
+    const rows = partsParse(body.querySelector("#plTxt").value);
+    if (!rows.length) { UI.setMsg("読み取れる行がありませんでした — Excel の表をそのまま (タブ区切りで) 貼り付けてください"); return; }
+    commit();
+    const pages = partsEnsurePages(rows);
+    m.close();
+    UI.renumberPages();
+    App.pageIdx = App.project.pages.indexOf(pages[0]);
+    App.selection.clear();
+    applySheet();
+    UI.refresh();
+    zoomFit();
+    UI.setMsg(`機器リストを取り込みました — ${rows.length} 件 / ${pages.length} ページ (図番 ${pageDwgNo(pages[0])} から)`);
+  });
+};
+
 UI.exportMachiningDXF = () => {
   const pages = App.project.pages.filter(pg => pg.kind === "panel" && pg.panel);
   if (!pages.length) { UI.setMsg("キャビネット・中板のページがありません (挿入 → 制御盤配置図の読み込みで取り込めます)"); return; }
