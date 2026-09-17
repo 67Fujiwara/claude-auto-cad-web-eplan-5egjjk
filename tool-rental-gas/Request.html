@@ -69,7 +69,7 @@
       showMsg('msg', '送信中…', 'info');
       storeSet('local', 'tr_name', nameEl.value.trim());
       try {
-        const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value, commentEl.value);
+        const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value, commentEl.value, deviceId());
         form.hidden = true;
         document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。';
         document.getElementById('done').hidden = false;

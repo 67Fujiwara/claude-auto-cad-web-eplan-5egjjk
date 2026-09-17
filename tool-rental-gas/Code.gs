@@ -7,6 +7,7 @@
  *   - doGet()            : 画面のルーティング（申請 / 一覧 / 管理 / 印刷 / メールリンク操作）
  *   - api*()  / admin*() : 各画面から google.script.run で呼ばれるサーバー関数
  *   - rentTool_ / returnTool_ / extendTool_ : 貸出・返却・延長のコア処理（LockService で二重貸出を防止）
+ *   - 端末ID: 申請画面が localStorage に持つ擬似ID。返却は借りた端末からのみ（管理画面・メールリンクは例外）
  *   - dailyCheck()       : 返却日超過の催促（管理者へ notifyManager。使用者メールがあれば本人にも）
  *
  * 管理者への通知は Notify.gs の notifyManager(event) に集約している（human: メール / ai: Ai.gs）。
@@ -21,8 +22,8 @@ const SHEET_TOOLS = '工具';
 const SHEET_LOG = '貸出ログ';
 const SHEET_SETTINGS = '設定';
 
-const TOOL_HEADERS = ['tool_id', '工具名', '状態', '使用者名', '使用者メール', '返却日', 'コメント'];
-const LOG_HEADERS = ['日時', 'tool_id', '工具名', '使用者名', '使用者メール', '開始日', '返却日', '操作', '備考'];
+const TOOL_HEADERS = ['tool_id', '工具名', '状態', '使用者名', '使用者メール', '返却日', 'コメント', '端末ID'];
+const LOG_HEADERS = ['日時', 'tool_id', '工具名', '使用者名', '使用者メール', '開始日', '返却日', '操作', '備考', '端末ID'];
 const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', 'claude_api_key', 'notify_on_request'];
 
 const STATUS_FREE = '空き';
@@ -43,13 +44,13 @@ function setup() {
   ss.setSpreadsheetTimeZone(TZ);
 
   const tools = getOrCreateSheet_(ss, SHEET_TOOLS, TOOL_HEADERS);
-  tools.getRange('A:G').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
+  tools.getRange('A:H').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
   tools.setColumnWidth(2, 200);
   tools.setColumnWidth(7, 300);
 
   const log = getOrCreateSheet_(ss, SHEET_LOG, LOG_HEADERS);
   log.getRange('A:A').setNumberFormat('yyyy/MM/dd HH:mm:ss');
-  log.getRange('B:I').setNumberFormat('@');
+  log.getRange('B:J').setNumberFormat('@');
   log.setColumnWidth(1, 150);
 
   const settings = getOrCreateSheet_(ss, SHEET_SETTINGS, ['key', 'value']);
@@ -123,7 +124,10 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
   try {
     if (p.action) return handleAction_(p);
-    if (p.view === 'admin') return render_('Admin', {}, '管理');
+    if (p.view === 'admin') {
+      const today = today_();
+      return render_('Admin', { today: today, defaultDue: addDays_(today, 7) }, '管理');
+    }
     if (p.view === 'print') {
       checkPin_(p.pin);
       return render_('Print', { tools: readTools_().map(fullTool_) }, 'QR印刷');
@@ -148,7 +152,7 @@ function doGet(e) {
 function handleAction_(p) {
   try {
     if (p.action === 'return') {
-      const t = returnTool_(p.tool, 'メールリンク');
+      const t = returnTool_(p.tool, 'メールリンク', { force: true });
       return render_('Result', { ok: true, title: '返却しました', message: t.name + ' を返却済みにしました。' }, '返却');
     }
     if (p.action === 'extend') {
@@ -188,23 +192,25 @@ function toJson_(obj) {
 // 画面から呼ばれる API（一般利用者）
 // ---------------------------------------------------------------------------
 
-function apiGetTool(toolId) {
+function apiGetTool(toolId, deviceId) {
   const t = findTool_(toolId);
   if (!t) throw new Error('工具が見つかりません: ' + toolId);
-  return publicTool_(t);
+  return publicTool_(t, deviceId);
 }
 
-function apiListTools() {
-  return { today: today_(), tools: readTools_().map(publicTool_) };
+/** deviceId を渡すと、各工具に「この端末から返却できるか」(canReturn) が付く */
+function apiListTools(deviceId) {
+  return { today: today_(), tools: readTools_().map(t => publicTool_(t, deviceId)) };
 }
 
-/** 申請画面から。メール欄は無いので userEmail は空で呼ばれる。comment は任意 */
-function apiRequest(toolId, userName, userEmail, due, comment) {
-  return rentTool_(toolId, userName, userEmail || '', due, '申請画面', comment);
+/** 申請画面から。メール欄は無いので userEmail は空で呼ばれる。comment は任意。deviceId は端末の擬似ID */
+function apiRequest(toolId, userName, userEmail, due, comment, deviceId) {
+  return rentTool_(toolId, userName, userEmail || '', due, '申請画面', comment, deviceId);
 }
 
-function apiReturn(toolId) {
-  return returnTool_(toolId, '一覧画面');
+/** 一覧画面から。借りた端末（deviceId 一致）だけ返却できる */
+function apiReturn(toolId, deviceId) {
+  return returnTool_(toolId, '一覧画面', { deviceId: deviceId });
 }
 
 function apiExtend(toolId, days, date) {
@@ -237,14 +243,27 @@ function adminGetData(pin) {
   };
 }
 
+/** 管理画面から代理で貸す。端末IDは記録しないので、誰の端末からでも返却できる */
+function adminRentTool(pin, toolId, userName, due, comment) {
+  checkPin_(pin);
+  return fullTool_(findTool_(rentTool_(toolId, userName, '', due, '管理画面', comment, '').id));
+}
+
+/** 管理画面から返却。端末IDに関係なく返却できる */
+function adminReturnTool(pin, toolId) {
+  checkPin_(pin);
+  returnTool_(toolId, '管理画面', { force: true });
+  return fullTool_(findTool_(toolId));
+}
+
 function adminAddTool(pin, name) {
   checkPin_(pin);
   name = String(name || '').trim();
   if (!name) throw new Error('工具名を入力してください');
   return withLock_(() => {
     const id = nextToolId_();
-    getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '']);
-    return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '' });
+    getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '', '']);
+    return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '', device: '' });
   });
 }
 
@@ -317,13 +336,14 @@ function checkPin_(pin) {
 // コア処理（貸出・返却・延長）
 // ---------------------------------------------------------------------------
 
-function rentTool_(toolId, userName, userEmail, due, note, comment) {
+function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId) {
   userName = String(userName || '').trim();
   userEmail = String(userEmail || '').trim();
   if (!userName) throw new Error('名前を入力してください');
   // メールは任意（社内運用のため申請画面には入力欄がない）。入っていれば形式だけ確認する
   if (userEmail && !isEmail_(userEmail)) throw new Error('メールアドレスの形式が正しくありません');
   comment = String(comment || '').trim().slice(0, 200);
+  deviceId = normDevice_(deviceId);
   const dueYmd = normYmd_(due);
   if (!dueYmd) throw new Error('返却日を選んでください');
   const today = today_();
@@ -340,6 +360,7 @@ function rentTool_(toolId, userName, userEmail, due, note, comment) {
     t.email = userEmail;
     t.due = dueYmd;
     t.comment = comment;
+    t.device = deviceId;
     writeTool_(t);
     appendLog_(t, '貸出', { start: today, due: dueYmd, note: joinNote_(note, comment) });
     return t;
@@ -357,12 +378,22 @@ function rentTool_(toolId, userName, userEmail, due, note, comment) {
   return publicTool_(result);
 }
 
-function returnTool_(toolId, note) {
+/**
+ * 返却。opt = { deviceId: '端末ID', force: true|false }
+ *   借りたときの端末IDが記録されている工具は、同じ端末IDからしか返却できない。
+ *   force=true（管理画面・メールリンク）なら端末に関係なく返却できる。
+ */
+function returnTool_(toolId, note, opt) {
+  opt = opt || {};
+  const deviceId = normDevice_(opt.deviceId);
   let ev = null;
   const result = withLock_(() => {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     if (t.status !== STATUS_USED) throw new Error(t.name + ' はすでに返却済みです');
+    if (!opt.force && t.device && t.device !== deviceId) {
+      throw new Error('この工具は別の端末から借りられています。借りた端末で返却するか、管理者に返却を依頼してください');
+    }
     ev = {
       type: 'return',
       tool: { id: t.id, name: t.name },
@@ -372,12 +403,13 @@ function returnTool_(toolId, note) {
       comment: t.comment,
       note: note,
     };
-    appendLog_(t, '返却', { start: '', due: t.due, note: joinNote_(note, t.comment) });
+    appendLog_(t, '返却', { start: '', due: t.due, note: joinNote_(note, t.comment), device: opt.force ? (deviceId || t.device) : deviceId });
     t.status = STATUS_FREE;
     t.user = '';
     t.email = '';
     t.due = '';
     t.comment = '';
+    t.device = '';
     writeTool_(t);
     return t;
   });
@@ -525,6 +557,7 @@ function readTools_() {
       email: String(r[4] || '').trim(),
       due: normYmd_(r[5]) || '',
       comment: String(r[6] || '').trim(),
+      device: String(r[7] || '').trim(),
     });
   }
   return out;
@@ -537,8 +570,8 @@ function findTool_(toolId) {
 }
 
 function writeTool_(t) {
-  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 7)
-    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '']]);
+  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 8)
+    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '', t.device || '']]);
 }
 
 function nextToolId_() {
@@ -583,7 +616,7 @@ function migrateToolIds() {
 function appendLog_(t, op, opt) {
   opt = opt || {};
   getSheet_(SHEET_LOG).appendRow([
-    new Date(), t.id, t.name, t.user, t.email, opt.start || '', opt.due || '', op, opt.note || '',
+    new Date(), t.id, t.name, t.user, t.email, opt.start || '', opt.due || '', op, opt.note || '', opt.device !== undefined ? opt.device : (t.device || ''),
   ]);
 }
 
@@ -604,6 +637,7 @@ function readRecentLogs_(n) {
     due: normYmd_(r[6]) || String(r[6] || ''),
     op: String(r[7] || ''),
     note: String(r[8] || ''),
+    device: String(r[9] || ''),
   }));
 }
 
@@ -648,10 +682,11 @@ function getAppUrl_() {
 // 画面に返すデータ形
 // ---------------------------------------------------------------------------
 
-/** 一般利用者向け（メールアドレスは含めない） */
-function publicTool_(t) {
+/** 一般利用者向け（メールアドレス・端末IDそのものは含めない）。deviceId を渡すと canReturn を判定する */
+function publicTool_(t, deviceId) {
   const today = today_();
   const inUse = t.status === STATUS_USED;
+  const dev = normDevice_(deviceId);
   return {
     id: t.id,
     name: t.name,
@@ -662,6 +697,8 @@ function publicTool_(t) {
     dueLabel: inUse ? fmtMd_(t.due) : '',
     overdue: inUse && !!t.due && t.due < today,
     comment: inUse ? (t.comment || '') : '',
+    // 端末IDが未記録（管理者代理・旧データ）なら誰でも返却可。記録があれば一致した端末のみ
+    canReturn: inUse && (!t.device || t.device === dev),
   };
 }
 
@@ -669,6 +706,7 @@ function publicTool_(t) {
 function fullTool_(t) {
   const p = publicTool_(t);
   p.email = t.status === STATUS_USED ? t.email : '';
+  p.device = t.status === STATUS_USED ? (t.device || '') : '';
   p.qrUrl = getAppUrl_() + '?tool=' + encodeURIComponent(t.id);
   return p;
 }
@@ -712,6 +750,12 @@ function fmtMd_(ymd) {
   const n = normYmd_(ymd);
   if (!n) return String(ymd || '');
   return Utilities.formatDate(new Date(ymdToUtc_(n)), 'UTC', 'M/d');
+}
+
+/** 端末IDを正規化（英数字のみ・最大 64 文字）。不正な値は空にする */
+function normDevice_(v) {
+  const s = String(v || '').trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : '';
 }
 
 /** ログの備考欄に「操作元」とコメントを併記する */

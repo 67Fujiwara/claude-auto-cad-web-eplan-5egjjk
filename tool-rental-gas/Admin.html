@@ -1,7 +1,7 @@
 <!--
   Admin.html — 管理画面（?view=admin）
   最初に admin_pin を要求（通ったら sessionStorage に保持）。
-  機能: 工具の追加 / 編集 / 削除、QR 用 URL（コピー・QR 画像）、QR 一括印刷、設定編集、直近50件のログ。
+  機能: 工具の追加 / 編集 / 削除、代理の貸出・返却（端末に関係なく可能）、QR 用 URL（コピー・QR 画像）、QR 一括印刷、設定編集、直近50件のログ。
   QR 描画は CDN の qrcode.js（読み込めなくても URL は必ず表示）。
 -->
 <!DOCTYPE html>
@@ -88,6 +88,8 @@
 
 <script>
   const PIN_KEY = 'tr_admin_pin';
+  const TODAY = <?!= toJson_(data.today) ?>;
+  const DEFAULT_DUE = <?!= toJson_(data.defaultDue) ?>;
   let PIN = storeGet('session', PIN_KEY) || '';
   let DATA = null;
 
@@ -144,6 +146,15 @@
       const status = t.inUse
         ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
         : '<span class="badge free">空き</span>';
+      const rentRow = t.inUse
+        ? '<div class="row"><button type="button" class="btn small gray" data-act="return" data-name="' + esc(t.name) + '">返却（管理者）</button></div>'
+        : '<div class="row"><button type="button" class="btn small green" data-act="rentToggle">借りる（代理）</button></div>' +
+          '<div class="row rentBox" hidden>' +
+          '<input type="text" class="rentName" placeholder="使用者名">' +
+          '<input type="date" class="rentDue" min="' + esc(TODAY) + '" value="' + esc(DEFAULT_DUE) + '">' +
+          '<input type="text" class="rentComment" placeholder="コメント（任意）" maxlength="200">' +
+          '<button type="button" class="btn small green" data-act="rent">確定</button>' +
+          '</div>';
       return '<div class="card" data-id="' + esc(t.id) + '">' +
         '<div class="head"><b>' + esc(t.id) + '</b> ' + status + '</div>' +
         '<div class="row">' +
@@ -153,6 +164,8 @@
         '</div>' +
         (t.inUse && t.comment ? '<div class="muted" style="margin-top:6px">' + esc(t.comment) + '</div>' : '') +
         (t.inUse && t.email ? '<div class="muted" style="margin-top:6px">' + esc(t.email) + '</div>' : '') +
+        (t.inUse ? '<div class="muted" style="margin-top:6px">端末ID: ' + (t.device ? esc(t.device.slice(0, 8)) + '…' : '（なし・誰でも返却可）') + '</div>' : '') +
+        rentRow +
         '<div class="row"><div class="qr" data-url="' + esc(t.qrUrl) + '"></div>' +
         '<div style="flex:1;min-width:160px"><div class="mono">' + esc(t.qrUrl) + '</div>' +
         '<button type="button" class="btn small gray" data-act="copy" style="margin-top:6px">URLをコピー</button></div></div>' +
@@ -175,7 +188,28 @@
     const card = b.closest('.card');
     const id = card.dataset.id;
     const act = b.dataset.act;
+    if (act === 'rentToggle') {
+      const box = card.querySelector('.rentBox');
+      box.hidden = !box.hidden;
+      return;
+    }
     try {
+      if (act === 'return') {
+        if (!confirm(b.dataset.name + ' を返却にしますか？（端末に関係なく返却します）')) return;
+        await call('adminReturnTool', PIN, id);
+        showMsg('msg', id + ' を返却にしました', 'ok');
+        await load();
+        return;
+      }
+      if (act === 'rent') {
+        const name = card.querySelector('.rentName').value;
+        const due = card.querySelector('.rentDue').value;
+        const comment = card.querySelector('.rentComment').value;
+        const t = await call('adminRentTool', PIN, id, name, due, comment);
+        showMsg('msg', t.name + ' を ' + esc(name) + ' さんに ' + fmtMd(t.due) + ' まで貸しました', 'ok');
+        await load();
+        return;
+      }
       if (act === 'copy') {
         const ok = await copyText(card.querySelector('.qr').dataset.url);
         showMsg('msg', ok ? 'コピーしました' : 'コピーできませんでした。URL を長押しして選択してください', ok ? 'ok' : 'err');

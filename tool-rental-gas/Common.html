@@ -79,4 +79,20 @@
   function storeGet(kind, key) { try { return window[kind + 'Storage'].getItem(key); } catch (e) { return null; } }
   function storeSet(kind, key, val) { try { window[kind + 'Storage'].setItem(key, val); } catch (e) {} }
   function storeDel(kind, key) { try { window[kind + 'Storage'].removeItem(key); } catch (e) {} }
+  // 端末の擬似ID。初回に乱数で作って localStorage に保存し、以後の申請・返却に付ける。
+  // localStorage が使えない環境ではページを開くたびに変わる（その場合の返却は管理画面から）
+  let __deviceId = null;
+  function deviceId() {
+    if (__deviceId) return __deviceId;
+    let id = storeGet('local', 'tr_device');
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id || '')) {
+      let bytes;
+      try { bytes = Array.from(crypto.getRandomValues(new Uint8Array(8))); }
+      catch (e) { bytes = Array.from({ length: 8 }, () => Math.floor(Math.random() * 256)); }
+      id = bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+      storeSet('local', 'tr_device', id);
+    }
+    __deviceId = id;
+    return id;
+  }
 </script>

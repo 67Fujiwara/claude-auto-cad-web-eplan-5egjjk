@@ -2,6 +2,7 @@
   List.html — 一覧画面（?view=list）
   工具ごとに1カード。空き＝緑、使用中＝赤「〇〇さん 9/20まで」、超過＝濃い赤「超過」バッジ。
   使用中の工具には「返却」（確認ダイアログ付き）と「延長」（+3日 / +7日 / 日付指定）。
+  「返却」は借りたときと同じ端末（localStorage の端末ID）でだけ表示・実行できる。
 -->
 <!DOCTYPE html>
 <html>
@@ -26,7 +27,7 @@
 
   async function loadList() {
     try {
-      const r = await call('apiListTools');
+      const r = await call('apiListTools', deviceId());
       TODAY = r.today;
       renderList(r.tools);
     } catch (e) {
@@ -44,9 +45,12 @@
       const badge = t.inUse
         ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
         : '<span class="badge free">空き</span>';
+      const returnBtn = t.canReturn
+        ? '<button class="btn small gray" data-act="return" data-id="' + esc(t.id) + '" data-name="' + esc(t.name) + '">返却</button>'
+        : '<span class="muted" style="align-self:center">返却は借りた端末から</span>';
       const actions = t.inUse ? (
         '<div class="row">' +
-        '<button class="btn small gray" data-act="return" data-id="' + esc(t.id) + '" data-name="' + esc(t.name) + '">返却</button>' +
+        returnBtn +
         '<button class="btn small" data-act="extend" data-days="3" data-id="' + esc(t.id) + '">+3日</button>' +
         '<button class="btn small" data-act="extend" data-days="7" data-id="' + esc(t.id) + '">+7日</button>' +
         '<button class="btn small" data-act="pick" data-id="' + esc(t.id) + '">日付指定</button>' +
@@ -81,7 +85,7 @@
       if (act === 'return') {
         if (!confirm(b.dataset.name + ' を返却しますか？')) return;
         setBusy(true);
-        const t = await call('apiReturn', id);
+        const t = await call('apiReturn', id, deviceId());
         showMsg('msg', t.name + ' を返却しました', 'ok');
       } else if (act === 'extend') {
         setBusy(true);
