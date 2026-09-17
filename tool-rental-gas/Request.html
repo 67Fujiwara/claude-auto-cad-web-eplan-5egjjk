@@ -1,6 +1,6 @@
 <!--
   Request.html — 貸出申請画面（?tool=T001）
-  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・返却日を入力して「依頼」。
+  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・返却日を入力して「借りる」。
   名前は localStorage に保存して次回自動入力する。（社内利用のためメール欄は無し）
 -->
 <!DOCTYPE html>
@@ -38,7 +38,7 @@
       <label for="due">返却日</label>
       <input type="date" id="due" min="<?= data.today ?>" value="<?= data.defaultDue ?>" required>
       <div id="msg"></div>
-      <button type="submit" id="submit" class="btn full">依頼</button>
+      <button type="submit" id="submit" class="btn full">借りる</button>
     </form>
     <div id="done" class="card" hidden>
       <div class="msg ok" id="doneText"></div>
