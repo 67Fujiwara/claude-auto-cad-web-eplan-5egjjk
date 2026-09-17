@@ -55,7 +55,7 @@ function setup() {
   const existing = getSettings();
   const defaults = {
     manager_type: 'human',
-    manager_email: Session.getEffectiveUser().getEmail() || '',
+    manager_email: '', // 管理画面または設定シートで入力する
     app_url: '',
     admin_pin: randomPin_(),
     claude_api_key: '',
