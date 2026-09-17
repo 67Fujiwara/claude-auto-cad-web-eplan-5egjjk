@@ -1127,10 +1127,7 @@ function partsSVG(page) {
   }
   const heads = ["№", "部品名", "型式", "メーカー", "個数"];
   const nR = rows.length;
-  // 行の下地 (見本と同じ薄緑)。見出し行は少し濃く
-  out += `<rect x="${x0}" y="${top}" width="${w0}" height="${RH}" fill="#d8e8d0"/>`;
-  for (let r = 0; r < nR; r++)
-    out += `<rect x="${x0}" y="${top + RH * (r + 1)}" width="${w0}" height="${RH}" fill="#eaf4e4"/>`;
+  // 下地は塗らない (白のまま) — 罫線と文字だけの表
   // 罫線 (外形は太め)
   const yEnd = top + RH * (nR + 1);
   for (let r = 0; r <= nR + 1; r++) out += line(x0, top + RH * r, x0 + w0, top + RH * r);

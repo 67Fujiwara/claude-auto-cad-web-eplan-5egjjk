@@ -4,8 +4,8 @@
              先頭の № は捨てて振り直す。個数の空欄は 1。カンマ区切りも可
    ・pages  : 80 件 → 機器リストのページが 3 枚 (30/30/20) でき、名前と
              A 系列の図番が付き、書類ページ (仕様など) の後ろに並ぶ
-   ・render : 見本の体裁 — 見出し (№/部品名/型式/メーカー/個数)・薄緑の行・
-             件数表示。ページごとに受け持ちの行だけが出る
+   ・render : 見本の体裁 — 見出し (№/部品名/型式/メーカー/個数)・白地
+             (色は塗らない)・件数表示。ページごとに受け持ちの行だけが出る
    ・outPdf : 印刷用 SVG と DXF にも同じ内容が出る
    ・round  : ダイアログを開き直すと今の内容がタブ区切りで入っている
              (直して取り込み直せる・Excel へ貼り戻せる)
@@ -56,9 +56,11 @@ const R = await p.evaluate(async () => {
     heads: ["機器リスト", "部品名", "型式", "メーカー", "個数"].every(t => s1.includes(t)),
     total: s1.includes("全 80 件 (この頁 1〜30)"),
     row1: s1.includes("漏電遮断器") && s1.includes("NV32-SVF 2P 15A 30mA"),
-    fills1: (s1.match(/#eaf4e4/g) || []).length,
+    noFill: !/<rect [^>]*fill="#/.test(s1) && !/#(eaf4e4|d8e8d0)/.test(s1),
+    rows1: (s1.match(/MODEL-/g) || []).length,     // 3〜30 番 = 28 件 (+ 実名 2 件で 30 行)
+    last1: s1.includes("機器30") && !s1.includes("機器31"),
     p3total: s3.includes("全 80 件 (この頁 61〜80)"),
-    fills3: (s3.match(/#eaf4e4/g) || []).length,
+    rows3: (s3.match(/MODEL-/g) || []).length,
     p3rows: s3.includes("機器80") && !s3.includes("漏電遮断器"),
   };
   // ── 印刷 SVG / DXF ──
@@ -98,8 +100,8 @@ const checks = {
     R.pages.dwg.split(",").every(d => /^A/.test(d)) && R.pages.cur === true &&
     R.pages.beforeDrawing === true,
   render: R.render.heads === true && R.render.total === true && R.render.row1 === true &&
-    R.render.fills1 === 30 && R.render.p3total === true && R.render.fills3 === 20 &&
-    R.render.p3rows === true,
+    R.render.noFill === true && R.render.rows1 === 28 && R.render.last1 === true &&
+    R.render.p3total === true && R.render.rows3 === 20 && R.render.p3rows === true,
   outPdf: R.outPdf.svg === true && R.outPdf.dxf === true,
   toc: R.toc === 3,
   round: RT.head === "№\t部品名\t型式\tメーカー\t個数" && RT.hasModel === true &&
