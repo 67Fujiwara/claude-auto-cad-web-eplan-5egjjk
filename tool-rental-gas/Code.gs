@@ -29,8 +29,8 @@ const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', '
 const STATUS_FREE = '空き';
 const STATUS_USED = '使用中';
 
-/** tool_id の接頭辞（ID001, ID002 …）。変えるときはここだけ */
-const TOOL_ID_PREFIX = 'ID';
+/** tool_id の接頭辞（TOOL_ID001, TOOL_ID002 …）。変えるときはここだけ。端末側の ID は「端末ID」で別物 */
+const TOOL_ID_PREFIX = 'TOOL_ID';
 
 // ---------------------------------------------------------------------------
 // 初期化（エディタから手動で1回実行する）
@@ -134,13 +134,13 @@ function randomPin_() {
 
 /**
  * Web アプリの入口。
- *   ?tool=ID001                    申請画面
+ *   ?tool=TOOL_ID001                    申請画面
  *   ?view=list                     一覧画面（パラメータなしも一覧）
  *   ?view=admin                    管理画面
  *   ?view=print&pin=1234           QR 一括印刷
- *   ?action=return&tool=ID001      返却（メールリンク用）
- *   ?action=extend&tool=ID001&days=3        延長（+N日）
- *   ?action=extend&tool=ID001&date=2026-09-30  延長（日付指定）
+ *   ?action=return&tool=TOOL_ID001      返却（メールリンク用）
+ *   ?action=extend&tool=TOOL_ID001&days=3        延長（+N日）
+ *   ?action=extend&tool=TOOL_ID001&date=2026-09-30  延長（日付指定）
  */
 function doGet(e) {
   const p = (e && e.parameter) || {};
@@ -148,7 +148,7 @@ function doGet(e) {
     if (p.action) return handleAction_(p);
     if (p.view === 'admin') {
       const today = today_();
-      return render_('Admin', { today: today, defaultDue: addDays_(today, 7) }, '管理');
+      return render_('Admin', { today: today, defaultDue: today }, '管理');
     }
     if (p.view === 'print') {
       checkPin_(p.pin);
@@ -161,7 +161,7 @@ function doGet(e) {
         toolId: p.tool,
         tool: tool ? publicTool_(tool) : null,
         today: today,
-        defaultDue: addDays_(today, 7),
+        defaultDue: today, // 返却日の初期値は借りた日（当日返却が基本）
       }, '貸出申請');
     }
     return render_('List', {}, '工具一覧');
@@ -683,20 +683,20 @@ function writeTool_(t) {
 function nextToolId_() {
   let max = 0;
   readTools_().forEach(t => {
-    const m = /^[A-Za-z]+(\d+)$/.exec(t.id); // 旧形式 T001 も含めて最大番号を取る
+    const m = /^[A-Za-z_]+(\d+)$/.exec(t.id); // 旧形式 T001 / TOOL_ID001 も含めて最大番号を取る
     if (m) max = Math.max(max, Number(m[1]));
   });
   return TOOL_ID_PREFIX + String(max + 1).padStart(3, '0');
 }
 
 /**
- * 旧形式の tool_id（T001 など）を現在の接頭辞（ID001 など）に一括で書き換える。
+ * 旧形式の tool_id（T001 / TOOL_ID001 など）を現在の接頭辞（TOOL_ID001 など）に一括で書き換える。
  * 「工具」シートと「貸出ログ」シートの両方を直す。エディタから手動で1回実行する。
  * ※ 印刷済みの QR は旧 ID のままなので、実行後は QR を印刷し直すこと。
  */
 function migrateToolIds() {
   const conv = v => {
-    const m = /^([A-Za-z]+)(\d+)$/.exec(String(v || '').trim());
+    const m = /^([A-Za-z_]+)(\d+)$/.exec(String(v || '').trim());
     return (m && m[1] !== TOOL_ID_PREFIX) ? TOOL_ID_PREFIX + m[2] : null;
   };
   let count = 0;

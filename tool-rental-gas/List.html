@@ -156,7 +156,7 @@
     name.value = name.value || storeGet('local', 'tr_name') || '';
     const due = document.getElementById('rDue');
     due.min = TODAY;
-    if (!due.value) due.value = addDays(TODAY, 7);
+    if (!due.value) due.value = TODAY; // 初期値は借りた日
     showMsg('rentMsg', '');
     name.focus();
   }
