@@ -336,7 +336,46 @@ function checkPin_(pin) {
 // コア処理（貸出・返却・延長）
 // ---------------------------------------------------------------------------
 
-function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId) {
+/**
+ * 一覧画面から複数の工具をまとめて借りる。
+ * 1 件ずつ rentTool_ を通し、成功分だけをまとめて管理者に 1 通通知する。
+ * 戻り値: { ok: [借りられた工具], failed: [{ id, name, message }] }
+ */
+function apiRequestMany(toolIds, userName, due, comment, deviceId) {
+  const ids = Array.from(new Set((toolIds || []).map(v => String(v || '').trim()).filter(Boolean)));
+  if (!ids.length) throw new Error('工具を選択してください');
+  userName = String(userName || '').trim();
+  if (!userName) throw new Error('名前を入力してください');
+  const dueYmd = normYmd_(due);
+  if (!dueYmd) throw new Error('返却日を選んでください');
+  if (dueYmd < today_()) throw new Error('返却日は今日以降を選んでください');
+
+  const ok = [], failed = [];
+  ids.forEach(id => {
+    try {
+      ok.push(rentTool_(id, userName, '', dueYmd, '一覧画面', comment, deviceId, { skipNotify: true }));
+    } catch (err) {
+      const t = findTool_(id);
+      failed.push({ id: id, name: t ? t.name : id, message: err.message });
+    }
+  });
+  if (ok.length) {
+    safeNotify_({
+      type: 'request',
+      tool: { id: ok[0].id, name: ok[0].name },
+      tools: ok.map(t => ({ id: t.id, name: t.name })),
+      user: { name: userName, email: '' },
+      startDate: today_(),
+      dueDate: dueYmd,
+      comment: String(comment || '').trim().slice(0, 200),
+      note: '一覧画面',
+    });
+  }
+  return { ok: ok, failed: failed };
+}
+
+function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId, opt) {
+  opt = opt || {};
   userName = String(userName || '').trim();
   userEmail = String(userEmail || '').trim();
   if (!userName) throw new Error('名前を入力してください');
@@ -366,16 +405,18 @@ function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId) {
     return t;
   });
 
-  safeNotify_({
-    type: 'request',
-    tool: { id: result.id, name: result.name },
-    user: { name: userName, email: userEmail },
-    startDate: today,
-    dueDate: dueYmd,
-    comment: comment,
-    note: note,
-  });
-  return publicTool_(result);
+  if (!opt.skipNotify) {
+    safeNotify_({
+      type: 'request',
+      tool: { id: result.id, name: result.name },
+      user: { name: userName, email: userEmail },
+      startDate: today,
+      dueDate: dueYmd,
+      comment: comment,
+      note: note,
+    });
+  }
+  return publicTool_(result, deviceId);
 }
 
 /**

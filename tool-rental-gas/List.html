@@ -1,6 +1,8 @@
 <!--
   List.html — 一覧画面（?view=list）
   工具ごとに1カード。空き＝緑、使用中＝赤「〇〇さん 9/20まで」、超過＝濃い赤「超過」バッジ。
+  空きの工具には「選択」ボタン。押すと青い「選択中」になり、1 つでも選ぶと画面下に固定の「借りる」バーが出る。
+  「借りる」→ 名前・返却日・コメントを入れて「確定」で、選んだ工具をまとめて借りる（apiRequestMany）。
   使用中の工具には「返却」（確認ダイアログ付き）と「延長」（+3日 / +7日 / 日付指定）。
   「返却」は借りたときと同じ端末（localStorage の端末ID）でだけ表示・実行できる。
 -->
@@ -21,9 +23,38 @@
   <div id="msg"></div>
   <div id="cards" class="muted">読み込み中…</div>
 </div>
+
+<!-- 複数選択の「借りる」バー（1 つでも選ぶと表示。スクロールしても画面下に固定） -->
+<div id="bar" class="fixbar" hidden>
+  <div class="inner">
+    <div id="barSummary" class="head">
+      <div><b id="selCount">0</b> 件選択中</div>
+      <div class="row" style="margin:0">
+        <button type="button" class="btn small gray" id="clearSel">解除</button>
+        <button type="button" class="btn green" id="openRent">借りる</button>
+      </div>
+    </div>
+    <form id="rentForm" hidden>
+      <div class="muted" id="rentList"></div>
+      <label for="rName">名前</label>
+      <input type="text" id="rName" autocomplete="name" required>
+      <label for="rDue">返却日</label>
+      <input type="date" id="rDue" required>
+      <label for="rComment">コメント（任意）</label>
+      <input type="text" id="rComment" maxlength="200" placeholder="使用場所など">
+      <div id="rentMsg"></div>
+      <div class="row">
+        <button type="button" class="btn gray" id="cancelRent">やめる</button>
+        <button type="submit" class="btn green" id="submitRent" style="flex:1">確定</button>
+      </div>
+    </form>
+  </div>
+</div>
 <script>
   let TODAY = '';
   const cards = document.getElementById('cards');
+  const selected = new Set();      // 選択中の tool_id
+  const toolsById = {};            // 最新の一覧（id → tool）
 
   async function loadList() {
     try {
@@ -41,6 +72,10 @@
       return;
     }
     cards.className = '';
+    Object.keys(toolsById).forEach(k => delete toolsById[k]);
+    tools.forEach(t => { toolsById[t.id] = t; });
+    // 使用中になった工具は選択から外す
+    Array.from(selected).forEach(id => { if (!toolsById[id] || toolsById[id].inUse) selected.delete(id); });
     cards.innerHTML = tools.map(t => {
       const badge = t.inUse
         ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
@@ -60,7 +95,7 @@
         '<button class="btn small" data-act="extendDate" data-id="' + esc(t.id) + '">延長</button>' +
         '</div>'
       ) : (
-        '<div class="row"><a class="btn small green" href="' + esc(APP_URL) + '?tool=' + encodeURIComponent(t.id) + '" target="_top">借りる</a></div>'
+        '<div class="row">' + selectBtn(t.id) + '</div>'
       );
       const comment = t.comment ? '<div class="muted" style="margin-top:4px">' + esc(t.comment) + '</div>' : '';
       return '<div class="card">' +
@@ -69,13 +104,93 @@
         actions +
         '</div>';
     }).join('');
+    updateBar();
   }
+
+  // 選択ボタン: 未選択=灰色「選択」、選択中=青「選択中」
+  function selectBtn(id) {
+    const on = selected.has(id);
+    return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="select" data-id="' + esc(id) + '">' + (on ? '選択中' : '選択') + '</button>';
+  }
+  function toggleSelect(id, btn) {
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+    btn.outerHTML = selectBtn(id);
+    updateBar();
+  }
+  function updateBar() {
+    const bar = document.getElementById('bar');
+    const n = selected.size;
+    document.getElementById('selCount').textContent = n;
+    bar.hidden = n === 0;
+    document.body.classList.toggle('has-fixbar', n > 0);
+    if (n === 0) closeRentForm();
+    document.getElementById('rentList').textContent = Array.from(selected).map(id => toolsById[id] ? toolsById[id].name : id).join('、');
+  }
+  function openRentForm() {
+    document.getElementById('barSummary').hidden = true;
+    const f = document.getElementById('rentForm');
+    f.hidden = false;
+    const name = document.getElementById('rName');
+    name.value = name.value || storeGet('local', 'tr_name') || '';
+    const due = document.getElementById('rDue');
+    due.min = TODAY;
+    if (!due.value) due.value = addDays(TODAY, 7);
+    showMsg('rentMsg', '');
+    name.focus();
+  }
+  function closeRentForm() {
+    document.getElementById('barSummary').hidden = false;
+    document.getElementById('rentForm').hidden = true;
+  }
+  function addDays(ymd, days) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+    if (!m) return '';
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + days));
+    return d.toISOString().slice(0, 10);
+  }
+  document.getElementById('openRent').addEventListener('click', openRentForm);
+  document.getElementById('cancelRent').addEventListener('click', closeRentForm);
+  document.getElementById('clearSel').addEventListener('click', function () {
+    selected.clear();
+    cards.querySelectorAll('button[data-act="select"]').forEach(b => { b.outerHTML = selectBtn(b.dataset.id); });
+    updateBar();
+  });
+  document.getElementById('rentForm').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('submitRent');
+    const name = document.getElementById('rName').value.trim();
+    const due = document.getElementById('rDue').value;
+    const comment = document.getElementById('rComment').value;
+    btn.disabled = true;
+    showMsg('rentMsg', '送信中…', 'info');
+    storeSet('local', 'tr_name', name);
+    try {
+      const r = await call('apiRequestMany', Array.from(selected), name, due, comment, deviceId());
+      const okNames = r.ok.map(t => t.name).join('、');
+      let text = r.ok.length ? okNames + ' を ' + fmtMd(due) + ' まで借りました' : '';
+      if (r.failed.length) text += (text ? '。' : '') + '借りられなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
+      showMsg('msg', text, r.failed.length ? 'err' : 'ok');
+      selected.clear();
+      document.getElementById('rComment').value = '';
+      updateBar();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      loadList();
+    } catch (e) {
+      showMsg('rentMsg', e.message || String(e), 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   cards.addEventListener('click', async function (ev) {
     const b = ev.target.closest('button[data-act]');
     if (!b) return;
     const id = b.dataset.id;
     const act = b.dataset.act;
+    if (act === 'select') {
+      toggleSelect(id, b);
+      return;
+    }
     if (act === 'pick') {
       const box = document.getElementById('pick-' + id);
       box.hidden = !box.hidden;

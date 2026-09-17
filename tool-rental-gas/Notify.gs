@@ -9,6 +9,7 @@
  *   {
  *     type:        'request' | 'overdue' | 'extend' | 'return',
  *     tool:        { id, name },
+ *     tools:       [{ id, name }, ...],      // まとめ貸出のとき（request のみ）。tool は先頭と同じ
  *     user:        { name, email },
  *     dueDate:     'yyyy-MM-dd',            // 返却日（延長後は新しい返却日）
  *     startDate:   'yyyy-MM-dd',            // request のみ
@@ -71,6 +72,13 @@ function buildManagerMail_(event) {
   let subject, lines;
   switch (event.type) {
     case 'request':
+      if (event.tools && event.tools.length > 1) {
+        subject = '【工具貸出】' + u.name + ' さんが ' + event.tools.length + ' 点借りました（返却 ' + fmtMd_(event.dueDate) + '）';
+        lines = [u.name + ' さんが工具をまとめて借りました。', ''];
+        event.tools.forEach(x => lines.push('・' + x.name + '（' + x.id + '）'));
+        lines.push('', '使用者: ' + u.name, '開始日: ' + (event.startDate || ''), '返却日: ' + event.dueDate, 'コメント: ' + (event.comment || '（なし）'));
+        break;
+      }
       subject = '【工具貸出】' + t.name + ' を ' + u.name + ' さんが借りました（返却 ' + fmtMd_(event.dueDate) + '）';
       lines = [
         u.name + ' さんが工具を借りました。',
@@ -170,7 +178,9 @@ function describeEvent_(event) {
   const typeLabel = { request: '貸出申請', overdue: '返却日超過', extend: '延長', return: '返却' }[event.type] || event.type;
   const parts = [
     '種別: ' + typeLabel,
-    '工具: ' + t.name + '（' + t.id + '）',
+    (event.tools && event.tools.length > 1)
+      ? '工具: ' + event.tools.map(x => x.name + '（' + x.id + '）').join('、')
+      : '工具: ' + t.name + '（' + t.id + '）',
     '使用者: ' + (u.name || '') + (u.email ? ' <' + u.email + '>' : ''),
   ];
   if (event.startDate) parts.push('開始日: ' + event.startDate);
