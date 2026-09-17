@@ -28,6 +28,9 @@ const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', '
 const STATUS_FREE = '空き';
 const STATUS_USED = '使用中';
 
+/** tool_id の接頭辞（ID001, ID002 …）。変えるときはここだけ */
+const TOOL_ID_PREFIX = 'ID';
+
 // ---------------------------------------------------------------------------
 // 初期化（エディタから手動で1回実行する）
 // ---------------------------------------------------------------------------
@@ -101,13 +104,13 @@ function randomPin_() {
 
 /**
  * Web アプリの入口。
- *   ?tool=T001                     申請画面
+ *   ?tool=ID001                    申請画面
  *   ?view=list                     一覧画面（パラメータなしも一覧）
  *   ?view=admin                    管理画面
  *   ?view=print&pin=1234           QR 一括印刷
- *   ?action=return&tool=T001       返却（メールリンク用）
- *   ?action=extend&tool=T001&days=3        延長（+N日）
- *   ?action=extend&tool=T001&date=2026-09-30  延長（日付指定）
+ *   ?action=return&tool=ID001      返却（メールリンク用）
+ *   ?action=extend&tool=ID001&days=3        延長（+N日）
+ *   ?action=extend&tool=ID001&date=2026-09-30  延長（日付指定）
  */
 function doGet(e) {
   const p = (e && e.parameter) || {};
@@ -516,10 +519,40 @@ function writeTool_(t) {
 function nextToolId_() {
   let max = 0;
   readTools_().forEach(t => {
-    const m = /^T(\d+)$/.exec(t.id);
+    const m = /^[A-Za-z]+(\d+)$/.exec(t.id); // 旧形式 T001 も含めて最大番号を取る
     if (m) max = Math.max(max, Number(m[1]));
   });
-  return 'T' + String(max + 1).padStart(3, '0');
+  return TOOL_ID_PREFIX + String(max + 1).padStart(3, '0');
+}
+
+/**
+ * 旧形式の tool_id（T001 など）を現在の接頭辞（ID001 など）に一括で書き換える。
+ * 「工具」シートと「貸出ログ」シートの両方を直す。エディタから手動で1回実行する。
+ * ※ 印刷済みの QR は旧 ID のままなので、実行後は QR を印刷し直すこと。
+ */
+function migrateToolIds() {
+  const conv = v => {
+    const m = /^([A-Za-z]+)(\d+)$/.exec(String(v || '').trim());
+    return (m && m[1] !== TOOL_ID_PREFIX) ? TOOL_ID_PREFIX + m[2] : null;
+  };
+  let count = 0;
+  withLock_(() => {
+    [[SHEET_TOOLS, 1], [SHEET_LOG, 2]].forEach(([name, col]) => {
+      const sh = getSheet_(name);
+      const last = sh.getLastRow();
+      if (last < 2) return;
+      const range = sh.getRange(2, col, last - 1, 1);
+      const values = range.getValues();
+      let changed = false;
+      values.forEach(r => {
+        const n = conv(r[0]);
+        if (n) { r[0] = n; changed = true; count++; }
+      });
+      if (changed) range.setValues(values);
+    });
+  });
+  Logger.log('migrateToolIds: ' + count + ' 件を ' + TOOL_ID_PREFIX + '### 形式に変更しました');
+  return count;
 }
 
 function appendLog_(t, op, opt) {
