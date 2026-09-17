@@ -21,9 +21,9 @@ const SHEET_TOOLS = '工具';
 const SHEET_LOG = '貸出ログ';
 const SHEET_SETTINGS = '設定';
 
-const TOOL_HEADERS = ['tool_id', '工具名', '状態', '使用者名', '使用者メール', '返却日'];
+const TOOL_HEADERS = ['tool_id', '工具名', '状態', '使用者名', '使用者メール', '返却日', 'コメント'];
 const LOG_HEADERS = ['日時', 'tool_id', '工具名', '使用者名', '使用者メール', '開始日', '返却日', '操作', '備考'];
-const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', 'claude_api_key'];
+const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', 'claude_api_key', 'notify_on_request'];
 
 const STATUS_FREE = '空き';
 const STATUS_USED = '使用中';
@@ -43,8 +43,9 @@ function setup() {
   ss.setSpreadsheetTimeZone(TZ);
 
   const tools = getOrCreateSheet_(ss, SHEET_TOOLS, TOOL_HEADERS);
-  tools.getRange('A:F').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
+  tools.getRange('A:G').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
   tools.setColumnWidth(2, 200);
+  tools.setColumnWidth(7, 300);
 
   const log = getOrCreateSheet_(ss, SHEET_LOG, LOG_HEADERS);
   log.getRange('A:A').setNumberFormat('yyyy/MM/dd HH:mm:ss');
@@ -62,6 +63,7 @@ function setup() {
     app_url: '',
     admin_pin: randomPin_(),
     claude_api_key: '',
+    notify_on_request: 'on', // 貸出時に管理者へ通知するか（on / off）。管理画面のチェックで切り替え
   };
   SETTING_KEYS.forEach(key => {
     if (!(key in existing)) settings.appendRow([key, defaults[key]]);
@@ -88,6 +90,11 @@ function getOrCreateSheet_(ss, name, headers) {
   const first = sh.getRange(1, 1, 1, headers.length).getValues()[0];
   if (first.every(v => v === '')) {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  } else {
+    // 既存シートに列が増えた場合（例: コメント列）は見出しだけ補う
+    headers.forEach((h, i) => {
+      if (String(first[i] || '').trim() === '') sh.getRange(1, i + 1, 1, 1).setValue(h);
+    });
   }
   sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
   sh.setFrozenRows(1);
@@ -191,9 +198,9 @@ function apiListTools() {
   return { today: today_(), tools: readTools_().map(publicTool_) };
 }
 
-/** 申請画面から。メール欄は無いので userEmail は空で呼ばれる */
-function apiRequest(toolId, userName, userEmail, due) {
-  return rentTool_(toolId, userName, userEmail || '', due, '申請画面');
+/** 申請画面から。メール欄は無いので userEmail は空で呼ばれる。comment は任意 */
+function apiRequest(toolId, userName, userEmail, due, comment) {
+  return rentTool_(toolId, userName, userEmail || '', due, '申請画面', comment);
 }
 
 function apiReturn(toolId) {
@@ -223,6 +230,7 @@ function adminGetData(pin) {
       manager_email: s.manager_email || '',
       admin_pin: s.admin_pin || '',
       app_url: s.app_url || '',
+      notify_on_request: s.notify_on_request !== 'off',
       claude_api_key_set: !!s.claude_api_key,
     },
     logs: readRecentLogs_(50),
@@ -235,8 +243,8 @@ function adminAddTool(pin, name) {
   if (!name) throw new Error('工具名を入力してください');
   return withLock_(() => {
     const id = nextToolId_();
-    getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '']);
-    return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '' });
+    getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '']);
+    return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '' });
   });
 }
 
@@ -285,8 +293,17 @@ function adminSaveSettings(pin, patch) {
   if ('app_url' in patch) {
     setSetting_('app_url', String(patch.app_url || '').trim());
   }
+  if ('notify_on_request' in patch) {
+    setSetting_('notify_on_request', patch.notify_on_request ? 'on' : 'off');
+  }
   const s = getSettings();
-  return { manager_type: s.manager_type, manager_email: s.manager_email, admin_pin: s.admin_pin, app_url: s.app_url };
+  return {
+    manager_type: s.manager_type,
+    manager_email: s.manager_email,
+    admin_pin: s.admin_pin,
+    app_url: s.app_url,
+    notify_on_request: s.notify_on_request !== 'off',
+  };
 }
 
 function checkPin_(pin) {
@@ -300,12 +317,13 @@ function checkPin_(pin) {
 // コア処理（貸出・返却・延長）
 // ---------------------------------------------------------------------------
 
-function rentTool_(toolId, userName, userEmail, due, note) {
+function rentTool_(toolId, userName, userEmail, due, note, comment) {
   userName = String(userName || '').trim();
   userEmail = String(userEmail || '').trim();
   if (!userName) throw new Error('名前を入力してください');
   // メールは任意（社内運用のため申請画面には入力欄がない）。入っていれば形式だけ確認する
   if (userEmail && !isEmail_(userEmail)) throw new Error('メールアドレスの形式が正しくありません');
+  comment = String(comment || '').trim().slice(0, 200);
   const dueYmd = normYmd_(due);
   if (!dueYmd) throw new Error('返却日を選んでください');
   const today = today_();
@@ -321,8 +339,9 @@ function rentTool_(toolId, userName, userEmail, due, note) {
     t.user = userName;
     t.email = userEmail;
     t.due = dueYmd;
+    t.comment = comment;
     writeTool_(t);
-    appendLog_(t, '貸出', { start: today, due: dueYmd, note: note });
+    appendLog_(t, '貸出', { start: today, due: dueYmd, note: joinNote_(note, comment) });
     return t;
   });
 
@@ -332,6 +351,7 @@ function rentTool_(toolId, userName, userEmail, due, note) {
     user: { name: userName, email: userEmail },
     startDate: today,
     dueDate: dueYmd,
+    comment: comment,
     note: note,
   });
   return publicTool_(result);
@@ -349,13 +369,15 @@ function returnTool_(toolId, note) {
       user: { name: t.user, email: t.email },
       dueDate: t.due,
       returnDate: today_(),
+      comment: t.comment,
       note: note,
     };
-    appendLog_(t, '返却', { start: '', due: t.due, note: note });
+    appendLog_(t, '返却', { start: '', due: t.due, note: joinNote_(note, t.comment) });
     t.status = STATUS_FREE;
     t.user = '';
     t.email = '';
     t.due = '';
+    t.comment = '';
     writeTool_(t);
     return t;
   });
@@ -398,6 +420,7 @@ function extendTool_(toolId, opt, note) {
       user: { name: t.user, email: t.email },
       oldDueDate: oldDue,
       dueDate: newDue,
+      comment: t.comment,
       note: note,
     };
     return t;
@@ -445,6 +468,7 @@ function dailyCheck() {
       user: { name: t.user, email: t.email },
       dueDate: t.due,
       overdueDays: diffDays_(today, t.due),
+      comment: t.comment,
       links: buildLinks_(t.id),
     };
     // 使用者メールがある場合だけ本人にも催促する（申請画面にはメール欄がないので通常は管理者のみ）
@@ -500,6 +524,7 @@ function readTools_() {
       user: String(r[3] || '').trim(),
       email: String(r[4] || '').trim(),
       due: normYmd_(r[5]) || '',
+      comment: String(r[6] || '').trim(),
     });
   }
   return out;
@@ -512,8 +537,8 @@ function findTool_(toolId) {
 }
 
 function writeTool_(t) {
-  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 6)
-    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due]]);
+  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 7)
+    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '']]);
 }
 
 function nextToolId_() {
@@ -636,6 +661,7 @@ function publicTool_(t) {
     due: inUse ? t.due : '',
     dueLabel: inUse ? fmtMd_(t.due) : '',
     overdue: inUse && !!t.due && t.due < today,
+    comment: inUse ? (t.comment || '') : '',
   };
 }
 
@@ -686,6 +712,11 @@ function fmtMd_(ymd) {
   const n = normYmd_(ymd);
   if (!n) return String(ymd || '');
   return Utilities.formatDate(new Date(ymdToUtc_(n)), 'UTC', 'M/d');
+}
+
+/** ログの備考欄に「操作元」とコメントを併記する */
+function joinNote_(note, comment) {
+  return comment ? (note ? note + ' / ' + comment : comment) : (note || '');
 }
 
 function isEmail_(s) {

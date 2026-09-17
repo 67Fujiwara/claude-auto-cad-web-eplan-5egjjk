@@ -1,6 +1,6 @@
 <!--
   Request.html — 貸出申請画面（?tool=ID001）
-  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・返却日を入力して「借りる」。
+  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・返却日・コメント（任意）を入力して「借りる」。
   名前は localStorage に保存して次回自動入力する。（社内利用のためメール欄は無し）
 -->
 <!DOCTYPE html>
@@ -26,6 +26,7 @@
       <span class="badge used">使用中</span>
       <? if (data.tool.overdue) { ?><span class="badge over">超過</span><? } ?>
       <div style="margin-top:8px"><?= data.tool.user ?>さんが <?= data.tool.dueLabel ?> まで使用中</div>
+      <? if (data.tool.comment) { ?><div class="muted" style="margin-top:4px"><?= data.tool.comment ?></div><? } ?>
     </div>
     <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
   <? } else { ?>
@@ -37,6 +38,8 @@
       <div><?= data.today ?>（今日）</div>
       <label for="due">返却日</label>
       <input type="date" id="due" min="<?= data.today ?>" value="<?= data.defaultDue ?>" required>
+      <label for="comment">コメント（任意）</label>
+      <input type="text" id="comment" maxlength="200" placeholder="使用場所など">
       <div id="msg"></div>
       <button type="submit" id="submit" class="btn full">借りる</button>
     </form>
@@ -54,6 +57,7 @@
     if (!form) return;
     const nameEl = document.getElementById('name');
     const dueEl = document.getElementById('due');
+    const commentEl = document.getElementById('comment');
     const btn = document.getElementById('submit');
 
     // 前回の入力を復元
@@ -65,7 +69,7 @@
       showMsg('msg', '送信中…', 'info');
       storeSet('local', 'tr_name', nameEl.value.trim());
       try {
-        const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value);
+        const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value, commentEl.value);
         form.hidden = true;
         document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。';
         document.getElementById('done').hidden = false;

@@ -52,6 +52,11 @@
       </div>
       <div class="muted" id="aiNote" style="margin-top:6px"></div>
 
+      <label style="margin-top:14px">
+        <input type="checkbox" id="notifyOnRequest"> 貸出時に管理者へメールを送る
+      </label>
+      <div class="muted">オフにしても、返却日超過・延長・返却の通知は送られます</div>
+
       <label for="managerEmail">管理者メール</label>
       <div class="row">
         <input type="email" id="managerEmail">
@@ -146,7 +151,8 @@
         '<button type="button" class="btn small" data-act="save">保存</button>' +
         '<button type="button" class="btn small red" data-act="del"' + (t.inUse ? ' disabled' : '') + '>削除</button>' +
         '</div>' +
-        (t.inUse ? '<div class="muted" style="margin-top:6px">' + esc(t.email) + '</div>' : '') +
+        (t.inUse && t.comment ? '<div class="muted" style="margin-top:6px">' + esc(t.comment) + '</div>' : '') +
+        (t.inUse && t.email ? '<div class="muted" style="margin-top:6px">' + esc(t.email) + '</div>' : '') +
         '<div class="row"><div class="qr" data-url="' + esc(t.qrUrl) + '"></div>' +
         '<div style="flex:1;min-width:160px"><div class="mono">' + esc(t.qrUrl) + '</div>' +
         '<button type="button" class="btn small gray" data-act="copy" style="margin-top:6px">URLをコピー</button></div></div>' +
@@ -232,6 +238,7 @@
     document.getElementById('aiNote').textContent = s.manager_type === 'ai'
       ? (s.claude_api_key_set ? '通知は AI（Claude）が処理します' : 'claude_api_key が未設定のため、実際にはメール通知になります（設定シートで入力）')
       : '通知は管理者メールに送ります';
+    document.getElementById('notifyOnRequest').checked = s.notify_on_request;
     document.getElementById('managerEmail').value = s.manager_email;
     document.getElementById('newPin').value = s.admin_pin;
     document.getElementById('appUrlInput').value = s.app_url;
@@ -249,6 +256,9 @@
   }
   document.getElementById('typeHuman').addEventListener('click', () => saveSettings({ manager_type: 'human' }, '管理者を human にしました'));
   document.getElementById('typeAi').addEventListener('click', () => saveSettings({ manager_type: 'ai' }, '管理者を ai にしました'));
+  document.getElementById('notifyOnRequest').addEventListener('change', function () {
+    saveSettings({ notify_on_request: this.checked }, this.checked ? '貸出時にメールを送ります' : '貸出時のメールを止めました');
+  });
   document.getElementById('saveEmail').addEventListener('click', () => saveSettings({ manager_email: document.getElementById('managerEmail').value }, '管理者メールを保存しました'));
   document.getElementById('savePin').addEventListener('click', () => saveSettings({ admin_pin: document.getElementById('newPin').value }, 'PIN を変更しました'));
   document.getElementById('saveUrl').addEventListener('click', () => saveSettings({ app_url: document.getElementById('appUrlInput').value }, 'app_url を保存しました'));

@@ -58,8 +58,10 @@
       ) : (
         '<div class="row"><a class="btn small green" href="' + esc(APP_URL) + '?tool=' + encodeURIComponent(t.id) + '" target="_top">借りる</a></div>'
       );
+      const comment = t.comment ? '<div class="muted" style="margin-top:4px">' + esc(t.comment) + '</div>' : '';
       return '<div class="card">' +
         '<div class="head"><div><b>' + esc(t.name) + '</b> <span class="muted">' + esc(t.id) + '</span></div><div>' + badge + '</div></div>' +
+        comment +
         actions +
         '</div>';
     }).join('');

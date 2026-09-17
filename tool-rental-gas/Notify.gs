@@ -15,6 +15,8 @@
  *     oldDueDate:  'yyyy-MM-dd',            // extend のみ
  *     returnDate:  'yyyy-MM-dd',            // return のみ
  *     overdueDays: 3,                       // overdue のみ
+ *     comment:     '3階の現場で使用',        // 申請時のコメント（任意・空のことがある）
+ *     comment:     '3階の現場で使用',        // 申請時のコメント（任意・空のことがある）
  *     note:        '申請画面' など,
  *     links:       { request, list, return, extend3, extend7 }  // 未設定なら自動補完
  *   }
@@ -28,6 +30,14 @@
 function notifyManager(event) {
   if (!event || !event.type || !event.tool) throw new Error('notifyManager: event が不正です');
   const settings = getSettings();
+
+  // 貸出（request）の通知は設定シート notify_on_request = 'off' でオフにできる。
+  // 返却日超過（overdue）・延長・返却は常に通知する。
+  if (event.type === 'request' && settings.notify_on_request === 'off') {
+    Logger.log('notify_on_request=off のため貸出通知をスキップ: ' + event.tool.id);
+    return;
+  }
+
   event.links = event.links || buildLinks_(event.tool.id);
 
   if (settings.manager_type === 'ai') {
@@ -69,6 +79,7 @@ function buildManagerMail_(event) {
         '使用者: ' + u.name + (u.email ? ' <' + u.email + '>' : ''),
         '開始日: ' + (event.startDate || ''),
         '返却日: ' + event.dueDate,
+        'コメント: ' + (event.comment || '（なし）'),
       ];
       break;
     case 'return':
@@ -102,6 +113,7 @@ function buildManagerMail_(event) {
         '使用者: ' + u.name + (u.email ? ' <' + u.email + '>' : ''),
         '返却予定日: ' + event.dueDate,
         '超過日数: ' + event.overdueDays + ' 日',
+        'コメント: ' + (event.comment || '（なし）'),
         '',
         '返却にする: ' + l.return,
         '+3日延長: ' + l.extend3,
@@ -130,6 +142,7 @@ function sendOverdueMailToUser(event) {
     '工具名: ' + t.name + '（' + t.id + '）',
     '返却予定日: ' + event.dueDate,
     '超過日数: ' + event.overdueDays + ' 日',
+    (event.comment ? 'コメント: ' + event.comment : ''),
     '',
     '▼ 返却した（返却済みにする）',
     l.return,
@@ -165,6 +178,7 @@ function describeEvent_(event) {
   if (event.dueDate) parts.push('返却日: ' + event.dueDate);
   if (event.returnDate) parts.push('返却された日: ' + event.returnDate);
   if (event.overdueDays !== undefined) parts.push('超過日数: ' + event.overdueDays + ' 日');
+  if (event.comment) parts.push('コメント: ' + event.comment);
   if (event.note) parts.push('操作元: ' + event.note);
   return parts.join('\n');
 }
