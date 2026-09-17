@@ -21,6 +21,7 @@
     <button class="btn small gray" id="reload" type="button">更新</button>
   </div>
   <div id="msg"></div>
+  <div id="overdueBanner"></div>
   <div id="cards" class="muted">読み込み中…</div>
 </div>
 
@@ -76,13 +77,13 @@
     cards.className = '';
     Object.keys(toolsById).forEach(k => delete toolsById[k]);
     tools.forEach(t => { toolsById[t.id] = t; });
+    document.getElementById('overdueBanner').innerHTML = overdueBanner(tools);
+    tools = sortOverdueFirst(tools);
     // 使用中になった工具は貸出選択から外し、返却できなくなった工具は返却選択から外す
     Array.from(selected).forEach(id => { if (!toolsById[id] || toolsById[id].inUse) selected.delete(id); });
     Array.from(selectedRet).forEach(id => { if (!toolsById[id] || !toolsById[id].canReturn) selectedRet.delete(id); });
     cards.innerHTML = tools.map(t => {
-      const badge = t.inUse
-        ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
-        : '<span class="badge free">空き</span>';
+      const badge = t.inUse ? usedBadge(t) : '<span class="badge free">空き</span>';
       const returnBtn = t.canReturn
         ? retBtn(t.id)
         : '<span class="muted" style="align-self:center">返却は借りた端末から</span>';
@@ -101,8 +102,12 @@
         '<div class="row">' + selectBtn(t.id) + '</div>'
       );
       const comment = t.comment ? '<div class="muted" style="margin-top:4px">' + esc(t.comment) + '</div>' : '';
-      return '<div class="card">' +
+      const overdueLine = t.overdue
+        ? '<div class="overdue-text" style="margin-top:6px">返却期限を ' + esc(t.overdueDays) + ' 日過ぎています（' + esc(fmtMd(t.due)) + ' 返却予定）</div>'
+        : '';
+      return '<div class="card' + (t.overdue ? ' overdue' : '') + '">' +
         '<div class="head"><div><b>' + esc(t.name) + '</b> <span class="muted">' + esc(t.id) + '</span></div><div>' + badge + '</div></div>' +
+        overdueLine +
         comment +
         actions +
         '</div>';

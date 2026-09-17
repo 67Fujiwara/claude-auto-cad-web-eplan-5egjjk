@@ -30,6 +30,7 @@
   <div id="mine" hidden>
     <h1>借りている工具</h1>
     <div id="msg"></div>
+    <div id="overdueBanner"></div>
     <div id="mineCards"></div>
     <div class="card" id="scanInfo">
       <div class="muted">読み取った工具</div>
@@ -44,10 +45,11 @@
     <div class="muted"><?= data.tool.id ?></div>
 
     <? if (data.tool.inUse) { ?>
-      <div class="card">
+      <div class="card<?= data.tool.overdue ? ' overdue' : '' ?>">
         <span class="badge used">使用中</span>
         <? if (data.tool.overdue) { ?><span class="badge over">超過</span><? } ?>
         <div style="margin-top:8px"><?= data.tool.user ?>さんが <?= data.tool.dueLabel ?> まで使用中</div>
+        <? if (data.tool.overdue) { ?><div class="overdue-text" style="margin-top:4px">返却期限を <?= data.tool.overdueDays ?> 日過ぎています</div><? } ?>
         <? if (data.tool.comment) { ?><div class="muted" style="margin-top:4px"><?= data.tool.comment ?></div><? } ?>
       </div>
       <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
@@ -105,10 +107,16 @@
   }
   function renderMine() {
     const box = document.getElementById('mineCards');
-    box.innerHTML = mineTools.map(t =>
-      '<div class="card">' +
+    const over = mineTools.filter(t => t.overdue);
+    document.getElementById('overdueBanner').innerHTML = over.length
+      ? '<div class="overdue-banner small"><b>返却期限超過 ' + over.length + ' 件</b> ' + over.map(t => esc(t.name) + '（' + esc(fmtMd(t.due)) + '・' + esc(t.overdueDays) + '日超過）').join('、') + '</div>'
+      : '';
+    box.innerHTML = sortOverdueFirst(mineTools).map(t =>
+      '<div class="card' + (t.overdue ? ' overdue' : '') + '">' +
       '<div class="head"><div><b>' + esc(t.name) + '</b> <span class="muted">' + esc(t.id) + '</span></div>' +
-      '<div><span class="badge used">' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '') + '</div></div>' +
+      '<div>' + (t.overdue
+        ? '<span class="badge over">' + esc(fmtMd(t.due)) + 'まで（' + esc(t.overdueDays) + '日超過）</span>'
+        : '<span class="badge used">' + esc(fmtMd(t.due)) + 'まで</span>') + '</div></div>' +
       (t.comment ? '<div class="muted" style="margin-top:4px">' + esc(t.comment) + '</div>' : '') +
       '<div class="row">' + selectBtn(t.id) + '</div>' +
       '</div>'

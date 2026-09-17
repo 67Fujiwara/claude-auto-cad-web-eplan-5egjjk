@@ -47,6 +47,7 @@ function setup() {
   tools.getRange('A:H').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
   tools.setColumnWidth(2, 200);
   tools.setColumnWidth(7, 300);
+  applyOverdueFormat_(tools);
 
   const log = getOrCreateSheet_(ss, SHEET_LOG, LOG_HEADERS);
   log.getRange('A:A').setNumberFormat('yyyy/MM/dd HH:mm:ss');
@@ -83,6 +84,27 @@ function installTriggers() {
     .forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('dailyCheck').timeBased().everyDays(1).atHour(8).inTimezone(TZ).create();
   Logger.log('トリガー登録完了: dailyCheck 毎日 8時台（' + TZ + '）');
+}
+
+/**
+ * 「工具」シートに条件付き書式を設定する: 使用中 かつ 返却日 < 今日 の行を赤背景・太字にする。
+ * 同じ条件の既存ルールは置き換える。
+ */
+function applyOverdueFormat_(sheet) {
+  const range = sheet.getRange('A2:H1000');
+  const formula = '=AND($C2="' + STATUS_USED + '", $F2<>"", $F2<TEXT(TODAY(),"yyyy-mm-dd"))';
+  const rules = sheet.getConditionalFormatRules().filter(r => {
+    const c = r.getBooleanCondition();
+    return !(c && c.getCriteriaValues && String(c.getCriteriaValues()[0] || '').indexOf('TEXT(TODAY()') >= 0);
+  });
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied(formula)
+    .setBackground('#fce8e6')
+    .setFontColor('#c5221f')
+    .setBold(true)
+    .setRanges([range])
+    .build());
+  sheet.setConditionalFormatRules(rules);
 }
 
 function getOrCreateSheet_(ss, name, headers) {
@@ -783,6 +805,8 @@ function publicTool_(t, deviceId) {
     comment: inUse ? (t.comment || '') : '',
     // 端末IDが未記録（管理者代理・旧データ）なら誰でも返却可。記録があれば一致した端末のみ
     canReturn: inUse && (!t.device || t.device === dev),
+    // 超過日数（超過していなければ 0）
+    overdueDays: (inUse && !!t.due && t.due < today) ? diffDays_(today, t.due) : 0,
   };
 }
 

@@ -41,6 +41,7 @@
       <button type="button" class="btn small gray" id="printBtn">QRを一括印刷</button>
       <button type="button" class="btn small gray" id="reloadBtn">更新</button>
     </div>
+    <div id="overdueBanner"></div>
     <div id="tools" class="muted">読み込み中…</div>
 
     <h2>設定</h2>
@@ -141,11 +142,10 @@
   function renderTools(tools) {
     const box = document.getElementById('tools');
     box.className = '';
+    document.getElementById('overdueBanner').innerHTML = overdueBanner(tools);
     if (!tools.length) { box.innerHTML = '<div class="muted">工具がありません</div>'; return; }
-    box.innerHTML = tools.map(t => {
-      const status = t.inUse
-        ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
-        : '<span class="badge free">空き</span>';
+    box.innerHTML = sortOverdueFirst(tools).map(t => {
+      const status = t.inUse ? usedBadge(t) : '<span class="badge free">空き</span>';
       const rentRow = t.inUse
         ? '<div class="row"><button type="button" class="btn small gray" data-act="return" data-name="' + esc(t.name) + '">返却（管理者）</button></div>'
         : '<div class="row"><button type="button" class="btn small green" data-act="rentToggle">借りる（代理）</button></div>' +
@@ -155,8 +155,9 @@
           '<input type="text" class="rentComment" placeholder="コメント（任意）" maxlength="200">' +
           '<button type="button" class="btn small green" data-act="rent">確定</button>' +
           '</div>';
-      return '<div class="card" data-id="' + esc(t.id) + '">' +
+      return '<div class="card' + (t.overdue ? ' overdue' : '') + '" data-id="' + esc(t.id) + '">' +
         '<div class="head"><b>' + esc(t.id) + '</b> ' + status + '</div>' +
+        (t.overdue ? '<div class="overdue-text" style="margin-top:6px">返却期限を ' + esc(t.overdueDays) + ' 日過ぎています</div>' : '') +
         '<div class="row">' +
         '<input type="text" class="nameInput" value="' + esc(t.name) + '">' +
         '<button type="button" class="btn small" data-act="save">保存</button>' +

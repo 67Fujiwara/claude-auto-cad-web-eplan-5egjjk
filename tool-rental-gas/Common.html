@@ -32,6 +32,14 @@
   .badge.free { background: #1e8e3e; }
   .badge.used { background: #d93025; }
   .badge.over { background: #7a0000; font-weight: bold; }
+  /* 返却期限を過ぎた貸出の強調 */
+  .card.overdue { border: 2px solid #c5221f; background: #fff5f5; box-shadow: 0 0 0 3px rgba(197,34,31,.12); }
+  .overdue-text { color: #c5221f; font-weight: bold; }
+  .overdue-banner { background: #c5221f; color: #fff; border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; font-size: 15px; }
+  .overdue-banner b { font-size: 18px; }
+  .overdue-banner ul { margin: 6px 0 0; padding-left: 18px; }
+  .overdue-banner li { margin: 2px 0; }
+  .overdue-banner.small { font-size: 14px; padding: 8px 10px; }
   .msg { padding: 10px; border-radius: 6px; margin: 10px 0; font-size: 14px; }
   .msg.err { background: #fce8e6; color: #c5221f; }
   .msg.ok { background: #e6f4ea; color: #137333; }
@@ -64,6 +72,25 @@
   function fmtMd(ymd) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
     return m ? (Number(m[2]) + '/' + Number(m[3])) : (ymd || '');
+  }
+  // 使用中バッジ。超過なら濃い赤で「〇〇さん 9/10まで（6日超過）」
+  function usedBadge(t) {
+    if (t.overdue) {
+      return '<span class="badge over">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで（' + esc(t.overdueDays) + '日超過）</span>';
+    }
+    return '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>';
+  }
+  // 画面上部の超過バナー。超過が無ければ空文字
+  function overdueBanner(tools) {
+    const over = tools.filter(t => t.overdue);
+    if (!over.length) return '';
+    return '<div class="overdue-banner"><b>返却期限超過 ' + over.length + ' 件</b><ul>' +
+      over.map(t => '<li>' + esc(t.user) + 'さん：' + esc(t.name) + '（' + esc(fmtMd(t.due)) + ' 返却予定・' + esc(t.overdueDays) + '日超過）</li>').join('') +
+      '</ul></div>';
+  }
+  // 超過を先頭に並べ替える（それ以外は元の順）
+  function sortOverdueFirst(tools) {
+    return tools.slice().sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0));
   }
   // メッセージ表示。kind = 'ok' | 'err' | 'info'、text が空なら消す
   function showMsg(el, text, kind) {
