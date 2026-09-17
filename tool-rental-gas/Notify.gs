@@ -66,7 +66,7 @@ function buildManagerMail_(event) {
         u.name + ' さんが工具を借りました。',
         '',
         '工具名: ' + t.name + '（' + t.id + '）',
-        '使用者: ' + u.name + ' <' + (u.email || '') + '>',
+        '使用者: ' + u.name + (u.email ? ' <' + u.email + '>' : ''),
         '開始日: ' + (event.startDate || ''),
         '返却日: ' + event.dueDate,
       ];
@@ -96,10 +96,10 @@ function buildManagerMail_(event) {
     case 'overdue':
       subject = '【工具返却】' + t.name + ' の返却日を過ぎています';
       lines = [
-        '返却日を過ぎている工具があります。使用者にも同じ内容を送信済みです。',
+        '返却日を過ぎている工具があります。' + (u.email ? '使用者にも同じ内容を送信済みです。' : '使用者に声をかけてください。'),
         '',
         '工具名: ' + t.name + '（' + t.id + '）',
-        '使用者: ' + u.name + ' <' + (u.email || '') + '>',
+        '使用者: ' + u.name + (u.email ? ' <' + u.email + '>' : ''),
         '返却予定日: ' + event.dueDate,
         '超過日数: ' + event.overdueDays + ' 日',
         '',
@@ -117,7 +117,7 @@ function buildManagerMail_(event) {
 }
 
 /**
- * 使用者本人への催促メール（dailyCheck から呼ばれる）。
+ * 使用者本人への催促メール（dailyCheck から、使用者メールがある場合だけ呼ばれる）。
  */
 function sendOverdueMailToUser(event) {
   const t = event.tool, u = event.user || {}, l = event.links || buildLinks_(t.id);

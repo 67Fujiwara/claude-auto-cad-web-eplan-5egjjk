@@ -1,7 +1,7 @@
 <!--
   Request.html — 貸出申請画面（?tool=T001）
-  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・メール・返却日を入力して「依頼」。
-  名前・メールは localStorage に保存して次回自動入力する。
+  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・返却日を入力して「依頼」。
+  名前は localStorage に保存して次回自動入力する。（社内利用のためメール欄は無し）
 -->
 <!DOCTYPE html>
 <html>
@@ -33,8 +33,6 @@
       <span class="badge free">空き</span>
       <label for="name">名前</label>
       <input type="text" id="name" autocomplete="name" required>
-      <label for="email">メール</label>
-      <input type="email" id="email" autocomplete="email" required>
       <label>開始日</label>
       <div><?= data.today ?>（今日）</div>
       <label for="due">返却日</label>
@@ -55,22 +53,19 @@
     const form = document.getElementById('form');
     if (!form) return;
     const nameEl = document.getElementById('name');
-    const emailEl = document.getElementById('email');
     const dueEl = document.getElementById('due');
     const btn = document.getElementById('submit');
 
     // 前回の入力を復元
     nameEl.value = storeGet('local', 'tr_name') || '';
-    emailEl.value = storeGet('local', 'tr_email') || '';
 
     form.addEventListener('submit', async function (ev) {
       ev.preventDefault();
       btn.disabled = true;
       showMsg('msg', '送信中…', 'info');
       storeSet('local', 'tr_name', nameEl.value.trim());
-      storeSet('local', 'tr_email', emailEl.value.trim());
       try {
-        const t = await call('apiRequest', TOOL_ID, nameEl.value, emailEl.value, dueEl.value);
+        const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value);
         form.hidden = true;
         document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。';
         document.getElementById('done').hidden = false;

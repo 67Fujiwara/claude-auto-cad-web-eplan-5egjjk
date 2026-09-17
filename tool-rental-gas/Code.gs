@@ -7,7 +7,7 @@
  *   - doGet()            : 画面のルーティング（申請 / 一覧 / 管理 / 印刷 / メールリンク操作）
  *   - api*()  / admin*() : 各画面から google.script.run で呼ばれるサーバー関数
  *   - rentTool_ / returnTool_ / extendTool_ : 貸出・返却・延長のコア処理（LockService で二重貸出を防止）
- *   - dailyCheck()       : 返却日超過の催促（使用者へメール + 管理者へ notifyManager）
+ *   - dailyCheck()       : 返却日超過の催促（管理者へ notifyManager。使用者メールがあれば本人にも）
  *
  * 管理者への通知は Notify.gs の notifyManager(event) に集約している（human: メール / ai: Ai.gs）。
  * 末尾が _ の関数は内部用（画面から google.script.run では呼べない）。
@@ -188,8 +188,9 @@ function apiListTools() {
   return { today: today_(), tools: readTools_().map(publicTool_) };
 }
 
+/** 申請画面から。メール欄は無いので userEmail は空で呼ばれる */
 function apiRequest(toolId, userName, userEmail, due) {
-  return rentTool_(toolId, userName, userEmail, due, '申請画面');
+  return rentTool_(toolId, userName, userEmail || '', due, '申請画面');
 }
 
 function apiReturn(toolId) {
@@ -300,7 +301,8 @@ function rentTool_(toolId, userName, userEmail, due, note) {
   userName = String(userName || '').trim();
   userEmail = String(userEmail || '').trim();
   if (!userName) throw new Error('名前を入力してください');
-  if (!isEmail_(userEmail)) throw new Error('メールアドレスの形式が正しくありません');
+  // メールは任意（社内運用のため申請画面には入力欄がない）。入っていれば形式だけ確認する
+  if (userEmail && !isEmail_(userEmail)) throw new Error('メールアドレスの形式が正しくありません');
   const dueYmd = normYmd_(due);
   if (!dueYmd) throw new Error('返却日を選んでください');
   const today = today_();
@@ -442,10 +444,13 @@ function dailyCheck() {
       overdueDays: diffDays_(today, t.due),
       links: buildLinks_(t.id),
     };
-    try {
-      sendOverdueMailToUser(ev);
-    } catch (err) {
-      Logger.log('使用者への催促メール失敗 (' + t.id + '): ' + err.message);
+    // 使用者メールがある場合だけ本人にも催促する（申請画面にはメール欄がないので通常は管理者のみ）
+    if (t.email) {
+      try {
+        sendOverdueMailToUser(ev);
+      } catch (err) {
+        Logger.log('使用者への催促メール失敗 (' + t.id + '): ' + err.message);
+      }
     }
     safeNotify_(ev);
   });
