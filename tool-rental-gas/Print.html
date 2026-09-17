@@ -1,6 +1,7 @@
 <!--
   Print.html — QR 一括印刷ページ（?view=print&pin=1234）
-  全工具の QR と工具名を A4 に並べる。管理画面の「QRを一括印刷」から開く。
+  全工具の QR を A4 に敷き詰める。工具に貼るラベル用途なので、QR サイズ（12〜30mm）と
+  文字の有無を画面上で選べる。管理画面の「QRを一括印刷」から開く。
   QR 描画は CDN の qrcode.js。読み込めない環境では URL 文字列のみ表示される。
 -->
 <!DOCTYPE html>
@@ -11,20 +12,25 @@
   <title><?= pageTitle ?></title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
+    :root { --qr: 20mm; --pad: 1.5mm; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; color: #000; background: #fff; }
-    .bar { padding: 10px; background: #f4f4f4; border-bottom: 1px solid #ddd; display: flex; gap: 10px; align-items: center; }
+    .bar { padding: 10px; background: #f4f4f4; border-bottom: 1px solid #ddd; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+    .bar select { font-size: 16px; padding: 6px; }
     .btn { font-size: 16px; padding: 10px 16px; border: none; border-radius: 8px; background: #1a73e8; color: #fff; cursor: pointer; }
-    .page { padding: 10mm; }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; }
-    .item { border: 1px dashed #999; padding: 4mm; text-align: center; break-inside: avoid; page-break-inside: avoid; }
-    .qr { display: flex; justify-content: center; min-height: 36mm; }
-    .qr img, .qr canvas { width: 36mm !important; height: 36mm !important; }
-    .name { font-size: 14pt; font-weight: bold; margin-top: 2mm; word-break: break-all; }
-    .id { font-size: 10pt; color: #444; }
-    .url { font-size: 6pt; color: #666; word-break: break-all; margin-top: 1mm; }
-    .note { color: #c00; font-size: 12px; }
-    @page { size: A4; margin: 10mm; }
+    .page { padding: 8mm; }
+    .grid { display: flex; flex-wrap: wrap; gap: 2mm; align-content: flex-start; }
+    .item { width: calc(var(--qr) + var(--pad) * 2); border: 0.2mm dashed #999; padding: var(--pad); text-align: center;
+            break-inside: avoid; page-break-inside: avoid; background: #fff; }
+    .qr { width: var(--qr); height: var(--qr); margin: 0 auto; }
+    .qr img, .qr canvas { width: var(--qr) !important; height: var(--qr) !important; display: block; }
+    .name { font-size: 6pt; line-height: 1.15; margin-top: 0.5mm; word-break: break-all; overflow: hidden; }
+    .id { font-size: 5pt; color: #333; line-height: 1.1; }
+    .url { display: none; font-size: 4pt; color: #666; word-break: break-all; }
+    body.no-text .name { display: none; }
+    body.no-qr .url { display: block; }
+    .note { color: #c00; }
+    @page { size: A4; margin: 8mm; }
     @media print {
       .bar { display: none; }
       .page { padding: 0; }
@@ -34,6 +40,16 @@
 <body>
 <div class="bar">
   <button class="btn" onclick="window.print()">印刷</button>
+  <label>QRサイズ
+    <select id="size">
+      <option value="12">12mm（最小・読取り注意）</option>
+      <option value="15">15mm</option>
+      <option value="20" selected>20mm</option>
+      <option value="25">25mm</option>
+      <option value="30">30mm</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="showName" checked> 工具名を印字</label>
   <span><?= data.tools.length ?> 件</span>
   <span class="note" id="note" hidden>QR ライブラリを読み込めませんでした。URL のみ表示しています。</span>
 </div>
@@ -51,9 +67,24 @@
 </div>
 <script>
   (function () {
-    if (typeof QRCode === 'undefined') { document.getElementById('note').hidden = false; return; }
+    const sizeEl = document.getElementById('size');
+    const nameEl = document.getElementById('showName');
+    function apply() {
+      document.documentElement.style.setProperty('--qr', sizeEl.value + 'mm');
+      document.body.classList.toggle('no-text', !nameEl.checked);
+    }
+    sizeEl.addEventListener('change', apply);
+    nameEl.addEventListener('change', apply);
+    apply();
+
+    if (typeof QRCode === 'undefined') {
+      document.getElementById('note').hidden = false;
+      document.body.classList.add('no-qr');
+      return;
+    }
+    // 誤り訂正レベル L（最小のドット数）で、印刷でも粗くならないよう大きめのピクセルで描いて CSS で縮小する
     document.querySelectorAll('.qr').forEach(function (el) {
-      try { new QRCode(el, { text: el.dataset.url, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M }); } catch (e) {}
+      try { new QRCode(el, { text: el.dataset.url, width: 512, height: 512, correctLevel: QRCode.CorrectLevel.L }); } catch (e) {}
     });
   })();
 </script>
