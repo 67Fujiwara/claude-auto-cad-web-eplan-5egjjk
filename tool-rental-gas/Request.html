@@ -1,6 +1,10 @@
 <!--
   Request.html — 貸出申請画面（?tool=ID001）
-  QR コードを読むとこの画面が開く。工具名と状態を表示し、空きなら名前・返却日・コメント（任意）を入力して「借りる」。
+  QR コードを読むとこの画面が開く。
+  1. まず、この端末（localStorage の端末ID）で借りている工具があれば「借りている工具」の一覧を出す。
+     読み取った工具がその中にあれば最初から選択済み。複数選んで画面下の固定バー「返却」でまとめて返却する。
+  2. 借りている工具が無い（または「借りる」ボタンを押した）ときは、読み取った工具の申請フォームを出す。
+     空きなら名前・返却日・コメント（任意）を入力して「借りる」。使用中なら誰がいつまで使っているかを表示。
   名前は localStorage に保存して次回自動入力する。（社内利用のためメール欄は無し）
 -->
 <!DOCTYPE html>
@@ -18,40 +22,173 @@
   <div class="msg err">工具が見つかりません（<?= data.toolId ?>）</div>
   <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
 <? } else { ?>
-  <h1><?= data.tool.name ?></h1>
-  <div class="muted"><?= data.tool.id ?></div>
 
-  <? if (data.tool.inUse) { ?>
-    <div class="card">
-      <span class="badge used">使用中</span>
-      <? if (data.tool.overdue) { ?><span class="badge over">超過</span><? } ?>
-      <div style="margin-top:8px"><?= data.tool.user ?>さんが <?= data.tool.dueLabel ?> まで使用中</div>
-      <? if (data.tool.comment) { ?><div class="muted" style="margin-top:4px"><?= data.tool.comment ?></div><? } ?>
+  <!-- 読み込み中 -->
+  <div id="loading" class="muted">読み込み中…</div>
+
+  <!-- 借りている工具（この端末で借りたものがあるときだけ表示） -->
+  <div id="mine" hidden>
+    <h1>借りている工具</h1>
+    <div id="msg"></div>
+    <div id="mineCards"></div>
+    <div class="card" id="scanInfo">
+      <div class="muted">読み取った工具</div>
+      <div style="margin-top:4px"><b><?= data.tool.name ?></b> <span class="muted"><?= data.tool.id ?></span></div>
+      <div class="row" id="scanActions"></div>
     </div>
-    <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
-  <? } else { ?>
-    <form id="form" class="card">
-      <span class="badge free">空き</span>
-      <label for="name">名前</label>
-      <input type="text" id="name" autocomplete="name" required>
-      <label>開始日</label>
-      <div><?= data.today ?>（今日）</div>
-      <label for="due">返却日</label>
-      <input type="date" id="due" min="<?= data.today ?>" value="<?= data.defaultDue ?>" required>
-      <label for="comment">コメント（任意）</label>
-      <input type="text" id="comment" maxlength="200" placeholder="使用場所など">
-      <div id="msg"></div>
-      <button type="submit" id="submit" class="btn full">借りる</button>
-    </form>
-    <div id="done" class="card" hidden>
-      <div class="msg ok" id="doneText"></div>
+  </div>
+
+  <!-- 読み取った工具の申請 -->
+  <div id="scanned" hidden>
+    <h1><?= data.tool.name ?></h1>
+    <div class="muted"><?= data.tool.id ?></div>
+
+    <? if (data.tool.inUse) { ?>
+      <div class="card">
+        <span class="badge used">使用中</span>
+        <? if (data.tool.overdue) { ?><span class="badge over">超過</span><? } ?>
+        <div style="margin-top:8px"><?= data.tool.user ?>さんが <?= data.tool.dueLabel ?> まで使用中</div>
+        <? if (data.tool.comment) { ?><div class="muted" style="margin-top:4px"><?= data.tool.comment ?></div><? } ?>
+      </div>
       <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
-    </div>
-  <? } ?>
+    <? } else { ?>
+      <form id="form" class="card">
+        <span class="badge free">空き</span>
+        <label for="name">名前</label>
+        <input type="text" id="name" autocomplete="name" required>
+        <label>開始日</label>
+        <div><?= data.today ?>（今日）</div>
+        <label for="due">返却日</label>
+        <input type="date" id="due" min="<?= data.today ?>" value="<?= data.defaultDue ?>" required>
+        <label for="comment">コメント（任意）</label>
+        <input type="text" id="comment" maxlength="200" placeholder="使用場所など">
+        <div id="formMsg"></div>
+        <button type="submit" id="submit" class="btn full">借りる</button>
+      </form>
+      <div id="done" class="card" hidden>
+        <div class="msg ok" id="doneText"></div>
+        <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
+      </div>
+    <? } ?>
+  </div>
 <? } ?>
 </div>
+
+<!-- 複数返却の固定バー（借りている工具を 1 つでも選ぶと表示。スクロールしても画面下に固定） -->
+<div id="bar" class="fixbar" hidden>
+  <div class="inner">
+    <div class="head">
+      <div><b id="selCount">0</b> 件選択中</div>
+      <div class="row" style="margin:0">
+        <button type="button" class="btn small gray" id="clearSel">解除</button>
+        <button type="button" class="btn red" id="doReturn">返却</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   const TOOL_ID = <?!= toJson_(data.toolId) ?>;
+  const SCANNED = <?!= toJson_(data.tool) ?>;
+  const selected = new Set();
+  let mineTools = [];
+
+  function selectBtn(id) {
+    const on = selected.has(id);
+    return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="select" data-id="' + esc(id) + '">' + (on ? '選択中' : '選択') + '</button>';
+  }
+  function updateBar() {
+    const n = selected.size;
+    document.getElementById('selCount').textContent = n;
+    document.getElementById('bar').hidden = n === 0;
+    document.body.classList.toggle('has-fixbar', n > 0);
+  }
+  function renderMine() {
+    const box = document.getElementById('mineCards');
+    box.innerHTML = mineTools.map(t =>
+      '<div class="card">' +
+      '<div class="head"><div><b>' + esc(t.name) + '</b> <span class="muted">' + esc(t.id) + '</span></div>' +
+      '<div><span class="badge used">' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '') + '</div></div>' +
+      (t.comment ? '<div class="muted" style="margin-top:4px">' + esc(t.comment) + '</div>' : '') +
+      '<div class="row">' + selectBtn(t.id) + '</div>' +
+      '</div>'
+    ).join('');
+    updateBar();
+  }
+  function showScanned() {
+    document.getElementById('mine').hidden = true;
+    document.getElementById('bar').hidden = true;
+    document.body.classList.remove('has-fixbar');
+    document.getElementById('scanned').hidden = false;
+  }
+
+  async function loadMine() {
+    try {
+      const r = await call('apiMyTools', deviceId());
+      mineTools = r.tools;
+    } catch (e) {
+      mineTools = [];
+    }
+    document.getElementById('loading').hidden = true;
+    if (!mineTools.length) { showScanned(); return; }
+
+    // 読み取った工具が自分の借りている工具なら最初から選択
+    if (mineTools.some(t => t.id === TOOL_ID)) selected.add(TOOL_ID);
+    // 読み取った工具が空きなら「借りる」へ進めるボタン
+    const acts = document.getElementById('scanActions');
+    if (SCANNED && !SCANNED.inUse) {
+      acts.innerHTML = '<button type="button" class="btn small green" id="goRent">この工具を借りる</button>';
+      document.getElementById('goRent').addEventListener('click', showScanned);
+    } else if (SCANNED && !mineTools.some(t => t.id === TOOL_ID)) {
+      acts.innerHTML = '<span class="muted">' + esc(SCANNED.user) + 'さんが ' + esc(fmtMd(SCANNED.due)) + ' まで使用中</span>';
+    } else {
+      acts.innerHTML = '<span class="muted">上の一覧で選択済み</span>';
+    }
+    renderMine();
+    document.getElementById('mine').hidden = false;
+  }
+
+  document.getElementById('mineCards').addEventListener('click', function (ev) {
+    const b = ev.target.closest('button[data-act="select"]');
+    if (!b) return;
+    const id = b.dataset.id;
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+    b.outerHTML = selectBtn(id);
+    updateBar();
+  });
+  document.getElementById('clearSel').addEventListener('click', function () {
+    selected.clear();
+    renderMine();
+  });
+  document.getElementById('doReturn').addEventListener('click', async function () {
+    const ids = Array.from(selected);
+    const names = ids.map(id => (mineTools.find(t => t.id === id) || { name: id }).name);
+    if (!confirm(names.join('、') + ' を返却しますか？')) return;
+    const btn = this;
+    btn.disabled = true;
+    try {
+      const r = await call('apiReturnMany', ids, deviceId());
+      let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました' : '';
+      if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
+      showMsg('msg', text, r.failed.length ? 'err' : 'ok');
+      selected.clear();
+      const okIds = new Set(r.ok.map(t => t.id));
+      mineTools = mineTools.filter(t => !okIds.has(t.id));
+      renderMine();
+      // 読み取った工具を返したなら、続けて借りられるようリンクを出す（画面を開き直して最新状態にする）
+      if (okIds.has(TOOL_ID)) {
+        document.getElementById('scanActions').innerHTML =
+          '<a class="btn small green" href="' + esc(APP_URL) + '?tool=' + encodeURIComponent(TOOL_ID) + '" target="_top">この工具をもう一度借りる</a>';
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // 申請フォーム
   (function () {
     const form = document.getElementById('form');
     if (!form) return;
@@ -59,14 +196,11 @@
     const dueEl = document.getElementById('due');
     const commentEl = document.getElementById('comment');
     const btn = document.getElementById('submit');
-
-    // 前回の入力を復元
     nameEl.value = storeGet('local', 'tr_name') || '';
-
     form.addEventListener('submit', async function (ev) {
       ev.preventDefault();
       btn.disabled = true;
-      showMsg('msg', '送信中…', 'info');
+      showMsg('formMsg', '送信中…', 'info');
       storeSet('local', 'tr_name', nameEl.value.trim());
       try {
         const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value, commentEl.value, deviceId());
@@ -74,11 +208,13 @@
         document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。';
         document.getElementById('done').hidden = false;
       } catch (e) {
-        showMsg('msg', e.message || String(e), 'err');
+        showMsg('formMsg', e.message || String(e), 'err');
         btn.disabled = false;
       }
     });
   })();
+
+  if (SCANNED) loadMine();
 </script>
 </body>
 </html>

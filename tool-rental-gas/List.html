@@ -3,8 +3,8 @@
   工具ごとに1カード。空き＝緑、使用中＝赤「〇〇さん 9/20まで」、超過＝濃い赤「超過」バッジ。
   空きの工具には「選択」ボタン。押すと青い「選択中」になり、1 つでも選ぶと画面下に固定の「借りる」バーが出る。
   「借りる」→ 名前・返却日・コメントを入れて「確定」で、選んだ工具をまとめて借りる（apiRequestMany）。
-  使用中の工具には「返却」（確認ダイアログ付き）と「延長」（+3日 / +7日 / 日付指定）。
-  「返却」は借りたときと同じ端末（localStorage の端末ID）でだけ表示・実行できる。
+  自分が借りている工具（端末IDが一致）には「返却を選択」ボタン。押すと青い「返却選択中」になり、
+  画面下のバーの「返却」でまとめて返却する（apiReturnMany）。延長は「+3日 / +7日 / 日付指定」。
 -->
 <!DOCTYPE html>
 <html>
@@ -31,7 +31,8 @@
       <div><b id="selCount">0</b> 件選択中</div>
       <div class="row" style="margin:0">
         <button type="button" class="btn small gray" id="clearSel">解除</button>
-        <button type="button" class="btn green" id="openRent">借りる</button>
+        <button type="button" class="btn red" id="doReturn" hidden>返却</button>
+        <button type="button" class="btn green" id="openRent" hidden>借りる</button>
       </div>
     </div>
     <form id="rentForm" hidden>
@@ -53,7 +54,8 @@
 <script>
   let TODAY = '';
   const cards = document.getElementById('cards');
-  const selected = new Set();      // 選択中の tool_id
+  const selected = new Set();      // 借りる対象として選択中の tool_id
+  const selectedRet = new Set();   // 返却対象として選択中の tool_id
   const toolsById = {};            // 最新の一覧（id → tool）
 
   async function loadList() {
@@ -74,14 +76,15 @@
     cards.className = '';
     Object.keys(toolsById).forEach(k => delete toolsById[k]);
     tools.forEach(t => { toolsById[t.id] = t; });
-    // 使用中になった工具は選択から外す
+    // 使用中になった工具は貸出選択から外し、返却できなくなった工具は返却選択から外す
     Array.from(selected).forEach(id => { if (!toolsById[id] || toolsById[id].inUse) selected.delete(id); });
+    Array.from(selectedRet).forEach(id => { if (!toolsById[id] || !toolsById[id].canReturn) selectedRet.delete(id); });
     cards.innerHTML = tools.map(t => {
       const badge = t.inUse
         ? '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>' + (t.overdue ? ' <span class="badge over">超過</span>' : '')
         : '<span class="badge free">空き</span>';
       const returnBtn = t.canReturn
-        ? '<button class="btn small gray" data-act="return" data-id="' + esc(t.id) + '" data-name="' + esc(t.name) + '">返却</button>'
+        ? retBtn(t.id)
         : '<span class="muted" style="align-self:center">返却は借りた端末から</span>';
       const actions = t.inUse ? (
         '<div class="row">' +
@@ -112,17 +115,31 @@
     const on = selected.has(id);
     return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="select" data-id="' + esc(id) + '">' + (on ? '選択中' : '選択') + '</button>';
   }
+  // 返却ボタン: 未選択=灰色「返却を選択」、選択中=青「返却選択中」
+  function retBtn(id) {
+    const on = selectedRet.has(id);
+    return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="selectRet" data-id="' + esc(id) + '">' + (on ? '返却選択中' : '返却を選択') + '</button>';
+  }
   function toggleSelect(id, btn) {
     if (selected.has(id)) selected.delete(id); else selected.add(id);
     btn.outerHTML = selectBtn(id);
     updateBar();
   }
+  function toggleSelectRet(id, btn) {
+    if (selectedRet.has(id)) selectedRet.delete(id); else selectedRet.add(id);
+    btn.outerHTML = retBtn(id);
+    updateBar();
+  }
   function updateBar() {
     const bar = document.getElementById('bar');
-    const n = selected.size;
-    document.getElementById('selCount').textContent = n;
-    bar.hidden = n === 0;
-    document.body.classList.toggle('has-fixbar', n > 0);
+    const n = selected.size, m = selectedRet.size;
+    document.getElementById('selCount').textContent = n + m;
+    bar.hidden = (n + m) === 0;
+    document.body.classList.toggle('has-fixbar', (n + m) > 0);
+    document.getElementById('openRent').hidden = n === 0;
+    document.getElementById('openRent').textContent = '借りる' + (n ? '（' + n + '）' : '');
+    document.getElementById('doReturn').hidden = m === 0;
+    document.getElementById('doReturn').textContent = '返却' + (m ? '（' + m + '）' : '');
     if (n === 0) closeRentForm();
     document.getElementById('rentList').textContent = Array.from(selected).map(id => toolsById[id] ? toolsById[id].name : id).join('、');
   }
@@ -152,8 +169,31 @@
   document.getElementById('cancelRent').addEventListener('click', closeRentForm);
   document.getElementById('clearSel').addEventListener('click', function () {
     selected.clear();
+    selectedRet.clear();
     cards.querySelectorAll('button[data-act="select"]').forEach(b => { b.outerHTML = selectBtn(b.dataset.id); });
+    cards.querySelectorAll('button[data-act="selectRet"]').forEach(b => { b.outerHTML = retBtn(b.dataset.id); });
     updateBar();
+  });
+  document.getElementById('doReturn').addEventListener('click', async function () {
+    const ids = Array.from(selectedRet);
+    const names = ids.map(id => toolsById[id] ? toolsById[id].name : id);
+    if (!confirm(names.join('、') + ' を返却しますか？')) return;
+    const btn = this;
+    btn.disabled = true;
+    try {
+      const r = await call('apiReturnMany', ids, deviceId());
+      let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました' : '';
+      if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
+      showMsg('msg', text, r.failed.length ? 'err' : 'ok');
+      selectedRet.clear();
+      updateBar();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      loadList();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    } finally {
+      btn.disabled = false;
+    }
   });
   document.getElementById('rentForm').addEventListener('submit', async function (ev) {
     ev.preventDefault();
@@ -191,18 +231,17 @@
       toggleSelect(id, b);
       return;
     }
+    if (act === 'selectRet') {
+      toggleSelectRet(id, b);
+      return;
+    }
     if (act === 'pick') {
       const box = document.getElementById('pick-' + id);
       box.hidden = !box.hidden;
       return;
     }
     try {
-      if (act === 'return') {
-        if (!confirm(b.dataset.name + ' を返却しますか？')) return;
-        setBusy(true);
-        const t = await call('apiReturn', id, deviceId());
-        showMsg('msg', t.name + ' を返却しました', 'ok');
-      } else if (act === 'extend') {
+      if (act === 'extend') {
         setBusy(true);
         const t = await call('apiExtend', id, Number(b.dataset.days), null);
         showMsg('msg', t.name + ' を ' + fmtMd(t.due) + ' まで延長しました', 'ok');

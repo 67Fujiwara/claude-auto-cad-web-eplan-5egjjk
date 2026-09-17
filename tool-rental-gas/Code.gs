@@ -213,6 +213,49 @@ function apiReturn(toolId, deviceId) {
   return returnTool_(toolId, '一覧画面', { deviceId: deviceId });
 }
 
+/** この端末（deviceId）で借りている工具の一覧。QR を読んだ直後の「借りている工具」表示に使う */
+function apiMyTools(deviceId) {
+  const dev = normDevice_(deviceId);
+  if (!dev) return { today: today_(), tools: [] };
+  return {
+    today: today_(),
+    tools: readTools_().filter(t => t.status === STATUS_USED && t.device === dev).map(t => publicTool_(t, dev)),
+  };
+}
+
+/**
+ * 複数の工具をまとめて返却する（借りた端末からのみ）。
+ * 戻り値: { ok: [返却した工具], failed: [{ id, name, message }] }
+ */
+function apiReturnMany(toolIds, deviceId) {
+  const ids = Array.from(new Set((toolIds || []).map(v => String(v || '').trim()).filter(Boolean)));
+  if (!ids.length) throw new Error('工具を選択してください');
+  const ok = [], failed = [];
+  let user = { name: '', email: '' };
+  ids.forEach(id => {
+    try {
+      const before = findTool_(id);
+      const t = returnTool_(id, '申請画面', { deviceId: deviceId, skipNotify: true });
+      if (before) user = { name: before.user, email: before.email };
+      ok.push(t);
+    } catch (err) {
+      const t = findTool_(id);
+      failed.push({ id: id, name: t ? t.name : id, message: err.message });
+    }
+  });
+  if (ok.length) {
+    safeNotify_({
+      type: 'return',
+      tool: { id: ok[0].id, name: ok[0].name },
+      tools: ok.map(t => ({ id: t.id, name: t.name })),
+      user: user,
+      returnDate: today_(),
+      note: '申請画面',
+    });
+  }
+  return { ok: ok, failed: failed };
+}
+
 function apiExtend(toolId, days, date) {
   return extendTool_(toolId, { days: days ? Number(days) : null, date: date || null }, '一覧画面');
 }
@@ -420,7 +463,7 @@ function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId, op
 }
 
 /**
- * 返却。opt = { deviceId: '端末ID', force: true|false }
+ * 返却。opt = { deviceId: '端末ID', force: true|false, skipNotify: true|false }
  *   借りたときの端末IDが記録されている工具は、同じ端末IDからしか返却できない。
  *   force=true（管理画面・メールリンク）なら端末に関係なく返却できる。
  */
@@ -432,7 +475,7 @@ function returnTool_(toolId, note, opt) {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     if (t.status !== STATUS_USED) throw new Error(t.name + ' はすでに返却済みです');
-    if (!opt.force && t.device && t.device !== deviceId) {
+    if (!opt.force && (!deviceId || t.device !== deviceId) && t.device) {
       throw new Error('この工具は別の端末から借りられています。借りた端末で返却するか、管理者に返却を依頼してください');
     }
     ev = {
@@ -454,8 +497,8 @@ function returnTool_(toolId, note, opt) {
     writeTool_(t);
     return t;
   });
-  safeNotify_(ev);
-  return publicTool_(result);
+  if (!opt.skipNotify) safeNotify_(ev);
+  return publicTool_(result, deviceId);
 }
 
 /**

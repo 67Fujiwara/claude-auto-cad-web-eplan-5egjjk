@@ -9,7 +9,7 @@
  *   {
  *     type:        'request' | 'overdue' | 'extend' | 'return',
  *     tool:        { id, name },
- *     tools:       [{ id, name }, ...],      // まとめ貸出のとき（request のみ）。tool は先頭と同じ
+ *     tools:       [{ id, name }, ...],      // まとめ貸出・まとめ返却のとき（request / return）。tool は先頭と同じ
  *     user:        { name, email },
  *     dueDate:     'yyyy-MM-dd',            // 返却日（延長後は新しい返却日）
  *     startDate:   'yyyy-MM-dd',            // request のみ
@@ -91,6 +91,13 @@ function buildManagerMail_(event) {
       ];
       break;
     case 'return':
+      if (event.tools && event.tools.length > 1) {
+        subject = '【工具返却】' + u.name + ' さんが ' + event.tools.length + ' 点返却しました';
+        lines = [u.name + ' さんが工具をまとめて返却しました。', ''];
+        event.tools.forEach(x => lines.push('・' + x.name + '（' + x.id + '）'));
+        lines.push('', '返却日: ' + (event.returnDate || ''), '操作元: ' + (event.note || ''));
+        break;
+      }
       subject = '【工具返却】' + t.name + ' が返却されました（' + u.name + ' さん）';
       lines = [
         u.name + ' さんが工具を返却しました。',
