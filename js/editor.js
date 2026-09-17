@@ -1102,48 +1102,65 @@ function kindSVG(page, print) {
 }
 
 /** 機器リスト (制御盤に使う機器の一覧)。Excel 貼り付けで取り込んだ行を
-    見本の体裁 (№/部品名/型式/メーカー/個数・薄緑の行) で描く。
-    見やすさ重視の行 7mm — 入りきらないぶんは次の機器リストページが受け持つ */
+    №/部品名/型式/メーカー/個数 の表で描く。列幅はそのページの文字の
+    長さから決める (中身が短ければ表も細い)。横に 2 列 (左 30 行 + 右 30 行)
+    並べて 1 ページ 60 件 — 入りきらないぶんは次の機器リストページが受け持つ */
 function partsSVG(page) {
   const b = sheetInner(), f = sheetScale();
   const S = v => v * f;
   const { start, rows } = partsSlice(page);
   const all = partsRows().length;
-  const x0 = b.x + S(4), w0 = b.w - S(8);
-  const top = b.y + S(14), RH = S(7), TH = 3.5;
-  const cols = [S(14), 0, 0, S(60), S(20)];
-  const rest = w0 - cols[0] - cols[3] - cols[4];
-  cols[1] = rest * 0.55; cols[2] = rest * 0.45;
-  const xs = [x0]; cols.forEach((cw, i) => xs.push(xs[i] + cw));
-  const line = (x1, y1, x2, y2, wd) =>
-    `<path d="M${x1},${y1} L${x2},${y2}" stroke="${INK}" stroke-width="${(wd || LINE_W.thin) * f}" fill="none"/>`;
+  const x0 = b.x + S(4);
+  const top = b.y + S(14), RH = S(7), TH = 3.5, GAP = 10;
   const txt = (x, y, t, anchor, mono, hh) => !t ? "" :
     `<text x="${x}" y="${y}" font-size="${svgFontSizeFor(String(t), S(hh || TH), !!mono, { noMin: true })}" text-anchor="${anchor || "start"}" fill="${INK}" font-family="${mono ? "monospace" : "sans-serif"}">${escXML(String(t))}</text>`;
   let out = txt(x0, b.y + S(9), "機器リスト", "start", false, 5);
-  if (all) out += txt(x0 + w0, b.y + S(9), `全 ${all} 件 (この頁 ${start + 1}〜${start + rows.length})`, "end", false, 3.2);
   if (!all) {
     out += txt(x0, top + S(8), "(挿入 → 機器リスト で Excel の表を丸ごと貼り付けられます)", "start", false, 3.2);
     return out;
   }
+  out += txt(b.x + b.w - S(4), b.y + S(9), `全 ${all} 件 (この頁 ${start + 1}〜${start + rows.length})`, "end", false, 3.2);
+  /* 列幅 (紙の上の mm): № と個数は固定。部品名・型式・メーカーは
+     このページの文字の長さ (見出し込み) から。2 列で並ぶ幅を超えたら
+     文字列の列だけを比例で詰める (中身は … で切れる) */
+  const stacks = rows.length > PARTS_PER_COL
+    ? [rows.slice(0, PARTS_PER_COL), rows.slice(PARTS_PER_COL)] : [rows];
+  const padd = 3.4, wNo = 10, wQ = 12;
+  const wOf = (t, mono) => textWidthMM(String(t || ""), TH, false, !!mono);
+  let wN = Math.max(wOf("部品名"), ...rows.map(r => wOf(r.name))) + padd;
+  let wM = Math.max(wOf("型式"), ...rows.map(r => wOf(r.model, true))) + padd;
+  let wK = Math.max(wOf("メーカー"), ...rows.map(r => wOf(r.maker))) + padd;
+  const maxTw = (b.w / f - 8 - (stacks.length > 1 ? GAP : 0)) / stacks.length;
+  const over = (wNo + wN + wM + wK + wQ) - maxTw;
+  if (over > 0) {
+    const k = (wN + wM + wK - over) / (wN + wM + wK);
+    wN *= k; wM *= k; wK *= k;
+  }
+  const cols = [S(wNo), S(wN), S(wM), S(wK), S(wQ)];
+  const tw = cols.reduce((a2, c) => a2 + c, 0);
+  const line = (x1, y1, x2, y2, wd) =>
+    `<path d="M${x1},${y1} L${x2},${y2}" stroke="${INK}" stroke-width="${(wd || LINE_W.thin) * f}" fill="none"/>`;
   const heads = ["№", "部品名", "型式", "メーカー", "個数"];
-  const nR = rows.length;
-  // 下地は塗らない (白のまま) — 罫線と文字だけの表
-  // 罫線 (外形は太め)
-  const yEnd = top + RH * (nR + 1);
-  for (let r = 0; r <= nR + 1; r++) out += line(x0, top + RH * r, x0 + w0, top + RH * r);
-  xs.forEach((x, i) => out += line(x, top, x, yEnd, (i === 0 || i === xs.length - 1) ? LINE_W.thick : LINE_W.thin));
-  out += line(x0, top, x0 + w0, top, LINE_W.thick) + line(x0, yEnd, x0 + w0, yEnd, LINE_W.thick);
-  // 見出し
-  heads.forEach((t, i) => out += txt(xs[i] + cols[i] / 2, top + RH / 2 + S(TH * 0.36), t, "middle"));
-  // 行 (№ と個数は右寄せ・型式は等幅)
-  const fit = (t, cw, mono) => truncateToWidth(String(t), cw / f - 3.5, TH, mono);
-  rows.forEach((rw, r) => {
-    const yy = top + RH * (r + 1) + RH / 2 + S(TH * 0.36);
-    out += txt(xs[1] - S(1.6), yy, String(start + r + 1), "end");
-    out += txt(xs[1] + S(1.6), yy, fit(rw.name, cols[1]), "start");
-    out += txt(xs[2] + S(1.6), yy, fit(rw.model, cols[2], true), "start", true);
-    out += txt(xs[3] + S(1.6), yy, fit(rw.maker, cols[3]), "start");
-    out += txt(xs[4] + cols[4] - S(1.6), yy, String(rw.qty), "end");
+  const fit = (t, cw, mono) => truncateToWidth(String(t), cw / f - 3.2, TH, false, mono);
+  stacks.forEach((srows, si) => {
+    if (!srows.length) return;
+    const sx = x0 + si * (tw + S(GAP));
+    const xs = [sx]; cols.forEach((cw, i) => xs.push(xs[i] + cw));
+    const nR = srows.length;
+    const yEnd = top + RH * (nR + 1);
+    for (let r = 0; r <= nR + 1; r++) out += line(sx, top + RH * r, sx + tw, top + RH * r);
+    xs.forEach((x, i) => out += line(x, top, x, yEnd, (i === 0 || i === xs.length - 1) ? LINE_W.thick : LINE_W.thin));
+    out += line(sx, top, sx + tw, top, LINE_W.thick) + line(sx, yEnd, sx + tw, yEnd, LINE_W.thick);
+    heads.forEach((t, i) => out += txt(xs[i] + cols[i] / 2, top + RH / 2 + S(TH * 0.36), t, "middle"));
+    srows.forEach((rw, r) => {
+      const yy = top + RH * (r + 1) + RH / 2 + S(TH * 0.36);
+      const no = start + si * PARTS_PER_COL + r + 1;
+      out += txt(xs[1] - S(1.6), yy, String(no), "end");
+      out += txt(xs[1] + S(1.6), yy, fit(rw.name, cols[1]), "start");
+      out += txt(xs[2] + S(1.6), yy, fit(rw.model, cols[2], true), "start", true);
+      out += txt(xs[3] + S(1.6), yy, fit(rw.maker, cols[3]), "start");
+      out += txt(xs[4] + cols[4] - S(1.6), yy, String(rw.qty), "end");
+    });
   });
   return out;
 }

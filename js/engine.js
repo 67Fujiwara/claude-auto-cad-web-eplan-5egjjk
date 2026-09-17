@@ -2088,11 +2088,11 @@ function fitTextSize(value, cellW, startSize, bold = false) {
   return TEXT_H.small;   // 最小 2.5mm。収まらない分は truncateToWidth が切り詰める
 }
 /** 欄に収まらない文字列を末尾「…」で切り詰める (クリップできない DXF 用) */
-function truncateToWidth(value, cellW, size, bold = false) {
+function truncateToWidth(value, cellW, size, bold = false, mono = false) {
   const s = String(value);
-  if (textWidthMM(s, size, bold) <= cellW) return s;
+  if (textWidthMM(s, size, bold, mono) <= cellW) return s;
   let out = s;
-  while (out.length > 1 && textWidthMM(out + "…", size, bold) > cellW) out = out.slice(0, -1);
+  while (out.length > 1 && textWidthMM(out + "…", size, bold, mono) > cellW) out = out.slice(0, -1);
   return out + "…";
 }
 /** 線分 a-b が矩形 r と交差する (端点が内側の場合を含む) か。直交配線前提の簡易判定 */
@@ -2227,7 +2227,8 @@ function isDrawingPage(page) { return !page || !page.kind; }
    行は meta.partsRows に持ち、機器リストのページが並び順に
    PARTS_PER_PAGE 行ずつ受け持つ — 入りきらなければ 2 枚目・3 枚目と
    自動でページが増える。図番は書類側の A 系列 */
-const PARTS_PER_PAGE = 30;   // A3 横・行 7mm の見やすい寸法で 1 枚に入る行数
+const PARTS_PER_COL = 30;    // 1 列に入る行数 (A3 横・行 7mm の見やすい寸法)
+const PARTS_PER_PAGE = 60;   // 横 2 列 (左 30 + 右 30) で 1 枚に入る行数
 function partsRows() {
   const m = projectMeta();
   return Array.isArray(m.partsRows) ? m.partsRows : [];
