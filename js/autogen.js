@@ -552,7 +552,7 @@ function aiGenerate(sel) {
   for (let i = 0; i < sheets.length - 1; i++) {
     const from = sheets[i], to = sheets[i + 1];
     from.outLinks.forEach(d => d.desc = `/${to.page.no}.0`);
-    to.inLinks.forEach(d => d.desc = `/${from.page.no}.${sheetCol(from.endX)}`);
+    to.inLinks.forEach(d => d.desc = `/${from.page.no}.${sheetCol(from.endX, pageSheetOf(from.page))}`);
   }
   if (sheets.length > 1) report.push(`図枠に収まらないため制御回路を ${sheets.length} ページに自動分割 (電位リンク ${ctrlTag}/0V で接続)`);
 

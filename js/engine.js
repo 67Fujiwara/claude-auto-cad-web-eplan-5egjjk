@@ -72,23 +72,20 @@ function pageSheetMeta(page) {
     scale: pg.scale || m.scale,
   };
 }
-/** meta (用紙・尺度) から作図領域 SHEET を再計算する (JIS Z 8311)。
+/** meta (用紙・尺度) から作図領域を計算する (JIS Z 8311・純粋関数)。
     輪郭線の幅 c は A0・A1 = 20mm / A2〜A4 = 10mm、とじ代側 (左) は 20mm。
     格子参照の区分数は偶数とし、1区分が 25〜75mm に収まるようにする。 */
-function applySheet(page) {
-  const m = pageSheetMeta(page);
+function computeSheet(m) {
   const [pw, ph] = paperSize(m.paper, m.orient);
   const f = scaleFactor(m.scale);
   const c = (m.paper === "A0" || m.paper === "A1") ? 20 : 10;
-  SHEET.paper = m.paper; SHEET.orient = m.orient; SHEET.scale = m.scale; SHEET.f = f;
-  SHEET.w = pw * f;
-  SHEET.h = ph * f;
-  SHEET.margin = c * f;
-  SHEET.marginLeft = Math.max(20, c) * f;      // とじ代 20mm
+  const s = { paper: m.paper, orient: m.orient, scale: m.scale, f,
+    w: pw * f, h: ph * f, margin: c * f,
+    marginLeft: Math.max(20, c) * f };         // とじ代 20mm
   const div = SHEET_DIVISIONS[m.paper];
   if (div) {
     const [dc, dr] = m.orient === "portrait" ? [div[1], div[0]] : div;
-    SHEET.cols = dc; SHEET.rows = dr;
+    s.cols = dc; s.rows = dr;
   }
   else {                                       // 表にない用紙は 25〜75mm の偶数個に分ける
     const evenDiv = (len, target) => {
@@ -97,10 +94,20 @@ function applySheet(page) {
       while (len / n > 75) n += 2;
       return n;
     };
-    SHEET.cols = evenDiv(pw - c - Math.max(20, c), 50);
-    SHEET.rows = evenDiv(ph - c * 2, 50);
+    s.cols = evenDiv(pw - c - Math.max(20, c), 50);
+    s.rows = evenDiv(ph - c * 2, 50);
   }
+  return s;
+}
+/** そのページの図枠を作図中のグローバル SHEET に適用する */
+function applySheet(page) {
+  Object.assign(SHEET, computeSheet(pageSheetMeta(page)));
   return SHEET;
+}
+/** そのページの図枠 (今表示中の図枠に依存しない読み取り用)。
+    相互参照の区分は「相手のページの図枠」で数える必要がある */
+function pageSheetOf(page) {
+  return page ? computeSheet(pageSheetMeta(page)) : SHEET;
 }
 /** すべての図形座標を k 倍する (尺度変更で図面の見た目を保つため) */
 function scaleProjectGeometry(k) {
@@ -1794,7 +1801,8 @@ function gotoRefText(dev) {
   if (!pg) return "?";
   const no = pageDwgNo(pg);
   const mate = gotoCounterpart(dev);
-  return mate ? `${no}/${sheetCol(mate.x)}${sheetRow(mate.y)}` : no;
+  const sh = pageSheetOf(pg);   // 区分は相手のページの図枠で数える
+  return mate ? `${no}/${sheetCol(mate.x, sh)}${sheetRow(mate.y, sh)}` : no;
 }
 /** 機能欄 (コメント) を持つ端子 — 入出力点のみ。
     サービス電源 (0V/24V) とコモンは出力/入力の点ではないので機能欄を持たない */
@@ -2851,15 +2859,16 @@ function displayTag(dev) {
   return dev.tag;
 }
 
-/** 格子参照の列番号 (クロスリファレンス "ページ.列"。JIS Z 8311: 左上を起点に 1 から) */
-function sheetCol(x) {
-  const inner = SHEET.w - SHEET.marginLeft - SHEET.margin;
-  return Math.max(1, Math.min(SHEET.cols, Math.floor((x - SHEET.marginLeft) / (inner / SHEET.cols)) + 1));
+/** 格子参照の列番号 (クロスリファレンス "ページ.列"。JIS Z 8311: 左上を起点に 1 から)。
+    sh に pageSheetOf(page) を渡すと、今表示中でないページの図枠で数えられる */
+function sheetCol(x, sh = SHEET) {
+  const inner = sh.w - sh.marginLeft - sh.margin;
+  return Math.max(1, Math.min(sh.cols, Math.floor((x - sh.marginLeft) / (inner / sh.cols)) + 1));
 }
 /** 格子参照の行記号 (I・O を除く) */
-function sheetRow(y) {
-  const inner = SHEET.h - SHEET.margin * 2;
-  const i = Math.max(0, Math.min(SHEET.rows - 1, Math.floor((y - SHEET.margin) / (inner / SHEET.rows))));
+function sheetRow(y, sh = SHEET) {
+  const inner = sh.h - sh.margin * 2;
+  const i = Math.max(0, Math.min(sh.rows - 1, Math.floor((y - sh.margin) / (inner / sh.rows))));
   return SHEET_ROW_LETTERS[i] || "Z";
 }
 /** このページに印字される図番 (表題欄・DXF・印刷で共通) */
@@ -2891,7 +2900,10 @@ function devLocation(dev) {
   const dwg = f ? pageDwgNo(f.page) : "";
   const tail = dwg ? ` (${dwg})` : "";
   if (frameStyle() === "plain") return String(pageNo) + tail;   // 区画帯が無い様式は区画なし
-  return pageNo + "." + sheetRow(dev.y) + sheetCol(dev.x) + tail;
+  /* 区分は「その機器が載っているページの図枠」で数える。今表示中の図枠で
+     数えると、用紙・尺度の違うページを指す相互参照が別の区分にずれる */
+  const sh = f ? pageSheetOf(f.page) : SHEET;
+  return pageNo + "." + sheetRow(dev.y, sh) + sheetCol(dev.x, sh) + tail;
 }
 
 /** コイルにリンクされた接点一覧 (接点ミラー / クロスリファレンス) */
