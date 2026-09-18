@@ -338,6 +338,8 @@ function bindPnDraw(pane) {
     const nm = { line: "線", circle: "丸 (中心からドラッグ)", arrow: "矢印 (根→先)", text: "文字" }[b.dataset.k];
     UI.setMsg(`作図: ${nm} — 図の上で${b.dataset.k === "text" ? "クリック" : "ドラッグ"} (1 回描くと選択に戻ります / Esc で中止)`);
   }));
+  const all = pane.querySelector("#pnSelAll");
+  if (all) all.addEventListener("click", () => UI.panelSelectAll());
 }
 
 /* パネル図の図形 (機器・穴のまとまり) を選んでいるとき: その編集 */
@@ -346,7 +348,13 @@ function bindPnDraw(pane) {
     const pd = panelDataOf(page);
     const ents = idxs.map(i => pd.entities[i]).filter(Boolean);
     const one = ents.length === 1 ? ents[0] : null;
-    const nClu = panelClusters(page).filter(c => idxs.some(i => c.set.has(i))).length;
+    // まとまり数は「クラスタ側の要素を選択集合で引く」— 全選択 (数万要素) でも
+    // 最初の一致で打ち切れるので重くならない
+    const selSet = panelSelIdxs();
+    const nClu = panelClusters(page).filter(c => {
+      for (const i of c.set) if (selSet.has(i)) return true;
+      return false;
+    }).length;
     pane.innerHTML = `
       <div class="prop-head"><div class="prop-head-txt"><div class="t1">パネル図の図形</div><div class="t2">${nClu} まとまり / ${ents.length} 要素</div></div></div>
       ${one && one.t === "circle" ? `
@@ -367,6 +375,7 @@ function bindPnDraw(pane) {
         <button class="btn-solid" id="pPnRot" style="flex:1">回転 90° (R)</button>
         <button class="btn-solid" id="pPnDel" style="flex:1">削除 (Delete)</button>
       </div>
+      <div class="prop-row"><button class="btn-solid" id="pnSelAll" style="width:100%">図全体を選択 (Ctrl+A) — 丸ごと移動</button></div>
       <div class="prop-sect">書き足し (作図)</div>
       <div class="prop-row" style="display:flex;gap:6px">
         <button class="btn-solid pnDraw" data-k="line" style="flex:1">線</button>
@@ -439,6 +448,9 @@ function bindPnDraw(pane) {
       </select></div>
       <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnMono"${pg2.panelMono ? " checked" : ""}/><span>白黒で描く (印刷用 — 色を全部黒に)</span></label></div>
       <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnText"${pg2.panelText ? " checked" : ""}/><span>文字も描く (機器の型式など — 既定は出さない)</span></label></div>
+      <div class="prop-sect">図全体の移動</div>
+      <div class="prop-row"><button class="btn-solid" id="pnSelAll" style="width:100%">図全体を選択 (Ctrl+A)</button></div>
+      <div class="prop-note">取り込んだ図を丸ごと選びます。図形の上をドラッグ、または矢印キー 5mm / Shift+矢印 0.5mm で置き場所を動かせます (元に戻すは Ctrl+Z)。</div>
       <div class="prop-sect">書き足し (作図)</div>
       <div class="prop-row" style="display:flex;gap:6px">
         <button class="btn-solid pnDraw" data-k="line" style="flex:1">線</button>
@@ -1574,6 +1586,7 @@ UI.openFile = async () => {
 };
 UI.selectAll = () => {
   if (App.sim.running) return;
+  if (UI.panelSelectAll()) return;   // パネル図のページでは取り込んだ図の全体を選ぶ
   const page = curPage();
   App.selection.clear();
   page.devices.forEach(d => App.selection.add(d.id));
@@ -1582,6 +1595,22 @@ UI.selectAll = () => {
   pageZones(page).forEach(z => App.selection.add(z.id));
   UI.showProps();
   requestRender();
+};
+/** パネル図 (キャビネット・中板) の図形を全部選ぶ — 取り込んだ図の
+    置き場所を丸ごと動かすため。図形の上をドラッグ、または矢印キーで移動。
+    パネル図のページでなければ何もしないで false を返す */
+UI.panelSelectAll = () => {
+  const page = curPage();
+  if (page.kind !== "panel" || !page.panel) return false;
+  const n = (panelDataOf(page).entities || []).length;
+  if (!n) return false;
+  App.selection.clear();
+  Editor.panelSel = { pageId: page.id, idxs: new Set(Array.from({ length: n }, (_, i) => i)) };
+  UI.setTool("select");
+  UI.showProps();
+  requestRender();
+  UI.setMsg(`図の全体 (${n} 要素) を選択しました — 図形の上をドラッグ、または矢印キー 5mm / Shift+矢印 0.5mm で移動 (Esc で解除)`);
+  return true;
 };
 UI.zoomCenter = (f) => {
   const r = Editor.svg.getBoundingClientRect();
