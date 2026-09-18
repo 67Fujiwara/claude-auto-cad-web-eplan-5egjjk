@@ -2515,7 +2515,7 @@ function mergeSymbolList(list) {
     検図「コイルにリンクされていません」が知らせるので、静かに嘘の参照が
     残るより安全 */
 function insertMasterPages(master, pageIdxs, at) {
-  const remapSym = mergeSymbolList(master && master.symbols);
+  const remapSym = symMergeSynced(() => mergeSymbolList(master && master.symbols));
   const clones = pageIdxs.map(i => JSON.parse(JSON.stringify(master.pages[i])));
   const idMap = new Map();
   clones.forEach(pg => {
@@ -2542,8 +2542,31 @@ function insertMasterPages(master, pageIdxs, at) {
   App.labelRev++;
   return clones;
 }
+/** mergeSymbolList を包み、自作シンボルが増えた・退役が解けたときの後始末をする:
+    ブラウザ (localStorage) へ保存し直し、パレットを描き直す。
+    図面に埋め込まれていた記号はここで取り込まれるが、以前はピンを打った
+    ときしかパレットを描き直さなかった — 棚 (分類) を割り当ててある記号は
+    ピン不要のため描き直されず、「作った記号がパレットに出ない・データベースで
+    外す→追加すると出る」になっていた */
+function symMergeSynced(fn) {
+  const db = typeof DB_SYMBOLS !== "undefined" ? DB_SYMBOLS : null;
+  // 記号の増加も退役の変化も 1 つの値で拾う (退役中は 0.5 と数える)
+  const cnt = () => db ? db.reduce((a, s) => a + (s.retired ? 0.5 : 1), 0) : 0;
+  const c0 = cnt();
+  const out = fn();
+  if (db && cnt() !== c0) {
+    try { if (typeof saveImportedSymbols === "function") saveImportedSymbols(); } catch (e) { }
+    try {
+      if (typeof UI !== "undefined" && UI.buildPalette && document.getElementById("symTree")) {
+        const se = document.getElementById("symSearch");
+        UI.buildPalette(se ? se.value : "");
+      }
+    } catch (e) { /* パレットが無い画面 (テスト等) では何もしない */ }
+  }
+  return out;
+}
 function mergeProjectSymbols() {
-  const remap = mergeSymbolList(App.project && App.project.symbols);
+  const remap = symMergeSynced(() => mergeSymbolList(App.project && App.project.symbols));
   if (Object.keys(remap).length) {
     App.project.pages.forEach(pg => (pg.devices || []).forEach(d => { if (remap[d.sym]) d.sym = remap[d.sym]; }));
   }

@@ -2241,7 +2241,14 @@ function saveImportedSymbols() {
   try {
     const imported = DB_SYMBOLS.filter(s => s.imported);
     localStorage.setItem("electracad.importedSyms", JSON.stringify(imported));
-  } catch (e) { /* 容量超過は無視 */ }
+  } catch (e) {
+    /* 容量超過など。黙って失われると「次に開いたらパレットから消えた」に
+       なるので、一度だけ知らせる (図面に置いた記号は図面へ埋め込まれる) */
+    if (!saveImportedSymbols._warned && typeof UI !== "undefined" && UI.setMsg) {
+      saveImportedSymbols._warned = true;
+      UI.setMsg("注意: 自作シンボルをブラウザへ保存できませんでした (保存容量の上限)。図面で使った記号は図面に埋め込まれるため、案件を保存すれば失われません");
+    }
+  }
 }
 function loadImportedSymbols() {
   try {
@@ -3272,6 +3279,10 @@ UI.refresh = (rebuildTabs = true) => {
 async function boot() {
   // 前回の図面をそのまま開く (無ければサンプル)。大きな図面は IndexedDB 側から
   App.project = (await loadAutosave()) || demoProject();
+  /* ブラウザ保存の自作シンボルを先に読み込む — 図面に埋め込まれた古い版が
+     同じ id を先取りすると、編集した最新の絵が捨てられてしまうため。
+     絵が違う埋め込み版は mergeProjectSymbols が別の版として取り込む */
+  loadImportedSymbols();
   mergeProjectSymbols(); migrateFrameStyle();
   normalizeWireNumbers();   // 線番が出ない取りこぼしを直す
   UI.renumberPages();   // ページ番号と図番を現在の設定に同期
@@ -3286,7 +3297,6 @@ async function boot() {
   });
   pn.addEventListener("keydown", e => { if (e.key === "Enter") pn.blur(); });
 
-  loadImportedSymbols();
   restoreFileHandle();
   UI.updateWipChip();          // ヘッダに今の案件名を出す
   window.addEventListener("beforeunload", e => {
