@@ -59,7 +59,7 @@
     <div class="item">
       <div class="qr" data-url="<?= t.qrUrl ?>"></div>
       <div class="name"><?= t.name ?></div>
-      <div class="id"><?= t.id ?></div>
+      <div class="id"><?= t.id ?><?= t.box ? '・' + t.box.name : '' ?></div>
       <div class="url"><?= t.qrUrl ?></div>
     </div>
   <? }); ?>

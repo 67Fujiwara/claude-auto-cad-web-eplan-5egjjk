@@ -3,6 +3,7 @@
   工具ごとに1カード。空き＝緑、使用中＝赤「〇〇さん 9/20まで」、超過＝濃い赤「超過」バッジ。
   空きの工具には「選択」ボタン。押すと青い「選択中」になり、1 つでも選ぶと画面下に固定の「借りる」バーが出る。
   「借りる」→ 名前・返却日・コメントを入れて「確定」で、選んだ工具をまとめて借りる（apiRequestMany）。
+  工具箱が登録されていれば工具箱ごとに見出し分けし、使用中の工具には「返却先: 管理者名（工具箱）」を表示する。
   自分が借りている工具（端末IDが一致）には「返却を選択」ボタン。押すと青い「返却選択中」になり、
   画面下のバーの「返却」でまとめて返却する（apiReturnMany）。延長は「+3日 / +7日 / 日付指定」。
 -->
@@ -82,7 +83,26 @@
     // 使用中になった工具は貸出選択から外し、返却できなくなった工具は返却選択から外す
     Array.from(selected).forEach(id => { if (!toolsById[id] || toolsById[id].inUse) selected.delete(id); });
     Array.from(selectedRet).forEach(id => { if (!toolsById[id] || !toolsById[id].canReturn) selectedRet.delete(id); });
-    cards.innerHTML = tools.map(t => {
+    // 工具箱ごとにまとめる（工具箱が 1 つも無ければ見出しなし）
+    const groups = [];
+    tools.forEach(t => {
+      const key = t.box ? t.box.id : '';
+      let g = groups.find(x => x.key === key);
+      if (!g) { g = { key: key, box: t.box, tools: [] }; groups.push(g); }
+      g.tools.push(t);
+    });
+    const showHeaders = groups.some(g => g.box);
+    cards.innerHTML = groups.map(g => {
+      const header = showHeaders
+        ? '<h2>' + (g.box ? esc(g.box.name) + (g.box.managerName ? ' <span class="muted">管理者: ' + esc(g.box.managerName) + '</span>' : '') : '未分類') + '</h2>'
+        : '';
+      return header + g.tools.map(renderCard).join('');
+    }).join('');
+    updateBar();
+  }
+
+  function renderCard(t) {
+    {
       const badge = t.inUse ? usedBadge(t) : '<span class="badge free">空き</span>';
       const returnBtn = t.canReturn
         ? retBtn(t.id)
@@ -109,10 +129,10 @@
         '<div class="head"><div><b>' + esc(t.name) + '</b> <span class="muted">' + esc(t.id) + '</span></div><div>' + badge + '</div></div>' +
         overdueLine +
         comment +
+        (t.inUse ? returnToLine(t) : '') +
         actions +
         '</div>';
-    }).join('');
-    updateBar();
+    }
   }
 
   // 選択ボタン: 未選択=灰色「選択」、選択中=青「選択中」
@@ -187,7 +207,7 @@
     btn.disabled = true;
     try {
       const r = await call('apiReturnMany', ids, deviceId());
-      let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました' : '';
+      let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
       showMsg('msg', text, r.failed.length ? 'err' : 'ok');
       selectedRet.clear();
@@ -212,7 +232,7 @@
     try {
       const r = await call('apiRequestMany', Array.from(selected), name, due, comment, deviceId());
       const okNames = r.ok.map(t => t.name).join('、');
-      let text = r.ok.length ? okNames + ' を ' + fmtMd(due) + ' まで借りました' : '';
+      let text = r.ok.length ? okNames + ' を ' + fmtMd(due) + ' まで借りました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '借りられなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
       showMsg('msg', text, r.failed.length ? 'err' : 'ok');
       selected.clear();

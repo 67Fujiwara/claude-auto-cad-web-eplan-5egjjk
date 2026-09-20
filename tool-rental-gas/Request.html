@@ -56,6 +56,7 @@
     <? } else { ?>
       <form id="form" class="card">
         <span class="badge free">空き</span>
+        <? if (data.tool.box) { ?><div class="muted" style="margin-top:6px">工具箱: <?= data.tool.box.name ?>　返却先: <?= data.tool.returnTo || '管理者' ?></div><? } ?>
         <label for="name">名前</label>
         <input type="text" id="name" autocomplete="name" required>
         <label>開始日</label>
@@ -118,6 +119,7 @@
         ? '<span class="badge over">' + esc(fmtMd(t.due)) + 'まで（' + esc(t.overdueDays) + '日超過）</span>'
         : '<span class="badge used">' + esc(fmtMd(t.due)) + 'まで</span>') + '</div></div>' +
       (t.comment ? '<div class="muted" style="margin-top:4px">' + esc(t.comment) + '</div>' : '') +
+      returnToLine(t) +
       '<div class="row">' + selectBtn(t.id) + '</div>' +
       '</div>'
     ).join('');
@@ -176,7 +178,7 @@
     btn.disabled = true;
     try {
       const r = await call('apiReturnMany', ids, deviceId());
-      let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました' : '';
+      let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
       showMsg('msg', text, r.failed.length ? 'err' : 'ok');
       selected.clear();
@@ -213,7 +215,7 @@
       try {
         const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value, commentEl.value, deviceId());
         form.hidden = true;
-        document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。';
+        document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。返却時は ' + (t.returnTo || '管理者') + ' に返却してください。';
         document.getElementById('done').hidden = false;
       } catch (e) {
         showMsg('formMsg', e.message || String(e), 'err');

@@ -80,6 +80,16 @@
     }
     return '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>';
   }
+  // 返却先の 1 行表示。「返却先: 山田（工具箱A）」。工具箱未設定なら「返却先: 管理者」
+  function returnToLine(t) {
+    return '<div class="muted" style="margin-top:4px">返却先: ' + esc(t.returnTo || '管理者') + '</div>';
+  }
+  // 借りた/返した工具を返却先ごとにまとめた文。「ニッパー、六角レンチ は 山田（工具箱A）に返却してください」
+  function returnToSummary(tools) {
+    const map = {};
+    tools.forEach(t => { const k = t.returnTo || '管理者'; (map[k] = map[k] || []).push(t.name); });
+    return Object.keys(map).map(k => map[k].join('、') + ' は ' + k + ' に返却してください').join('。');
+  }
   // 画面上部の超過バナー。超過が無ければ空文字
   function overdueBanner(tools) {
     const over = tools.filter(t => t.overdue);

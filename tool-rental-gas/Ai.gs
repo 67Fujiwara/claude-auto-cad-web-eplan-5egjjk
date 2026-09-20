@@ -6,7 +6,7 @@
  *
  * 現在の動き（スタブ）:
  *   1. event を文章にして Claude API（https://api.anthropic.com/v1/messages）に送る
- *   2. 返ってきた文章を manager_email に転送する
+ *   2. 返ってきた文章を管理者メール（工具箱の管理者 > 設定シートの manager_email）に転送する
  *   3. API キー（設定シート claude_api_key）が空なら、人の管理者と同じメールにフォールバック
  *
  * 将来ここを育てて「AI が判断して使用者へ返信する」「延長を自動承認する」などに置き換える。
@@ -36,13 +36,14 @@ const AiManager = {
       Logger.log('AiManager: API 呼び出し失敗 → 人の管理者へフォールバック: ' + err.message);
       return HumanManager.handle(event, settings);
     }
-    if (!settings.manager_email) {
-      Logger.log('AiManager: manager_email 未設定。AI の返答: ' + reply);
+    const to = event.managerEmail || managerEmailFor_(event, settings);
+    if (!to) {
+      Logger.log('AiManager: 通知先メール未設定。AI の返答: ' + reply);
       return;
     }
     const base = buildManagerMail_(event);
     MailApp.sendEmail({
-      to: settings.manager_email,
+      to: to,
       subject: '【AI管理者】' + base.subject,
       body: ['■ AI管理者の判断', reply, '', '■ 元のイベント', describeEvent_(event), '', '一覧: ' + event.links.list].join('\n'),
       name: '工具貸出管理（AI）',

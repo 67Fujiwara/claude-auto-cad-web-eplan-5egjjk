@@ -9,6 +9,7 @@
  *   {
  *     type:        'request' | 'overdue' | 'extend' | 'return',
  *     tool:        { id, name },
+ *     box:         { id, name, managerName, managerEmail } | null,  // 工具箱（未設定なら null → 設定シートの manager_email 宛て）
  *     tools:       [{ id, name }, ...],      // まとめ貸出・まとめ返却のとき（request / return）。tool は先頭と同じ
  *     user:        { name, email },
  *     dueDate:     'yyyy-MM-dd',            // 返却日（延長後は新しい返却日）
@@ -31,6 +32,8 @@
 function notifyManager(event) {
   if (!event || !event.type || !event.tool) throw new Error('notifyManager: event が不正です');
   const settings = getSettings();
+  // 通知先: 工具箱の管理者メール > 設定シートの manager_email
+  event.managerEmail = managerEmailFor_(event, settings);
 
   // 貸出（request）の通知は設定シート notify_on_request = 'off' でオフにできる。
   // 返却日超過（overdue）・延長・返却は常に通知する。
@@ -47,18 +50,25 @@ function notifyManager(event) {
   return HumanManager.handle(event, settings);
 }
 
+/** イベントの通知先メール。工具箱に管理者メールがあればそれ、無ければ設定シートの manager_email */
+function managerEmailFor_(event, settings) {
+  if (event.box && event.box.managerEmail && isEmail_(event.box.managerEmail)) return event.box.managerEmail;
+  return settings.manager_email || '';
+}
+
 /**
  * 人の管理者: メールで通知する。
  */
 const HumanManager = {
   handle: function (event, settings) {
-    if (!settings.manager_email) {
-      Logger.log('manager_email が未設定のため管理者通知をスキップ: ' + event.type + ' ' + event.tool.id);
+    const to = event.managerEmail || managerEmailFor_(event, settings);
+    if (!to) {
+      Logger.log('通知先メールが未設定のため管理者通知をスキップ: ' + event.type + ' ' + event.tool.id);
       return;
     }
     const mail = buildManagerMail_(event);
     MailApp.sendEmail({
-      to: settings.manager_email,
+      to: to,
       subject: mail.subject,
       body: mail.body,
       name: '工具貸出管理',
@@ -139,7 +149,9 @@ function buildManagerMail_(event) {
       subject = '【工具貸出管理】' + event.type + ' ' + t.name;
       lines = [JSON.stringify(event, null, 2)];
   }
+  if (event.box) lines.push('', '工具箱: ' + event.box.name + (event.box.managerName ? '（管理者: ' + event.box.managerName + '）' : ''));
   lines.push('', '一覧: ' + (l.list || ''));
+  if (event.box) subject = '[' + event.box.name + '] ' + subject;
   return { subject: subject, body: lines.join('\n') };
 }
 
@@ -158,6 +170,7 @@ function sendOverdueMailToUser(event) {
     '返却予定日: ' + event.dueDate,
     '超過日数: ' + event.overdueDays + ' 日',
     (event.comment ? 'コメント: ' + event.comment : ''),
+    (event.box ? '返却先: ' + (event.box.managerName || '') + '（' + event.box.name + '）' : ''),
     '',
     '▼ 返却した（返却済みにする）',
     l.return,
@@ -196,6 +209,7 @@ function describeEvent_(event) {
   if (event.returnDate) parts.push('返却された日: ' + event.returnDate);
   if (event.overdueDays !== undefined) parts.push('超過日数: ' + event.overdueDays + ' 日');
   if (event.comment) parts.push('コメント: ' + event.comment);
+  if (event.box) parts.push('工具箱: ' + event.box.name + (event.box.managerName ? '（管理者: ' + event.box.managerName + '）' : ''));
   if (event.note) parts.push('操作元: ' + event.note);
   return parts.join('\n');
 }

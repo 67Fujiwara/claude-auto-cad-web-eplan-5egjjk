@@ -1,7 +1,7 @@
 <!--
   Admin.html — 管理画面（?view=admin）
   最初に admin_pin を要求（通ったら sessionStorage に保持）。
-  機能: 工具の追加 / 編集 / 削除、代理の貸出・返却（端末に関係なく可能）、QR 用 URL（コピー・QR 画像）、QR 一括印刷、設定編集、直近50件のログ。
+  機能: 工具箱の追加 / 編集 / 削除（工具箱ごとに管理者名・管理者メール）、工具の追加 / 編集 / 削除（工具箱の割り当て）、代理の貸出・返却（端末に関係なく可能）、QR 用 URL（コピー・QR 画像）、QR 一括印刷、設定編集、直近50件のログ。
   QR 描画は CDN の qrcode.js（読み込めなくても URL は必ず表示）。
 -->
 <!DOCTYPE html>
@@ -28,10 +28,23 @@
   <div id="main" hidden>
     <div id="urlWarn"></div>
 
+    <h2>工具箱</h2>
+    <div class="muted" style="margin-bottom:8px">工具箱ごとに管理者を分けられます。通知はその工具箱の管理者メールに届き、使用者には「〇〇に返却してください」と表示されます。</div>
+    <form id="addBoxForm" class="card">
+      <div class="row">
+        <input type="text" id="boxName" placeholder="工具箱名（例: 1F工具箱）" required>
+        <input type="text" id="boxManager" placeholder="管理者名">
+        <input type="email" id="boxEmail" placeholder="管理者メール">
+        <button type="submit" class="btn small">追加</button>
+      </div>
+    </form>
+    <div id="boxes"></div>
+
     <h2>工具の追加</h2>
     <form id="addForm" class="card">
       <div class="row">
         <input type="text" id="addName" placeholder="工具名" required>
+        <select id="addBox"><option value="">工具箱なし</option></select>
         <button type="submit" class="btn small">追加</button>
       </div>
     </form>
@@ -130,6 +143,7 @@
   }
 
   function renderAll() {
+    renderBoxes(DATA.boxes);
     renderTools(DATA.tools);
     renderSettings(DATA.settings);
     renderLogs(DATA.logs);
@@ -137,6 +151,63 @@
     w.innerHTML = DATA.settings.app_url ? '' :
       '<div class="msg err">app_url が未設定です。デプロイ後の Web アプリ URL を下の設定で保存してください（QR・メールのリンクに使います）。</div>';
   }
+
+  // ---- 工具箱 ----
+  function boxSelect(cls, current) {
+    return '<select class="' + cls + '"><option value="">工具箱なし</option>' +
+      (DATA.boxes || []).map(b => '<option value="' + esc(b.id) + '"' + (b.id === current ? ' selected' : '') + '>' + esc(b.name) + (b.managerName ? '（' + esc(b.managerName) + '）' : '') + '</option>').join('') +
+      '</select>';
+  }
+  function renderBoxes(boxes) {
+    const box = document.getElementById('boxes');
+    box.innerHTML = (boxes || []).length ? boxes.map(b =>
+      '<div class="card" data-box="' + esc(b.id) + '">' +
+      '<div class="head"><b>' + esc(b.id) + '</b> <span class="muted">' + esc(b.toolCount) + ' 点</span></div>' +
+      '<div class="row">' +
+      '<input type="text" class="bName" value="' + esc(b.name) + '" placeholder="工具箱名">' +
+      '<input type="text" class="bManager" value="' + esc(b.managerName) + '" placeholder="管理者名">' +
+      '<input type="email" class="bEmail" value="' + esc(b.managerEmail) + '" placeholder="管理者メール">' +
+      '</div>' +
+      '<div class="row">' +
+      '<button type="button" class="btn small" data-bact="save">保存</button>' +
+      '<button type="button" class="btn small red" data-bact="del"' + (b.toolCount ? ' disabled' : '') + '>削除</button>' +
+      '</div></div>'
+    ).join('') : '<div class="muted">工具箱はまだありません（無くても動きます。通知は設定の管理者メール宛て）</div>';
+    const sel = document.getElementById('addBox');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">工具箱なし</option>' + (boxes || []).map(b => '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>').join('');
+    sel.value = cur;
+  }
+  document.getElementById('addBoxForm').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    try {
+      const b = await call('adminAddBox', PIN, document.getElementById('boxName').value, document.getElementById('boxManager').value, document.getElementById('boxEmail').value);
+      ['boxName', 'boxManager', 'boxEmail'].forEach(id => { document.getElementById(id).value = ''; });
+      showMsg('msg', '工具箱 ' + b.name + ' を追加しました', 'ok');
+      await load();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  });
+  document.getElementById('boxes').addEventListener('click', async function (ev) {
+    const b = ev.target.closest('button[data-bact]');
+    if (!b) return;
+    const card = b.closest('.card');
+    const id = card.dataset.box;
+    try {
+      if (b.dataset.bact === 'save') {
+        await call('adminUpdateBox', PIN, id, card.querySelector('.bName').value, card.querySelector('.bManager').value, card.querySelector('.bEmail').value);
+        showMsg('msg', id + ' を保存しました', 'ok');
+      } else if (b.dataset.bact === 'del') {
+        if (!confirm(id + ' を削除しますか？')) return;
+        await call('adminDeleteBox', PIN, id);
+        showMsg('msg', id + ' を削除しました', 'ok');
+      }
+      await load();
+    } catch (e) {
+      showMsg('msg', e.message || String(e), 'err');
+    }
+  });
 
   // ---- 工具 ----
   function renderTools(tools) {
@@ -160,9 +231,11 @@
         (t.overdue ? '<div class="overdue-text" style="margin-top:6px">返却期限を ' + esc(t.overdueDays) + ' 日過ぎています</div>' : '') +
         '<div class="row">' +
         '<input type="text" class="nameInput" value="' + esc(t.name) + '">' +
+        boxSelect('boxInput', t.box ? t.box.id : '') +
         '<button type="button" class="btn small" data-act="save">保存</button>' +
         '<button type="button" class="btn small red" data-act="del"' + (t.inUse ? ' disabled' : '') + '>削除</button>' +
         '</div>' +
+        (t.inUse ? returnToLine(t) : '') +
         (t.inUse && t.comment ? '<div class="muted" style="margin-top:6px">' + esc(t.comment) + '</div>' : '') +
         (t.inUse && t.email ? '<div class="muted" style="margin-top:6px">' + esc(t.email) + '</div>' : '') +
         (t.inUse ? '<div class="muted" style="margin-top:6px">端末ID: ' + (t.device ? esc(t.device.slice(0, 8)) + '…' : '（なし・誰でも返却可）') + '</div>' : '') +
@@ -218,7 +291,7 @@
       }
       if (act === 'save') {
         const name = card.querySelector('.nameInput').value;
-        await call('adminUpdateTool', PIN, id, name);
+        await call('adminUpdateTool', PIN, id, name, card.querySelector('.boxInput').value);
         showMsg('msg', id + ' を保存しました', 'ok');
       } else if (act === 'del') {
         if (!confirm(id + ' を削除しますか？')) return;
@@ -235,7 +308,7 @@
     ev.preventDefault();
     const input = document.getElementById('addName');
     try {
-      const t = await call('adminAddTool', PIN, input.value);
+      const t = await call('adminAddTool', PIN, input.value, document.getElementById('addBox').value);
       input.value = '';
       showMsg('msg', t.id + ' ' + t.name + ' を追加しました', 'ok');
       await load();

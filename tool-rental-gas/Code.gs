@@ -21,8 +21,11 @@ const TZ = 'Asia/Tokyo';
 const SHEET_TOOLS = '工具';
 const SHEET_LOG = '貸出ログ';
 const SHEET_SETTINGS = '設定';
+const SHEET_BOXES = '工具箱';
 
-const TOOL_HEADERS = ['tool_id', '工具名', '状態', '使用者名', '使用者メール', '返却日', 'コメント', '端末ID'];
+const TOOL_HEADERS = ['tool_id', '工具名', '状態', '使用者名', '使用者メール', '返却日', 'コメント', '端末ID', '工具箱'];
+const BOX_HEADERS = ['box_id', '工具箱名', '管理者名', '管理者メール'];
+const BOX_ID_PREFIX = 'BOX';
 const LOG_HEADERS = ['日時', 'tool_id', '工具名', '使用者名', '使用者メール', '開始日', '返却日', '操作', '備考', '端末ID'];
 const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', 'claude_api_key', 'notify_on_request'];
 
@@ -44,10 +47,16 @@ function setup() {
   ss.setSpreadsheetTimeZone(TZ);
 
   const tools = getOrCreateSheet_(ss, SHEET_TOOLS, TOOL_HEADERS);
-  tools.getRange('A:H').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
+  tools.getRange('A:I').setNumberFormat('@'); // 日付は yyyy-MM-dd のテキストとして扱う
   tools.setColumnWidth(2, 200);
   tools.setColumnWidth(7, 300);
   applyOverdueFormat_(tools);
+
+  // 工具箱（工具箱ごとに管理者を分ける。工具の「工具箱」列に box_id を入れる）
+  const boxes = getOrCreateSheet_(ss, SHEET_BOXES, BOX_HEADERS);
+  boxes.getRange('A:D').setNumberFormat('@');
+  boxes.setColumnWidth(2, 200);
+  boxes.setColumnWidth(4, 260);
 
   const log = getOrCreateSheet_(ss, SHEET_LOG, LOG_HEADERS);
   log.getRange('A:A').setNumberFormat('yyyy/MM/dd HH:mm:ss');
@@ -91,7 +100,7 @@ function installTriggers() {
  * 同じ条件の既存ルールは置き換える。
  */
 function applyOverdueFormat_(sheet) {
-  const range = sheet.getRange('A2:H1000');
+  const range = sheet.getRange('A2:I1000');
   const formula = '=AND($C2="' + STATUS_USED + '", $F2<>"", $F2<TEXT(TODAY(),"yyyy-mm-dd"))';
   const rules = sheet.getConditionalFormatRules().filter(r => {
     const c = r.getBooleanCondition();
@@ -175,7 +184,8 @@ function handleAction_(p) {
   try {
     if (p.action === 'return') {
       const t = returnTool_(p.tool, 'メールリンク', { force: true });
-      return render_('Result', { ok: true, title: '返却しました', message: t.name + ' を返却済みにしました。' }, '返却');
+      const to = t.returnTo ? ' 工具は ' + t.returnTo + ' に返却してください。' : '';
+      return render_('Result', { ok: true, title: '返却しました', message: t.name + ' を返却済みにしました。' + to }, '返却');
     }
     if (p.action === 'extend') {
       const t = extendTool_(p.tool, { days: p.days ? Number(p.days) : null, date: p.date || null }, 'メールリンク');
@@ -265,16 +275,17 @@ function apiReturnMany(toolIds, deviceId) {
       failed.push({ id: id, name: t ? t.name : id, message: err.message });
     }
   });
-  if (ok.length) {
+  groupByBox_(ok).forEach(grp => {
     safeNotify_({
       type: 'return',
-      tool: { id: ok[0].id, name: ok[0].name },
-      tools: ok.map(t => ({ id: t.id, name: t.name })),
+      tool: { id: grp.tools[0].id, name: grp.tools[0].name },
+      tools: grp.tools.map(t => ({ id: t.id, name: t.name })),
+      box: grp.box,
       user: user,
       returnDate: today_(),
       note: '申請画面',
     });
-  }
+  });
   return { ok: ok, failed: failed };
 }
 
@@ -293,9 +304,14 @@ function adminVerifyPin(pin) {
 
 function adminGetData(pin) {
   const s = checkPin_(pin);
+  const tools = readTools_();
   return {
     appUrl: getAppUrl_(),
-    tools: readTools_().map(fullTool_),
+    tools: tools.map(fullTool_),
+    boxes: readBoxes_().map(b => ({
+      id: b.id, name: b.name, managerName: b.managerName, managerEmail: b.managerEmail,
+      toolCount: tools.filter(t => t.box === b.id).length,
+    })),
     settings: {
       manager_type: s.manager_type || 'human',
       manager_email: s.manager_email || '',
@@ -321,27 +337,82 @@ function adminReturnTool(pin, toolId) {
   return fullTool_(findTool_(toolId));
 }
 
-function adminAddTool(pin, name) {
+/** 工具の追加。boxId は任意（工具箱の box_id） */
+function adminAddTool(pin, name, boxId) {
   checkPin_(pin);
   name = String(name || '').trim();
   if (!name) throw new Error('工具名を入力してください');
+  boxId = String(boxId || '').trim();
+  if (boxId && !findBox_(boxId)) throw new Error('工具箱が見つかりません: ' + boxId);
   return withLock_(() => {
     const id = nextToolId_();
-    getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '', '']);
-    return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '', device: '' });
+    getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '', '', boxId]);
+    return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '', device: '', box: boxId });
   });
 }
 
-function adminUpdateTool(pin, toolId, name) {
+/** 工具の編集。boxId を渡すと工具箱も変更する（'' で未分類に戻す、undefined/null なら変えない） */
+function adminUpdateTool(pin, toolId, name, boxId) {
   checkPin_(pin);
   name = String(name || '').trim();
   if (!name) throw new Error('工具名を入力してください');
+  const changeBox = boxId !== undefined && boxId !== null;
+  boxId = String(boxId || '').trim();
+  if (changeBox && boxId && !findBox_(boxId)) throw new Error('工具箱が見つかりません: ' + boxId);
   return withLock_(() => {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     t.name = name;
+    if (changeBox) t.box = boxId;
     writeTool_(t);
     return fullTool_(t);
+  });
+}
+
+/** 工具箱の追加 */
+function adminAddBox(pin, name, managerName, managerEmail) {
+  checkPin_(pin);
+  name = String(name || '').trim();
+  managerName = String(managerName || '').trim();
+  managerEmail = String(managerEmail || '').trim();
+  if (!name) throw new Error('工具箱名を入力してください');
+  if (managerEmail && !isEmail_(managerEmail)) throw new Error('管理者メールの形式が正しくありません');
+  return withLock_(() => {
+    const id = nextBoxId_();
+    getSheet_(SHEET_BOXES).appendRow([id, name, managerName, managerEmail]);
+    return { id: id, name: name, managerName: managerName, managerEmail: managerEmail, toolCount: 0 };
+  });
+}
+
+/** 工具箱の編集 */
+function adminUpdateBox(pin, boxId, name, managerName, managerEmail) {
+  checkPin_(pin);
+  name = String(name || '').trim();
+  managerName = String(managerName || '').trim();
+  managerEmail = String(managerEmail || '').trim();
+  if (!name) throw new Error('工具箱名を入力してください');
+  if (managerEmail && !isEmail_(managerEmail)) throw new Error('管理者メールの形式が正しくありません');
+  return withLock_(() => {
+    const b = findBox_(boxId);
+    if (!b) throw new Error('工具箱が見つかりません: ' + boxId);
+    b.name = name;
+    b.managerName = managerName;
+    b.managerEmail = managerEmail;
+    writeBox_(b);
+    return { id: b.id, name: b.name, managerName: b.managerName, managerEmail: b.managerEmail };
+  });
+}
+
+/** 工具箱の削除（工具が割り当てられていると削除不可） */
+function adminDeleteBox(pin, boxId) {
+  checkPin_(pin);
+  return withLock_(() => {
+    const b = findBox_(boxId);
+    if (!b) throw new Error('工具箱が見つかりません: ' + boxId);
+    const n = readTools_().filter(t => t.box === b.id).length;
+    if (n) throw new Error('この工具箱には工具が ' + n + ' 点あります。先に工具の工具箱を変更してください');
+    getSheet_(SHEET_BOXES).deleteRow(b.row);
+    return true;
   });
 }
 
@@ -424,19 +495,32 @@ function apiRequestMany(toolIds, userName, due, comment, deviceId) {
       failed.push({ id: id, name: t ? t.name : id, message: err.message });
     }
   });
-  if (ok.length) {
+  // 工具箱ごとに 1 通ずつ通知（管理者が異なるため）
+  groupByBox_(ok).forEach(grp => {
     safeNotify_({
       type: 'request',
-      tool: { id: ok[0].id, name: ok[0].name },
-      tools: ok.map(t => ({ id: t.id, name: t.name })),
+      tool: { id: grp.tools[0].id, name: grp.tools[0].name },
+      tools: grp.tools.map(t => ({ id: t.id, name: t.name })),
+      box: grp.box,
       user: { name: userName, email: '' },
       startDate: today_(),
       dueDate: dueYmd,
       comment: String(comment || '').trim().slice(0, 200),
       note: '一覧画面',
     });
-  }
+  });
   return { ok: ok, failed: failed };
+}
+
+/** 工具（publicTool_ の形）を工具箱ごとにまとめる。[{ box, tools }] */
+function groupByBox_(tools) {
+  const map = {};
+  tools.forEach(t => {
+    const key = t.box ? t.box.id : '';
+    if (!map[key]) map[key] = { box: t.box ? boxInfo_(t.box.id, true) : null, tools: [] };
+    map[key].tools.push(t);
+  });
+  return Object.keys(map).map(k => map[k]);
 }
 
 function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId, opt) {
@@ -474,6 +558,7 @@ function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId, op
     safeNotify_({
       type: 'request',
       tool: { id: result.id, name: result.name },
+      box: boxInfo_(result.box, true),
       user: { name: userName, email: userEmail },
       startDate: today,
       dueDate: dueYmd,
@@ -503,6 +588,7 @@ function returnTool_(toolId, note, opt) {
     ev = {
       type: 'return',
       tool: { id: t.id, name: t.name },
+      box: boxInfo_(t.box, true),
       user: { name: t.user, email: t.email },
       dueDate: t.due,
       returnDate: today_(),
@@ -555,6 +641,7 @@ function extendTool_(toolId, opt, note) {
     ev = {
       type: 'extend',
       tool: { id: t.id, name: t.name },
+      box: boxInfo_(t.box, true),
       user: { name: t.user, email: t.email },
       oldDueDate: oldDue,
       dueDate: newDue,
@@ -603,6 +690,7 @@ function dailyCheck() {
     const ev = {
       type: 'overdue',
       tool: { id: t.id, name: t.name },
+      box: boxInfo_(t.box, true),
       user: { name: t.user, email: t.email },
       dueDate: t.due,
       overdueDays: diffDays_(today, t.due),
@@ -664,6 +752,7 @@ function readTools_() {
       due: normYmd_(r[5]) || '',
       comment: String(r[6] || '').trim(),
       device: String(r[7] || '').trim(),
+      box: String(r[8] || '').trim(),
     });
   }
   return out;
@@ -676,8 +765,71 @@ function findTool_(toolId) {
 }
 
 function writeTool_(t) {
-  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 8)
-    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '', t.device || '']]);
+  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 9)
+    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '', t.device || '', t.box || '']]);
+}
+
+// ---- 工具箱 ----
+
+/** 工具箱シートを全件読む。{row, id, name, managerName, managerEmail} の配列 */
+function readBoxes_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(SHEET_BOXES);
+  if (!sh) return [];
+  const values = sh.getDataRange().getValues();
+  const out = [];
+  for (let i = 1; i < values.length; i++) {
+    const r = values[i];
+    const id = String(r[0] || '').trim();
+    if (!id) continue;
+    out.push({
+      row: i + 1,
+      id: id,
+      name: String(r[1] || '').trim(),
+      managerName: String(r[2] || '').trim(),
+      managerEmail: String(r[3] || '').trim(),
+    });
+  }
+  return out;
+}
+
+function findBox_(boxId) {
+  boxId = String(boxId || '').trim();
+  if (!boxId) return null;
+  return readBoxes_().find(b => b.id === boxId) || null;
+}
+
+function writeBox_(b) {
+  getSheet_(SHEET_BOXES).getRange(b.row, 1, 1, 4).setValues([[b.id, b.name, b.managerName, b.managerEmail]]);
+}
+
+function nextBoxId_() {
+  let max = 0;
+  readBoxes_().forEach(b => {
+    const m = /^[A-Za-z_]+(\d+)$/.exec(b.id);
+    if (m) max = Math.max(max, Number(m[1]));
+  });
+  return BOX_ID_PREFIX + String(max + 1).padStart(2, '0');
+}
+
+/** 画面・通知に渡す工具箱情報（メールは管理者向けのみ） */
+function boxInfo_(boxId, withEmail) {
+  const b = findBox_(boxId);
+  if (!b) return null;
+  const o = { id: b.id, name: b.name, managerName: b.managerName };
+  if (withEmail) o.managerEmail = b.managerEmail;
+  return o;
+}
+
+/**
+ * 「返却先」の表示文字列。例: 山田（工具箱A）
+ * 工具箱が未設定なら空文字（画面側は「管理者」と表示）
+ */
+function returnToLabel_(t) {
+  const b = t.box ? findBox_(t.box) : null;
+  if (!b) return '';
+  if (b.managerName && b.name) return b.managerName + '（' + b.name + '）';
+  return b.managerName || b.name;
 }
 
 function nextToolId_() {
@@ -807,6 +959,9 @@ function publicTool_(t, deviceId) {
     canReturn: inUse && (!t.device || t.device === dev),
     // 超過日数（超過していなければ 0）
     overdueDays: (inUse && !!t.due && t.due < today) ? diffDays_(today, t.due) : 0,
+    // 工具箱と返却先（「山田（工具箱A）」。工具箱未設定なら空）
+    box: boxInfo_(t.box, false),
+    returnTo: returnToLabel_(t),
   };
 }
 
