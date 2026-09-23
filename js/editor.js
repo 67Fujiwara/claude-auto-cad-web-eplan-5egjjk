@@ -705,22 +705,13 @@ function coverSVG(page) {
   const cust = (page.cover && page.cover.customer) || "";
   const title = (page.cover && page.cover.title !== undefined && page.cover.title !== "")
     ? page.cover.title : (App.project.name || "");
-  /* タイトル (装置名) の横に版数を V0・V1 … と出す。設計完了の「版数」に
-     追従し、小数点以下は書かない (1.5 → V1) */
-  const rev = String(projectMeta().rev == null ? "0" : projectMeta().rev).trim() || "0";
-  const rn = parseInt(rev, 10);
-  const ver = "V" + (isNaN(rn) ? rev.replace(/\..*$/, "") : rn);
-  const line = (y, txt, size, after) => {
+  const line = (y, txt, size) => {
     if (!txt) return "";
     const wdt = Math.max(textWidthMM(txt, size) + 24, b.w * 0.45);
-    let out = `<text x="${cx}" y="${y}" font-size="${svgFontSizeFor(txt, size)}" text-anchor="middle" fill="${INK}" font-family="sans-serif" font-weight="600">${escXML(txt)}</text>` +
+    return `<text x="${cx}" y="${y}" font-size="${svgFontSizeFor(txt, size)}" text-anchor="middle" fill="${INK}" font-family="sans-serif" font-weight="600">${escXML(txt)}</text>` +
       `<path d="M${cx - wdt / 2},${y + 2.5} H${cx + wdt / 2}" stroke="${INK}" stroke-width="${LINE_W.thin}"/>`;
-    if (after) {
-      out += `<text x="${cx + textWidthMM(txt, size) / 2 + 5}" y="${y}" font-size="${svgFontSizeFor(after, 5)}" fill="${INK}" font-family="sans-serif" font-weight="600">${escXML(after)}</text>`;
-    }
-    return out;
   };
-  return line(b.y + b.h * 0.34, cust, 7) + line(b.y + b.h * 0.47, title, 7, ver);
+  return line(b.y + b.h * 0.34, cust, 7) + line(b.y + b.h * 0.47, title, 7);
 }
 /** 目次 — ページ名と図番。行が多ければ 2 段組にする (実務の目次の作法) */
 function tocSVG(page) {

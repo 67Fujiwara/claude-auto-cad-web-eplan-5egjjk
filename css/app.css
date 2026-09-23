@@ -67,6 +67,10 @@ input, select, textarea { font-family: inherit; }
 .brand svg { border-radius: 6px; box-shadow: 0 0 12px rgba(77,163,255,.35); }
 .brand-name { font-weight: 700; font-size: 13.5px; letter-spacing: .02em; white-space: nowrap; }
 .brand-name em { font-style: normal; color: var(--accent); font-weight: 600; }
+/* アプリの版数バッジ (ヘッダーのアプリ名の横) */
+.brand-ver { font-size: 10.5px; font-weight: 600; color: var(--muted, #8b96ab);
+  border: 1px solid var(--line, #2a3547); border-radius: 9px; padding: 1px 7px;
+  white-space: nowrap; }
 
 #menubar { display: flex; }
 .menu {

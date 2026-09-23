@@ -3335,6 +3335,10 @@ async function boot() {
     e.returnValue = "";   // 未保存の変更がある場合は離脱を確認する
   });
 
+  // ヘッダーのアプリ名の横に版数 (V1・V2 …)。小数点以下は書かない
+  const bv = document.getElementById("brandVer");
+  if (bv) bv.textContent = "V" + Math.trunc(APP_VERSION);
+
   setupEditor();
   UI.buildPalette();
   UI.buildPageTabs();
