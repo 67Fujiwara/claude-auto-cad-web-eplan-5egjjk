@@ -687,7 +687,9 @@ function pageToDXF(page) {
       const ly = pd.layers && pd.layers[e.layer];
       return ly && ly.aci ? [[62, ly.aci]] : null;
     };
-    (pd.entities || []).forEach(e => {
+    // 右隣の文字までの「使える横幅」— はみ出す文字は幅係数で詰める (画面と同じ)
+    const rooms = panelTextRooms(pd.entities, e2 => panelTextShown(page, e2));
+    (pd.entities || []).forEach((e, ei) => {
       const col = aciOf(e) || [];
       const lwp = e.w ? [[370, Math.round(e.w * 100)]] : [];   // 書き足した図形の太さ
       if (e.t === "line") {
@@ -711,9 +713,12 @@ function pageToDXF(page) {
           [50, (+e.a0).toFixed(3)], [51, (+e.a1).toFixed(3)]]);
       } else if (e.t === "text") {
         if (!panelTextShown(page, e)) return;   // 型式だけ既定で出さない (風船番号・リスト・注記は出す)
+        const rm = rooms[ei];
+        const wNat = textWidthMM(e.s, e.h);
+        const wf = rm !== undefined && wNat > rm ? [[41, +(rm / wNat).toFixed(3)]] : [];
         ents += dxfEntity([[0, "TEXT"], [8, "PANEL"], ...col, [7, "JP"],
           [10, X(e.x)], [20, Yd(e.y)], [40, (+e.h).toFixed(3)],
-          [1, dxfEscape(e.s)], [50, e.rot || 0]]);
+          [1, dxfEscape(e.s)], [50, e.rot || 0], ...wf]);
       }
     });
     {

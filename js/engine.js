@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 210;
+const APP_VERSION = 211;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5244,6 +5244,33 @@ function panelDataOf(page) {
     書き足した注記 (note) は常に出す */
 function panelTextShown(page, e) {
   return !!e.note || !!page.panelText || !/型式/.test(e.layer || "");
+}
+/** パネル図の文字の「使える横幅」(mm) — 同じ基線のすぐ右にある文字まで。
+    取り込み元 (Panel Studio) と書体の字幅が違うため、そのまま描くと
+    部品リストの品名がメーカー欄にかぶる、といった重なりが起きる。
+    はみ出す文字はこの幅に縮めて描く (画面・印刷は textLength、DXF は
+    幅係数)。返り値は entities の添字 → 幅。右隣が無い文字は載らない。
+    shown = 描く文字だけを相手にする判定 (隠れている型式は詰めの理由に
+    しない) */
+function panelTextRooms(ents, shown) {
+  const texts = [];
+  (ents || []).forEach((e, i) => {
+    if (e.t === "text" && !e.rot && e.s && shown(e)) texts.push({ i, x: e.x, y: e.y, h: e.h || 5 });
+  });
+  texts.sort((a, b) => a.x - b.x);
+  const room = {};
+  for (let a = 0; a < texts.length; a++) {
+    const t = texts[a];
+    for (let b = a + 1; b < texts.length; b++) {
+      const u = texts[b];
+      if (u.x <= t.x + 0.5) continue;                       // ほぼ同じ位置は相手にしない
+      if (Math.abs(u.y - t.y) < Math.max(t.h, u.h) * 0.8) { // 同じ基線 (行)
+        room[t.i] = Math.max(2, u.x - t.x - Math.max(1, t.h * 0.3));
+        break;
+      }
+    }
+  }
+  return room;
 }
 /** 旧形式 (ページ内直書き) を panelData へ移し、参照されないデータを捨てる */
 function panelNormalize(project) {

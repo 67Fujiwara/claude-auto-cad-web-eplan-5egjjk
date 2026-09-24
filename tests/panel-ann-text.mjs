@@ -38,6 +38,15 @@ const R = await p.evaluate(async () => {
           { t: "text", x: 400, y: 380, h: 5, s: "NFB NV32-SVF", layer: "部品リスト" },
           { t: "text", x: 100, y: 280, h: 8, s: "MODEL-XYZ", layer: "機器-型式" },
           { t: "text", x: 300, y: 50, h: 10, s: "上面 800x300", layer: "図面-注記" },
+          // 同じ行の右隣にかぶる長い品名 → 右隣の手前 (58.5mm) まで詰める
+          { t: "text", x: 100, y: 100, h: 5, s: "ホース用コネクタ(ホース内径25 取り付けネジ G1)", layer: "部品リスト" },
+          { t: "text", x: 160, y: 100, h: 5, s: "三桂製作所", layer: "部品リスト" },
+          // 収まる文字は詰めない
+          { t: "text", x: 300, y: 100, h: 5, s: "OK", layer: "部品リスト" },
+          { t: "text", x: 340, y: 100, h: 5, s: "1", layer: "部品リスト" },
+          // 右隣が「隠れている型式」だけなら詰めの理由にしない
+          { t: "text", x: 100, y: 60, h: 5, s: "長い長い長い長い長い長い長い長い", layer: "部品リスト" },
+          { t: "text", x: 130, y: 60, h: 5, s: "HIDDEN-TYPE", layer: "機器-型式" },
         ] },
       { id: "cabinet_holes", title: "キャビネット(加工穴のみ)", extent: { w: 600, h: 400 },
         entities: [{ t: "circle", cx: 50, cy: 50, r: 2 }] },
@@ -61,6 +70,29 @@ const R = await p.evaluate(async () => {
   delete pg.panelText;
   out.optOff = !panelSVG(pg).includes("MODEL-XYZ");   // 戻すと消える (キャッシュ切替)
 
+  // ── 重なり防止: はみ出す文字は右隣の手前まで詰める ──
+  const s2 = panelSVG(pg);
+  const attrOf = (svg, s) => {
+    const m = svg.match(new RegExp(`<text([^>]*)>${s.replace(/[()]/g, "\\$&")}<`));
+    return m ? m[1] : null;
+  };
+  out.fit = {
+    long: /textLength="58\.50"/.test(attrOf(s2, "ホース用コネクタ(ホース内径25 取り付けネジ G1)") || ""),
+    short: !/textLength/.test(attrOf(s2, "OK") || "x"),
+    noNeighbor: !/textLength/.test(attrOf(s2, "三桂製作所") || "x"),
+    hiddenFree: !/textLength/.test(attrOf(s2, "長い長い長い長い長い長い長い長い") || "x"),
+  };
+  pg.panelText = true;   // 型式も描くと、型式が右隣になった文字は詰まる
+  out.fit.hiddenOn = /textLength="28\.50"/.test(attrOf(panelSVG(pg), "長い長い長い長い長い長い長い長い") || "");
+  delete pg.panelText;
+  // DXF は幅係数 (41 < 1) で同じ詰め方 — 既定では 1 本、型式も描くと 2 本
+  out.fitDxf = {
+    off: (pageToDXF(pg).match(/\n41\n0\.\d+/g) || []).length,
+  };
+  pg.panelText = true;
+  out.fitDxf.on = (pageToDXF(pg).match(/\n41\n0\.\d+/g) || []).length;
+  delete pg.panelText;
+
   // 書き足した注記は常に出る
   panelAddEnts(pg, [{ t: "text", x: 500, y: 100, h: 5, s: "現合で穴あけ", note: true, add: true }]);
   out.note = panelSVG(pg).includes("現合で穴あけ");
@@ -83,6 +115,9 @@ const checks = {
   note: R.note === true,
   dxf: R.dxf.balloon === true && R.dxf.list === true && R.dxf.type === true &&
     R.dxf.note === true && R.dxfType === true,
+  fit: R.fit.long === true && R.fit.short === true && R.fit.noNeighbor === true &&
+    R.fit.hiddenFree === true && R.fit.hiddenOn === true,
+  fitDxf: R.fitDxf.off === 1 && R.fitDxf.on === 2,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

@@ -1191,7 +1191,9 @@ function panelSVG(page) {
   const sw = LINE_W.thin * f;            // 紙の上で 0.25mm になる線幅
   const swOf = e => (e.w ? e.w * f : sw);   // 書き足した図形はプロパティで太さを変えられる
   let out = `<g data-panel="1">`;
-  (pd.entities || []).forEach(e => {
+  // 右隣の文字までの「使える横幅」— はみ出す文字は縮めて重なりを防ぐ
+  const rooms = panelTextRooms(pd.entities, e2 => panelTextShown(page, e2));
+  (pd.entities || []).forEach((e, ei) => {
     const c = colOf(e);
     if (e.t === "line") {
       out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
@@ -1212,7 +1214,11 @@ function panelSVG(page) {
       // リスト・注記の文字は常に描く)。プロパティ「文字も描く」で型式も出る
       if (!panelTextShown(page, e)) return;
       const rot = e.rot ? ` transform="rotate(${-e.rot} ${X(e.x)} ${Y(e.y)})"` : "";
-      out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}>${escXML(e.s)}</text>`;
+      // 右隣の文字にかぶるなら、その手前までの幅に詰めて描く
+      const rm = rooms[ei];
+      const fit = rm !== undefined && textWidthMM(e.s, e.h) > rm
+        ? ` textLength="${rm.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : "";
+      out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}${fit}>${escXML(e.s)}</text>`;
     }
   });
   // 外形寸法と備考 (job.note) は図枠の左下へ (紙の上で 2.5mm の文字)
