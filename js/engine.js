@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 209;
+const APP_VERSION = 210;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5235,6 +5235,15 @@ function panelDataOf(page) {
   if (pn.entities) return pn;                       // 旧形式 (ページ内に直書き)
   const pd = App.project && App.project.panelData;
   return (pd && pd[pn.dataKey]) || { entities: [], layers: {} };
+}
+/** パネル図の文字 (text entity) を描くか。画面・印刷・DXF で共通。
+    機器の型式 (レイヤ名に「型式」) だけ既定で隠す — 数が多く図が読みにくく
+    なるため。風船番号・部品リスト・図面注記などの文字は常に描く
+    (以前は文字を全部隠していて、風船の番号とリストの中身が消えていた)。
+    「文字も描く」(page.panelText) を入れると型式も出る。
+    書き足した注記 (note) は常に出す */
+function panelTextShown(page, e) {
+  return !!e.note || !!page.panelText || !/型式/.test(e.layer || "");
 }
 /** 旧形式 (ページ内直書き) を panelData へ移し、参照されないデータを捨てる */
 function panelNormalize(project) {

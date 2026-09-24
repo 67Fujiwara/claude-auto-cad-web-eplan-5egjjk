@@ -1208,9 +1208,9 @@ function panelSVG(page) {
       // 反時計回り (見た目) = 画面 (y 下向き) では sweep-flag 0
       out += `<path d="M${x1},${y1} A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
     } else if (e.t === "text") {
-      // 機器の型式などの文字は既定で出さない (図が読みにくくなるため)。
-      // プロパティ「文字も描く」で戻せる。書き足した注記 (note) は常に出す
-      if (!page.panelText && !e.note) return;
+      // 機器の型式の文字だけ既定で出さない (panelTextShown — 風船番号・
+      // リスト・注記の文字は常に描く)。プロパティ「文字も描く」で型式も出る
+      if (!panelTextShown(page, e)) return;
       const rot = e.rot ? ` transform="rotate(${-e.rot} ${X(e.x)} ${Y(e.y)})"` : "";
       out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}>${escXML(e.s)}</text>`;
     }

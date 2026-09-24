@@ -447,7 +447,7 @@ function bindPnDraw(pane) {
         ${cand.map(v => `<option value="${v}"${v === n0 ? " selected" : ""}>1:${v}</option>`).join("")}
       </select></div>
       <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnMono"${pg2.panelMono ? " checked" : ""}/><span>白黒で描く (印刷用 — 色を全部黒に)</span></label></div>
-      <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnText"${pg2.panelText ? " checked" : ""}/><span>文字も描く (機器の型式など — 既定は出さない)</span></label></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="pPnText"${pg2.panelText ? " checked" : ""}/><span>機器の型式も描く (既定は出さない — 風船番号・注記などの文字は常に出ます)</span></label></div>
       <div class="prop-sect">図全体の移動</div>
       <div class="prop-row"><button class="btn-solid" id="pnSelAll" style="width:100%">図全体を選択 (Ctrl+A)</button></div>
       <div class="prop-note">取り込んだ図を丸ごと選びます。図形の上をドラッグ、または矢印キー 5mm / Shift+矢印 0.5mm で置き場所を動かせます (元に戻すは Ctrl+Z)。</div>

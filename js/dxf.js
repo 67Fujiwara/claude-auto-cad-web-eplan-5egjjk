@@ -710,7 +710,7 @@ function pageToDXF(page) {
           [10, X(e.cx)], [20, Yd(e.cy)], [40, (+e.r).toFixed(3)],
           [50, (+e.a0).toFixed(3)], [51, (+e.a1).toFixed(3)]]);
       } else if (e.t === "text") {
-        if (!page.panelText && !e.note) return;   // 文字は既定で出さない (書き足した注記は常に出す)
+        if (!panelTextShown(page, e)) return;   // 型式だけ既定で出さない (風船番号・リスト・注記は出す)
         ents += dxfEntity([[0, "TEXT"], [8, "PANEL"], ...col, [7, "JP"],
           [10, X(e.x)], [20, Yd(e.y)], [40, (+e.h).toFixed(3)],
           [1, dxfEscape(e.s)], [50, e.rot || 0]]);

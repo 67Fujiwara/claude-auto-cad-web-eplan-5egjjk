@@ -41,7 +41,8 @@ const R = await p.evaluate(async () => {
       { t: "line", layer: "outline", x1: 0, y1: h, x2: 0, y2: 0 },
       { t: "circle", layer: "holes", cx: 30, cy: 30, r: 3.25 },
       { t: "arc", layer: "holes", cx: w / 2, cy: h / 2, r: 20, a0: 30, a1: 300 },
-      { t: "text", layer: "outline", x: 10, y: h - 20, h: 5, s: "S-T12", rot: 0 },
+      // 型式の文字 (—型式 レイヤ) は既定で隠れる。風船番号などは panel-ann-text で検査
+      { t: "text", layer: "機器-型式", x: 10, y: h - 20, h: 5, s: "S-T12", rot: 0 },
       ...extra,
     ],
     svg: "",
