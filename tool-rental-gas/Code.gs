@@ -53,10 +53,7 @@ function setup() {
   applyOverdueFormat_(tools);
 
   // 工具箱（工具箱ごとに管理者を分ける。工具の「工具箱」列に box_id を入れる）
-  const boxes = getOrCreateSheet_(ss, SHEET_BOXES, BOX_HEADERS);
-  boxes.getRange('A:D').setNumberFormat('@');
-  boxes.setColumnWidth(2, 200);
-  boxes.setColumnWidth(4, 260);
+  ensureBoxSheet_();
 
   const log = getOrCreateSheet_(ss, SHEET_LOG, LOG_HEADERS);
   log.getRange('A:A').setNumberFormat('yyyy/MM/dd HH:mm:ss');
@@ -378,8 +375,9 @@ function adminAddBox(pin, name, managerName, managerEmail) {
   if (!name) throw new Error('工具箱名を入力してください');
   if (managerEmail && !isEmail_(managerEmail)) throw new Error('管理者メールの形式が正しくありません');
   return withLock_(() => {
+    const sh = ensureBoxSheet_();
     const id = nextBoxId_();
-    getSheet_(SHEET_BOXES).appendRow([id, name, managerName, managerEmail]);
+    sh.appendRow([id, name, managerName, managerEmail]);
     return { id: id, name: name, managerName: managerName, managerEmail: managerEmail, toolCount: 0 };
   });
 }
@@ -791,6 +789,19 @@ function readBoxes_() {
     });
   }
   return out;
+}
+
+/** 「工具箱」シートが無ければ作る（setup() 未実行でも工具箱を追加できるように） */
+function ensureBoxSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const existed = !!ss.getSheetByName(SHEET_BOXES);
+  const sh = getOrCreateSheet_(ss, SHEET_BOXES, BOX_HEADERS);
+  if (!existed) {
+    sh.getRange('A:D').setNumberFormat('@');
+    sh.setColumnWidth(2, 200);
+    sh.setColumnWidth(4, 260);
+  }
+  return sh;
 }
 
 function findBox_(boxId) {
