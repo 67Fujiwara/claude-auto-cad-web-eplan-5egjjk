@@ -180,12 +180,16 @@
   }
   document.getElementById('addBoxForm').addEventListener('submit', async function (ev) {
     ev.preventDefault();
+    const btn = this.querySelector('button[type=submit]');
+    btnBusy(btn, '追加中…');
     try {
       const b = await call('adminAddBox', PIN, document.getElementById('boxName').value, document.getElementById('boxManager').value, document.getElementById('boxEmail').value);
       ['boxName', 'boxManager', 'boxEmail'].forEach(id => { document.getElementById(id).value = ''; });
       showMsg('msg', '工具箱 ' + b.name + ' を追加しました', 'ok');
       await load();
+      btnFlash(btn, true, '✓ 追加しました');
     } catch (e) {
+      btnFlash(btn, false);
       showMsg('msg', e.message || String(e), 'err');
     }
   });
@@ -194,17 +198,23 @@
     if (!b) return;
     const card = b.closest('.card');
     const id = card.dataset.box;
+    const act = b.dataset.bact;
     try {
-      if (b.dataset.bact === 'save') {
-        await call('adminUpdateBox', PIN, id, card.querySelector('.bName').value, card.querySelector('.bManager').value, card.querySelector('.bEmail').value);
-        showMsg('msg', id + ' を保存しました', 'ok');
-      } else if (b.dataset.bact === 'del') {
+      if (act === 'save') {
+        btnBusy(b, '保存中…');
+        const r = await call('adminUpdateBox', PIN, id, card.querySelector('.bName').value, card.querySelector('.bManager').value, card.querySelector('.bEmail').value);
+        showMsg('msg', '工具箱 ' + r.name + '（' + id + '）を保存しました', 'ok');
+        await load();
+        btnFlash(document.querySelector('#boxes .card[data-box="' + CSS.escape(id) + '"] button[data-bact="save"]'), true, '✓ 保存しました');
+      } else if (act === 'del') {
         if (!confirm(id + ' を削除しますか？')) return;
+        btnBusy(b, '削除中…');
         await call('adminDeleteBox', PIN, id);
         showMsg('msg', id + ' を削除しました', 'ok');
+        await load();
       }
-      await load();
     } catch (e) {
+      btnFlash(b, false);
       showMsg('msg', e.message || String(e), 'err');
     }
   });
@@ -267,11 +277,18 @@
       box.hidden = !box.hidden;
       return;
     }
+    // 再描画後に同じボタンを探して「✓ 保存しました」を出す
+    const flashAfterLoad = async (ok, label) => {
+      await load();
+      const again = document.querySelector('#tools .card[data-id="' + CSS.escape(id) + '"] button[data-act="' + act + '"]');
+      btnFlash(again, ok, label);
+    };
     try {
       if (act === 'return') {
         if (!confirm(b.dataset.name + ' を返却にしますか？（端末に関係なく返却します）')) return;
+        btnBusy(b, '返却中…');
         await call('adminReturnTool', PIN, id);
-        showMsg('msg', id + ' を返却にしました', 'ok');
+        showMsg('msg', b.dataset.name + ' を返却にしました', 'ok');
         await load();
         return;
       }
@@ -279,27 +296,35 @@
         const name = card.querySelector('.rentName').value;
         const due = card.querySelector('.rentDue').value;
         const comment = card.querySelector('.rentComment').value;
+        btnBusy(b, '送信中…');
         const t = await call('adminRentTool', PIN, id, name, due, comment);
-        showMsg('msg', t.name + ' を ' + esc(name) + ' さんに ' + fmtMd(t.due) + ' まで貸しました', 'ok');
+        showMsg('msg', t.name + ' を ' + name + ' さんに ' + fmtMd(t.due) + ' まで貸しました', 'ok');
         await load();
         return;
       }
       if (act === 'copy') {
         const ok = await copyText(card.querySelector('.qr').dataset.url);
-        showMsg('msg', ok ? 'コピーしました' : 'コピーできませんでした。URL を長押しして選択してください', ok ? 'ok' : 'err');
+        btnFlash(b, ok, ok ? '✓ コピーしました' : '✗ コピー失敗');
+        if (!ok) showMsg('msg', 'コピーできませんでした。URL を長押しして選択してください', 'err');
         return;
       }
       if (act === 'save') {
         const name = card.querySelector('.nameInput').value;
-        await call('adminUpdateTool', PIN, id, name, card.querySelector('.boxInput').value);
-        showMsg('msg', id + ' を保存しました', 'ok');
-      } else if (act === 'del') {
+        btnBusy(b, '保存中…');
+        const t = await call('adminUpdateTool', PIN, id, name, card.querySelector('.boxInput').value);
+        showMsg('msg', t.name + '（' + id + '）を保存しました' + (t.box ? '　工具箱: ' + t.box.name : ''), 'ok');
+        await flashAfterLoad(true, '✓ 保存しました');
+        return;
+      }
+      if (act === 'del') {
         if (!confirm(id + ' を削除しますか？')) return;
+        btnBusy(b, '削除中…');
         await call('adminDeleteTool', PIN, id);
         showMsg('msg', id + ' を削除しました', 'ok');
+        await load();
       }
-      await load();
     } catch (e) {
+      btnFlash(b, false);
       showMsg('msg', e.message || String(e), 'err');
     }
   });
@@ -307,12 +332,16 @@
   document.getElementById('addForm').addEventListener('submit', async function (ev) {
     ev.preventDefault();
     const input = document.getElementById('addName');
+    const btn = this.querySelector('button[type=submit]');
+    btnBusy(btn, '追加中…');
     try {
       const t = await call('adminAddTool', PIN, input.value, document.getElementById('addBox').value);
       input.value = '';
       showMsg('msg', t.id + ' ' + t.name + ' を追加しました', 'ok');
       await load();
+      btnFlash(btn, true, '✓ 追加しました');
     } catch (e) {
+      btnFlash(btn, false);
       showMsg('msg', e.message || String(e), 'err');
     }
   });
@@ -352,24 +381,27 @@
     document.getElementById('appUrlInput').value = s.app_url;
   }
 
-  async function saveSettings(patch, okText) {
+  async function saveSettings(patch, okText, btn) {
+    btnBusy(btn, '保存中…');
     try {
       const s = await call('adminSaveSettings', PIN, patch);
       if (patch.admin_pin) { PIN = s.admin_pin; storeSet('session', PIN_KEY, PIN); }
       showMsg('msg', okText, 'ok');
       await load();
+      btnFlash(btn, true, '✓ 保存しました');
     } catch (e) {
+      btnFlash(btn, false);
       showMsg('msg', e.message || String(e), 'err');
     }
   }
-  document.getElementById('typeHuman').addEventListener('click', () => saveSettings({ manager_type: 'human' }, '管理者を human にしました'));
-  document.getElementById('typeAi').addEventListener('click', () => saveSettings({ manager_type: 'ai' }, '管理者を ai にしました'));
+  document.getElementById('typeHuman').addEventListener('click', function () { saveSettings({ manager_type: 'human' }, '管理者を human にしました', this); });
+  document.getElementById('typeAi').addEventListener('click', function () { saveSettings({ manager_type: 'ai' }, '管理者を ai にしました', this); });
   document.getElementById('notifyOnRequest').addEventListener('change', function () {
     saveSettings({ notify_on_request: this.checked }, this.checked ? '貸出時にメールを送ります' : '貸出時のメールを止めました');
   });
-  document.getElementById('saveEmail').addEventListener('click', () => saveSettings({ manager_email: document.getElementById('managerEmail').value }, '管理者メールを保存しました'));
-  document.getElementById('savePin').addEventListener('click', () => saveSettings({ admin_pin: document.getElementById('newPin').value }, 'PIN を変更しました'));
-  document.getElementById('saveUrl').addEventListener('click', () => saveSettings({ app_url: document.getElementById('appUrlInput').value }, 'app_url を保存しました'));
+  document.getElementById('saveEmail').addEventListener('click', function () { saveSettings({ manager_email: document.getElementById('managerEmail').value }, '管理者メールを保存しました', this); });
+  document.getElementById('savePin').addEventListener('click', function () { saveSettings({ admin_pin: document.getElementById('newPin').value }, 'PIN を変更しました', this); });
+  document.getElementById('saveUrl').addEventListener('click', function () { saveSettings({ app_url: document.getElementById('appUrlInput').value }, 'app_url を保存しました', this); });
 
   // ---- ログ ----
   function renderLogs(logs) {

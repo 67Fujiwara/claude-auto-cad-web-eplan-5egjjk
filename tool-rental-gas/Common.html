@@ -50,6 +50,16 @@
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th, td { border-bottom: 1px solid #eee; padding: 6px 4px; text-align: left; white-space: nowrap; }
   [hidden] { display: none !important; }
+  /* 画面上部に浮かぶ通知（スクロール位置に関係なく見える） */
+  .toast { position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 100; max-width: 92%;
+           padding: 10px 16px; border-radius: 8px; font-size: 15px; color: #fff; background: #333;
+           box-shadow: 0 4px 12px rgba(0,0,0,.25); opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.ok { background: #1e8e3e; }
+  .toast.err { background: #d93025; }
+  /* 保存ボタンのアンサーバック */
+  .btn.done { background: #1e8e3e; color: #fff; }
+  .btn.fail { background: #d93025; color: #fff; }
   /* 画面下に固定するバー（複数選択の「借りる」など） */
   .fixbar { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid #ccc;
             box-shadow: 0 -2px 8px rgba(0,0,0,.08); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); z-index: 50; }
@@ -102,12 +112,47 @@
   function sortOverdueFirst(tools) {
     return tools.slice().sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0));
   }
-  // メッセージ表示。kind = 'ok' | 'err' | 'info'、text が空なら消す
+  // 画面上部に浮かぶ通知。kind = 'ok' | 'err' | 'info'。2.5 秒で消える
+  let __toastTimer = null;
+  function toast(text, kind) {
+    let el = document.getElementById('toast');
+    if (!el) { el = document.createElement('div'); el.id = 'toast'; document.body.appendChild(el); }
+    el.className = 'toast ' + (kind || 'info');
+    el.textContent = text;
+    requestAnimationFrame(() => el.classList.add('show'));
+    clearTimeout(__toastTimer);
+    __toastTimer = setTimeout(() => el.classList.remove('show'), kind === 'err' ? 4000 : 2500);
+  }
+  // メッセージ表示。kind = 'ok' | 'err' | 'info'、text が空なら消す。ok / err はトーストも出す
   function showMsg(el, text, kind) {
     if (typeof el === 'string') el = document.getElementById(el);
-    if (!el) return;
-    if (!text) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="msg ' + (kind || 'info') + '">' + esc(text) + '</div>';
+    if (el) {
+      if (!text) { el.innerHTML = ''; return; }
+      el.innerHTML = '<div class="msg ' + (kind || 'info') + '">' + esc(text) + '</div>';
+    }
+    if (text && (kind === 'ok' || kind === 'err')) toast(text, kind);
+  }
+  // ボタンのアンサーバック。busy(btn) → 「…中」で無効化、flash(btn, ok) → 「✓ 保存しました」/「✗ 失敗」を 1.8 秒表示して元に戻す
+  function btnBusy(btn, label) {
+    if (!btn) return;
+    if (!btn.dataset.orig) btn.dataset.orig = btn.textContent;
+    btn.textContent = label || (btn.dataset.orig + '中…');
+    btn.disabled = true;
+  }
+  function btnFlash(btn, ok, label) {
+    if (!btn) return;
+    const orig = btn.dataset.orig || btn.textContent;
+    btn.dataset.orig = orig;
+    btn.classList.remove('done', 'fail');
+    btn.classList.add(ok ? 'done' : 'fail');
+    btn.textContent = label || (ok ? '✓ ' + orig + 'しました' : '✗ 失敗');
+    btn.disabled = false;
+    setTimeout(() => { btn.classList.remove('done', 'fail'); btn.textContent = orig; }, 1800);
+  }
+  function btnReset(btn) {
+    if (!btn) return;
+    btn.textContent = btn.dataset.orig || btn.textContent;
+    btn.disabled = false;
   }
   // google.script.run を Promise 化: await call('apiListTools', ...)
   function call(fn) {
