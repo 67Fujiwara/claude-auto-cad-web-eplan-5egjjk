@@ -170,7 +170,7 @@ function sendOverdueMailToUser(event) {
     '返却予定日: ' + event.dueDate,
     '超過日数: ' + event.overdueDays + ' 日',
     (event.comment ? 'コメント: ' + event.comment : ''),
-    (event.box ? '返却先: ' + (event.box.managerName || '') + '（' + event.box.name + '）' : ''),
+    (event.box ? '返却先: ' + (event.box.managerName || event.box.name) : ''),
     '',
     '▼ 返却した（返却済みにする）',
     l.return,

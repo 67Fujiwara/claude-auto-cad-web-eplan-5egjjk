@@ -90,11 +90,11 @@
     }
     return '<span class="badge used">' + esc(t.user) + 'さん ' + esc(fmtMd(t.due)) + 'まで</span>';
   }
-  // 返却先の 1 行表示。「返却先: 山田（工具箱A）」。工具箱未設定なら「返却先: 管理者」
+  // 返却先の 1 行表示。「返却先: 山田」。工具箱未設定なら「返却先: 管理者」
   function returnToLine(t) {
     return '<div class="muted" style="margin-top:4px">返却先: ' + esc(t.returnTo || '管理者') + '</div>';
   }
-  // 借りた/返した工具を返却先ごとにまとめた文。「ニッパー、六角レンチ は 山田（工具箱A）に返却してください」
+  // 借りた/返した工具を返却先ごとにまとめた文。「ニッパー、六角レンチ は 山田 に返却してください」
   function returnToSummary(tools) {
     const map = {};
     tools.forEach(t => { const k = t.returnTo || '管理者'; (map[k] = map[k] || []).push(t.name); });

@@ -851,13 +851,12 @@ function boxInfo_(boxId, withEmail) {
 }
 
 /**
- * 「返却先」の表示文字列。例: 山田（工具箱A）
- * 工具箱が未設定なら空文字（画面側は「管理者」と表示）
+ * 「返却先」の表示文字列。管理者名だけを返す（例: 山田）。
+ * 管理者名が未設定なら工具箱名、工具箱が未設定なら空文字（画面側は「管理者」と表示）
  */
 function returnToLabel_(t) {
   const b = t.box ? findBox_(t.box) : null;
   if (!b) return '';
-  if (b.managerName && b.name) return b.managerName + '（' + b.name + '）';
   return b.managerName || b.name;
 }
 
@@ -993,7 +992,7 @@ function publicTool_(t, deviceId) {
     canReturn: inUse && (!t.device || t.device === dev),
     // 超過日数（超過していなければ 0）
     overdueDays: (inUse && !!t.due && t.due < today) ? diffDays_(today, t.due) : 0,
-    // 工具箱と返却先（「山田（工具箱A）」。工具箱未設定なら空）
+    // 工具箱と返却先（管理者名。工具箱未設定なら空）
     box: boxInfo_(t.box, false),
     returnTo: returnToLabel_(t),
   };
