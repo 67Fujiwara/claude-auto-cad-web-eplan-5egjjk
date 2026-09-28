@@ -185,8 +185,10 @@
     try {
       const b = await call('adminAddBox', PIN, document.getElementById('boxName').value, document.getElementById('boxManager').value, document.getElementById('boxEmail').value);
       ['boxName', 'boxManager', 'boxEmail'].forEach(id => { document.getElementById(id).value = ''; });
+      DATA.boxes = (DATA.boxes || []).concat([b]);
+      renderBoxes(DATA.boxes);
+      renderTools(DATA.tools); // 工具カードの工具箱プルダウンに新しい選択肢を出す
       showMsg('msg', '工具箱 ' + b.name + ' を追加しました', 'ok');
-      await load();
       btnFlash(btn, true, '✓ 追加しました');
     } catch (e) {
       btnFlash(btn, false);
@@ -225,7 +227,39 @@
     box.className = '';
     document.getElementById('overdueBanner').innerHTML = overdueBanner(tools);
     if (!tools.length) { box.innerHTML = '<div class="muted">工具がありません</div>'; return; }
-    box.innerHTML = sortOverdueFirst(tools).map(t => {
+    box.innerHTML = sortOverdueFirst(tools).map(toolCardHtml).join('');
+    drawQr(box);
+  }
+
+  // サーバーを読み直さず、1 枚のカードだけ差し替える（保存・貸出・返却の応答が速くなる）
+  function replaceToolCard(t) {
+    const i = DATA.tools.findIndex(x => x.id === t.id);
+    if (i >= 0) DATA.tools[i] = t; else DATA.tools.push(t);
+    const box = document.getElementById('tools');
+    const old = box.querySelector('.card[data-id="' + CSS.escape(t.id) + '"]');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = toolCardHtml(t);
+    const fresh = tmp.firstElementChild;
+    if (old) old.replaceWith(fresh);
+    else { if (box.className === 'muted') { box.className = ''; box.innerHTML = ''; } box.appendChild(fresh); }
+    drawQr(fresh);
+    document.getElementById('overdueBanner').innerHTML = overdueBanner(DATA.tools);
+    return fresh;
+  }
+  function removeToolCard(id) {
+    DATA.tools = DATA.tools.filter(x => x.id !== id);
+    const old = document.querySelector('#tools .card[data-id="' + CSS.escape(id) + '"]');
+    if (old) old.remove();
+    if (!DATA.tools.length) renderTools(DATA.tools);
+  }
+  // 工具箱ごとの点数を手元のデータから数え直す
+  function recountBoxes() {
+    (DATA.boxes || []).forEach(b => { b.toolCount = DATA.tools.filter(t => t.box && t.box.id === b.id).length; });
+    renderBoxes(DATA.boxes);
+  }
+
+  function toolCardHtml(t) {
+    {
       const status = t.inUse ? usedBadge(t) : '<span class="badge free">空き</span>';
       const rentRow = t.inUse
         ? '<div class="row"><button type="button" class="btn small gray" data-act="return" data-name="' + esc(t.name) + '">返却（管理者）</button></div>'
@@ -254,8 +288,7 @@
         '<div style="flex:1;min-width:160px"><div class="mono">' + esc(t.qrUrl) + '</div>' +
         '<button type="button" class="btn small gray" data-act="copy" style="margin-top:6px">URLをコピー</button></div></div>' +
         '</div>';
-    }).join('');
-    drawQr(box);
+    }
   }
 
   function drawQr(root) {
@@ -277,19 +310,13 @@
       box.hidden = !box.hidden;
       return;
     }
-    // 再描画後に同じボタンを探して「✓ 保存しました」を出す
-    const flashAfterLoad = async (ok, label) => {
-      await load();
-      const again = document.querySelector('#tools .card[data-id="' + CSS.escape(id) + '"] button[data-act="' + act + '"]');
-      btnFlash(again, ok, label);
-    };
     try {
       if (act === 'return') {
         if (!confirm(b.dataset.name + ' を返却にしますか？（端末に関係なく返却します）')) return;
         btnBusy(b, '返却中…');
-        await call('adminReturnTool', PIN, id);
-        showMsg('msg', b.dataset.name + ' を返却にしました', 'ok');
-        await load();
+        const t = await call('adminReturnTool', PIN, id);
+        replaceToolCard(t);
+        showMsg('msg', t.name + ' を返却にしました', 'ok');
         return;
       }
       if (act === 'rent') {
@@ -298,8 +325,8 @@
         const comment = card.querySelector('.rentComment').value;
         btnBusy(b, '送信中…');
         const t = await call('adminRentTool', PIN, id, name, due, comment);
+        replaceToolCard(t);
         showMsg('msg', t.name + ' を ' + name + ' さんに ' + fmtMd(t.due) + ' まで貸しました', 'ok');
-        await load();
         return;
       }
       if (act === 'copy') {
@@ -312,16 +339,19 @@
         const name = card.querySelector('.nameInput').value;
         btnBusy(b, '保存中…');
         const t = await call('adminUpdateTool', PIN, id, name, card.querySelector('.boxInput').value);
+        const fresh = replaceToolCard(t);
+        recountBoxes();
         showMsg('msg', t.name + '（' + id + '）を保存しました' + (t.box ? '　工具箱: ' + t.box.name : ''), 'ok');
-        await flashAfterLoad(true, '✓ 保存しました');
+        btnFlash(fresh.querySelector('button[data-act="save"]'), true, '✓ 保存しました');
         return;
       }
       if (act === 'del') {
         if (!confirm(id + ' を削除しますか？')) return;
         btnBusy(b, '削除中…');
         await call('adminDeleteTool', PIN, id);
+        removeToolCard(id);
+        recountBoxes();
         showMsg('msg', id + ' を削除しました', 'ok');
-        await load();
       }
     } catch (e) {
       btnFlash(b, false);
@@ -337,8 +367,9 @@
     try {
       const t = await call('adminAddTool', PIN, input.value, document.getElementById('addBox').value);
       input.value = '';
+      replaceToolCard(t);
+      recountBoxes();
       showMsg('msg', t.id + ' ' + t.name + ' を追加しました', 'ok');
-      await load();
       btnFlash(btn, true, '✓ 追加しました');
     } catch (e) {
       btnFlash(btn, false);
@@ -386,8 +417,11 @@
     try {
       const s = await call('adminSaveSettings', PIN, patch);
       if (patch.admin_pin) { PIN = s.admin_pin; storeSet('session', PIN_KEY, PIN); }
+      DATA.settings = s;
+      renderSettings(s);
+      document.getElementById('urlWarn').innerHTML = s.app_url ? '' :
+        '<div class="msg err">app_url が未設定です。デプロイ後の Web アプリ URL を下の設定で保存してください（QR・メールのリンクに使います）。</div>';
       showMsg('msg', okText, 'ok');
-      await load();
       btnFlash(btn, true, '✓ 保存しました');
     } catch (e) {
       btnFlash(btn, false);

@@ -35,6 +35,16 @@ const STATUS_USED = '使用中';
 /** tool_id の接頭辞（TOOL_ID001, TOOL_ID002 …）。変えるときはここだけ。端末側の ID は「端末ID」で別物 */
 const TOOL_ID_PREFIX = 'TOOL_ID';
 
+/**
+ * 実行内キャッシュ。Apps Script は 1 回の呼び出しごとに新しく実行されるので、
+ * 「設定」「工具箱」シートは 1 回の処理で 1 度だけ読めばよい（工具 1 点ごとに読み直すと数秒かかる）。
+ * シートに書き込んだら cacheClear_() で捨てる。
+ */
+const CACHE_ = {};
+function cacheClear_() {
+  Object.keys(CACHE_).forEach(k => { delete CACHE_[k]; });
+}
+
 // ---------------------------------------------------------------------------
 // 初期化（エディタから手動で1回実行する）
 // ---------------------------------------------------------------------------
@@ -77,6 +87,7 @@ function setup() {
     if (!(key in existing)) settings.appendRow([key, defaults[key]]);
   });
 
+  cacheClear_();
   const s = getSettings();
   Logger.log('setup 完了。設定シートを確認してください。 admin_pin=' + s.admin_pin + ' manager_email=' + s.manager_email);
 }
@@ -378,6 +389,7 @@ function adminAddBox(pin, name, managerName, managerEmail) {
     const sh = ensureBoxSheet_();
     const id = nextBoxId_();
     sh.appendRow([id, name, managerName, managerEmail]);
+    cacheClear_();
     return { id: id, name: name, managerName: managerName, managerEmail: managerEmail, toolCount: 0 };
   });
 }
@@ -410,6 +422,7 @@ function adminDeleteBox(pin, boxId) {
     const n = readTools_().filter(t => t.box === b.id).length;
     if (n) throw new Error('この工具箱には工具が ' + n + ' 点あります。先に工具の工具箱を変更してください');
     getSheet_(SHEET_BOXES).deleteRow(b.row);
+    cacheClear_();
     return true;
   });
 }
@@ -451,11 +464,12 @@ function adminSaveSettings(pin, patch) {
   }
   const s = getSettings();
   return {
-    manager_type: s.manager_type,
-    manager_email: s.manager_email,
-    admin_pin: s.admin_pin,
-    app_url: s.app_url,
+    manager_type: s.manager_type || 'human',
+    manager_email: s.manager_email || '',
+    admin_pin: s.admin_pin || '',
+    app_url: s.app_url || '',
     notify_on_request: s.notify_on_request !== 'off',
+    claude_api_key_set: !!s.claude_api_key,
   };
 }
 
@@ -771,9 +785,10 @@ function writeTool_(t) {
 
 /** 工具箱シートを全件読む。{row, id, name, managerName, managerEmail} の配列 */
 function readBoxes_() {
+  if (CACHE_.boxes) return CACHE_.boxes;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName(SHEET_BOXES);
-  if (!sh) return [];
+  if (!sh) { CACHE_.boxes = []; return CACHE_.boxes; }
   const values = sh.getDataRange().getValues();
   const out = [];
   for (let i = 1; i < values.length; i++) {
@@ -788,6 +803,7 @@ function readBoxes_() {
       managerEmail: String(r[3] || '').trim(),
     });
   }
+  CACHE_.boxes = out;
   return out;
 }
 
@@ -796,6 +812,7 @@ function ensureBoxSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const existed = !!ss.getSheetByName(SHEET_BOXES);
   const sh = getOrCreateSheet_(ss, SHEET_BOXES, BOX_HEADERS);
+  if (!existed) cacheClear_();
   if (!existed) {
     sh.getRange('A:D').setNumberFormat('@');
     sh.setColumnWidth(2, 200);
@@ -811,6 +828,7 @@ function findBox_(boxId) {
 }
 
 function writeBox_(b) {
+  cacheClear_();
   getSheet_(SHEET_BOXES).getRange(b.row, 1, 1, 4).setValues([[b.id, b.name, b.managerName, b.managerEmail]]);
 }
 
@@ -912,19 +930,23 @@ function readRecentLogs_(n) {
 
 /** 設定シートを { key: value } で返す */
 function getSettings() {
+  if (CACHE_.settings) return CACHE_.settings;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheetByName(SHEET_SETTINGS);
   const out = {};
-  if (!sh) return out;
-  sh.getDataRange().getValues().forEach((r, i) => {
-    if (i === 0) return;
-    const k = String(r[0] || '').trim();
-    if (k) out[k] = String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
-  });
+  if (sh) {
+    sh.getDataRange().getValues().forEach((r, i) => {
+      if (i === 0) return;
+      const k = String(r[0] || '').trim();
+      if (k) out[k] = String(r[1] === undefined || r[1] === null ? '' : r[1]).trim();
+    });
+  }
+  CACHE_.settings = out;
   return out;
 }
 
 function setSetting_(key, value) {
+  cacheClear_();
   const sh = getSheet_(SHEET_SETTINGS);
   const values = sh.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
@@ -938,13 +960,14 @@ function setSetting_(key, value) {
 
 /** メール内リンクや画面遷移に使う Web アプリ URL（設定 > なければ現在のデプロイ URL） */
 function getAppUrl_() {
+  if (CACHE_.appUrl !== undefined) return CACHE_.appUrl;
   const s = getSettings();
-  if (s.app_url) return s.app_url;
-  try {
-    return ScriptApp.getService().getUrl() || '';
-  } catch (e) {
-    return '';
+  let url = s.app_url || '';
+  if (!url) {
+    try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
   }
+  CACHE_.appUrl = url;
+  return url;
 }
 
 // ---------------------------------------------------------------------------
