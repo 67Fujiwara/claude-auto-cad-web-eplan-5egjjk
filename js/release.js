@@ -144,6 +144,7 @@ UI.finishDesign = () => {
       <div class="prop-row"><label>版数</label><input id="rlRev" class="mono" value="${escAttr(meta.rev || "0")}"/></div>
       <div class="prop-row"><label>出図者</label><input id="rlBy" value="${escAttr(meta.designer || "")}" placeholder="署名"/></div>
       <div class="prop-row"><label>検図者</label><input id="rlChk" value="${escAttr(meta.checker || "")}" placeholder="署名 — 全ページの表題欄の検図欄に入ります"/></div>
+      ${projectMeta().outPlain ? `<div class="prop-row"><label>管理番号</label><input id="rlCtrl" class="mono" value="${escAttr(meta.ctrlNo || "")}" placeholder="シンプル図枠の帯に表示 (空欄なら図番)"/></div>` : ""}
     </div>
     <div class="prop-row"><label>備考</label><input id="rlNote" placeholder="変更点・出図先など"/></div>
     <div class="prop-note">PDF は社内保存用と顧客提出用の 2 通りを出します。図番は両方とも同じで、
@@ -173,6 +174,9 @@ UI.finishDesign = () => {
     if (q("#rlBy").value.trim()) meta.designer = q("#rlBy").value.trim();
     // 検図者は表題欄の検図 (署名) — 図面全体のメタなので全ページに入る
     if (q("#rlChk").value.trim()) meta.checker = q("#rlChk").value.trim();
+    // 管理番号 (シンプル図枠の帯)。欄は出力時シンプルのときだけ出る
+    const rlCtrl = q("#rlCtrl");
+    if (rlCtrl) meta.ctrlNo = rlCtrl.value.trim();
     m.close();
     await UI.runRelease({
       dxf: wantDxf, pdfIn: wantPdfIn, pdfCus: wantPdfCus, json: wantJson, pack, dpi,

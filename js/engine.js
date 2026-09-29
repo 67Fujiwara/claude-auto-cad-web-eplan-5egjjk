@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 213;
+const APP_VERSION = 214;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -479,6 +479,13 @@ function plainTitleLayout(page) {
 }
 /** シンプル図枠の頁番号 (表紙 = 00、以降 01, 02 …) */
 function plainPageNo(page) { return String(Math.max(0, ((page && page.no) || 1) - 1)).padStart(2, "0"); }
+/** パネルページ左下の案件行 (案件番号・型式・外形・備考) の基線 y。
+    シンプル図枠では下端の帯 (改訂欄) と重なるため、その上へ逃がす */
+function panelJobLineY() {
+  const f = sheetScale();
+  const fr = frameRect();
+  return fr.y + fr.h - (frameStyle() === "plain" ? (PLAIN_TB.h + 2) * f : 2 * f);
+}
 function titleBlockRect() {
   const f = sheetScale();
   if (frameStyle() === "plain") {

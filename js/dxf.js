@@ -728,7 +728,8 @@ function pageToDXF(page) {
       if (pn.note) parts.push(`備考: ${pn.note}`);
       if (parts.length) {
         const fr2 = frameRect();
-        ents += dxfText(fr2.x + 3 * f, fr2.y + fr2.h - 2 * f, S(TEXT_H.small), parts.join("　"), "TEXT", "start", 0, { mono: false });
+        // シンプル図枠では下端の帯 (改訂欄) の上へ逃がす (画面と同じ)
+        ents += dxfText(fr2.x + 3 * f, panelJobLineY(), S(TEXT_H.small), parts.join("　"), "TEXT", "start", 0, { mono: false });
       }
     }
   }

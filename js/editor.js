@@ -1176,7 +1176,8 @@ function panelSVG(page) {
   const pn = page.panel;
   if (!pn) return "";
   const pd = panelDataOf(page);
-  const ck = `${pn.dataKey || page.id}|r${pd.rev || 0}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}`;
+  // frameStyle も鍵に入れる — 出力時シンプル図枠では案件行の位置が変わる
+  const ck = `${pn.dataKey || page.id}|r${pd.rev || 0}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}|${frameStyle()}`;
   const hit = _panelSvgCache.get(ck);
   if (hit !== undefined) return hit;
   const f = sheetScale();
@@ -1230,7 +1231,8 @@ function panelSVG(page) {
     if (parts.length) {
       const fr = frameRect();
       const line = parts.join("　");
-      out += `<text x="${fr.x + 3 * f}" y="${fr.y + fr.h - 2 * f}" font-size="${svgFontSizeFor(line, TEXT_H.small * f)}" fill="${INK}" font-family="sans-serif">${escXML(line)}</text>`;
+      // シンプル図枠では下端の帯 (改訂欄) の上へ逃がす (panelJobLineY)
+      out += `<text x="${fr.x + 3 * f}" y="${panelJobLineY()}" font-size="${svgFontSizeFor(line, TEXT_H.small * f)}" fill="${INK}" font-family="sans-serif">${escXML(line)}</text>`;
     }
   }
   out += `</g>`;
