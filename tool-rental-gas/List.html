@@ -91,6 +91,8 @@
       if (!g) { g = { key: key, box: t.box, tools: [] }; groups.push(g); }
       g.tools.push(t);
     });
+    // 工具箱を番号順に並べ、工具箱なし（未分類）は最後
+    groups.sort((a, b) => ((a.box ? 0 : 1) - (b.box ? 0 : 1)) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     const showHeaders = groups.some(g => g.box);
     cards.innerHTML = groups.map(g => {
       const header = showHeaders

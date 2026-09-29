@@ -32,8 +32,12 @@ const SETTING_KEYS = ['manager_type', 'manager_email', 'app_url', 'admin_pin', '
 const STATUS_FREE = '空き';
 const STATUS_USED = '使用中';
 
-/** tool_id の接頭辞（TOOL_ID001, TOOL_ID002 …）。変えるときはここだけ。端末側の ID は「端末ID」で別物 */
-const TOOL_ID_PREFIX = 'TOOL_ID';
+/**
+ * tool_id の形式: T<工具箱番号>_ID<連番>（例: 1 番の工具箱なら T1_ID001、工具箱なしは T0_ID001）。
+ * 連番は工具箱ごとに 001 から。工具箱を移すと ID も変わる（QR の印刷し直しが必要）。
+ * 端末側の ID は「端末ID」で別物。
+ */
+const TOOL_ID_RE = /^T(\d+)_ID(\d+)$/;
 
 /**
  * 実行内キャッシュ。Apps Script は 1 回の呼び出しごとに新しく実行されるので、
@@ -151,13 +155,13 @@ function randomPin_() {
 
 /**
  * Web アプリの入口。
- *   ?tool=TOOL_ID001                    申請画面
+ *   ?tool=T1_ID001                    申請画面
  *   ?view=list                     一覧画面（パラメータなしも一覧）
  *   ?view=admin                    管理画面
  *   ?view=print&pin=1234           QR 一括印刷
- *   ?action=return&tool=TOOL_ID001      返却（メールリンク用）
- *   ?action=extend&tool=TOOL_ID001&days=3        延長（+N日）
- *   ?action=extend&tool=TOOL_ID001&date=2026-09-30  延長（日付指定）
+ *   ?action=return&tool=T1_ID001      返却（メールリンク用）
+ *   ?action=extend&tool=T1_ID001&days=3        延長（+N日）
+ *   ?action=extend&tool=T1_ID001&date=2026-09-30  延長（日付指定）
  */
 function doGet(e) {
   const p = (e && e.parameter) || {};
@@ -353,7 +357,7 @@ function adminAddTool(pin, name, boxId) {
   boxId = String(boxId || '').trim();
   if (boxId && !findBox_(boxId)) throw new Error('工具箱が見つかりません: ' + boxId);
   return withLock_(() => {
-    const id = nextToolId_();
+    const id = nextToolId_(boxId);
     getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '', '', boxId]);
     return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '', device: '', box: boxId });
   });
@@ -371,9 +375,19 @@ function adminUpdateTool(pin, toolId, name, boxId) {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     t.name = name;
-    if (changeBox) t.box = boxId;
+    let oldId = null;
+    if (changeBox && boxId !== t.box) {
+      if (t.status === STATUS_USED) throw new Error('使用中の工具は工具箱を変更できません（先に返却してください）');
+      // ID に工具箱番号が入っているので、移動先の工具箱で採番し直す
+      oldId = t.id;
+      t.box = boxId;
+      t.id = nextToolId_(boxId);
+      renameToolIdsInLog_({ [oldId]: t.id });
+    }
     writeTool_(t);
-    return fullTool_(t);
+    const out = fullTool_(t);
+    if (oldId) out.idChanged = oldId; // 画面で「QR を印刷し直してください」と案内する
+    return out;
   });
 }
 
@@ -860,43 +874,89 @@ function returnToLabel_(t) {
   return b.managerName || b.name;
 }
 
-function nextToolId_() {
+/** 工具箱の番号（BOX01 → 1）。工具箱なしは 0 */
+function boxNumber_(boxId) {
+  const m = /(\d+)$/.exec(String(boxId || ''));
+  return m ? Number(m[1]) : 0;
+}
+
+/** 工具箱ごとの ID 接頭辞（T1_ID など） */
+function toolIdPrefix_(boxId) {
+  return 'T' + boxNumber_(boxId) + '_ID';
+}
+
+/** その工具箱で次に使う tool_id（同じ工具箱内の最大連番 + 1） */
+function nextToolId_(boxId, tools) {
+  const n = boxNumber_(boxId);
   let max = 0;
-  readTools_().forEach(t => {
-    const m = /^[A-Za-z_]+(\d+)$/.exec(t.id); // 旧形式 T001 / TOOL_ID001 も含めて最大番号を取る
-    if (m) max = Math.max(max, Number(m[1]));
+  (tools || readTools_()).forEach(t => {
+    const m = TOOL_ID_RE.exec(t.id);
+    if (m && Number(m[1]) === n) max = Math.max(max, Number(m[2]));
   });
-  return TOOL_ID_PREFIX + String(max + 1).padStart(3, '0');
+  return toolIdPrefix_(boxId) + String(max + 1).padStart(3, '0');
+}
+
+/** 貸出ログの tool_id 列を対応表（旧 → 新）で書き換える */
+function renameToolIdsInLog_(mapping) {
+  const sh = getSheet_(SHEET_LOG);
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+  const range = sh.getRange(2, 2, last - 1, 1);
+  const values = range.getValues();
+  let changed = 0;
+  values.forEach(r => {
+    const k = String(r[0] || '').trim();
+    if (mapping[k]) { r[0] = mapping[k]; changed++; }
+  });
+  if (changed) range.setValues(values);
+  return changed;
 }
 
 /**
- * 旧形式の tool_id（T001 / TOOL_ID001 など）を現在の接頭辞（TOOL_ID001 など）に一括で書き換える。
- * 「工具」シートと「貸出ログ」シートの両方を直す。エディタから手動で1回実行する。
- * ※ 印刷済みの QR は旧 ID のままなので、実行後は QR を印刷し直すこと。
+ * すべての tool_id を現在の形式 T<工具箱番号>_ID<連番> に揃える。
+ * 旧形式（T001 / ID001 / TOOL_ID001）や、工具箱と番号が合っていない ID を、工具箱ごとに 001 から振り直す。
+ * 「貸出ログ」の tool_id も対応表で書き換える。エディタから手動で実行する。
+ * ※ ID が変わった工具は QR を印刷し直すこと。
  */
 function migrateToolIds() {
-  const conv = v => {
-    const m = /^([A-Za-z_]+)(\d+)$/.exec(String(v || '').trim());
-    return (m && m[1] !== TOOL_ID_PREFIX) ? TOOL_ID_PREFIX + m[2] : null;
-  };
-  let count = 0;
+  const mapping = {};
   withLock_(() => {
-    [[SHEET_TOOLS, 1], [SHEET_LOG, 2]].forEach(([name, col]) => {
-      const sh = getSheet_(name);
-      const last = sh.getLastRow();
-      if (last < 2) return;
-      const range = sh.getRange(2, col, last - 1, 1);
-      const values = range.getValues();
-      let changed = false;
-      values.forEach(r => {
-        const n = conv(r[0]);
-        if (n) { r[0] = n; changed = true; count++; }
-      });
-      if (changed) range.setValues(values);
+    const tools = readTools_();
+    // 工具箱ごとにまとめ、既存の番号順（無ければ行順）で連番を振り直す
+    const groups = {};
+    tools.forEach(t => {
+      const key = String(boxNumber_(t.box));
+      (groups[key] = groups[key] || []).push(t);
     });
+    const seqOf = id => { const m = /(\d+)$/.exec(id); return m ? Number(m[1]) : 0; };
+    Object.keys(groups).forEach(key => {
+      const list = groups[key];
+      // すでに正しい形式（工具箱番号が一致）の ID は残す。重複していたら 2 つ目以降は振り直し対象
+      const used = new Set();
+      const bad = [];
+      list.forEach(t => {
+        const m = TOOL_ID_RE.exec(t.id);
+        if (m && m[1] === key && !used.has(t.id)) used.add(t.id); else bad.push(t);
+      });
+      if (!bad.length) return;
+      // 通常の採番と同じく「最大番号 + 1」から振る（削除済みの番号を再利用すると古い QR が別の工具を開いてしまう）
+      let seq = 0;
+      used.forEach(id => { const m = TOOL_ID_RE.exec(id); if (m) seq = Math.max(seq, Number(m[2])); });
+      const nextFree = () => { seq++; return 'T' + key + '_ID' + String(seq).padStart(3, '0'); };
+      bad.sort((a, b) => seqOf(a.id) - seqOf(b.id) || a.row - b.row);
+      bad.forEach(t => {
+        const newId = nextFree();
+        used.add(newId);
+        mapping[t.id] = newId;
+        t.id = newId;
+        writeTool_(t);
+      });
+    });
+    if (Object.keys(mapping).length) renameToolIdsInLog_(mapping);
   });
-  Logger.log('migrateToolIds: ' + count + ' 件を ' + TOOL_ID_PREFIX + '### 形式に変更しました');
-  return count;
+  const n = Object.keys(mapping).length;
+  Logger.log('migrateToolIds: ' + n + ' 件の ID を変更しました' + (n ? '（QR を印刷し直してください）: ' + JSON.stringify(mapping) : ''));
+  return mapping;
 }
 
 function appendLog_(t, op, opt) {

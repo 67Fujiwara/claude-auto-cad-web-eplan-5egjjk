@@ -232,11 +232,12 @@
   }
 
   // サーバーを読み直さず、1 枚のカードだけ差し替える（保存・貸出・返却の応答が速くなる）
-  function replaceToolCard(t) {
-    const i = DATA.tools.findIndex(x => x.id === t.id);
+  function replaceToolCard(t, oldId) {
+    const key = oldId || t.id;
+    const i = DATA.tools.findIndex(x => x.id === key);
     if (i >= 0) DATA.tools[i] = t; else DATA.tools.push(t);
     const box = document.getElementById('tools');
-    const old = box.querySelector('.card[data-id="' + CSS.escape(t.id) + '"]');
+    const old = box.querySelector('.card[data-id="' + CSS.escape(key) + '"]');
     const tmp = document.createElement('div');
     tmp.innerHTML = toolCardHtml(t);
     const fresh = tmp.firstElementChild;
@@ -339,9 +340,13 @@
         const name = card.querySelector('.nameInput').value;
         btnBusy(b, '保存中…');
         const t = await call('adminUpdateTool', PIN, id, name, card.querySelector('.boxInput').value);
-        const fresh = replaceToolCard(t);
+        const fresh = replaceToolCard(t, id);
         recountBoxes();
-        showMsg('msg', t.name + '（' + id + '）を保存しました' + (t.box ? '　工具箱: ' + t.box.name : ''), 'ok');
+        if (t.idChanged) {
+          showMsg('msg', t.name + ' の ID が ' + t.idChanged + ' → ' + t.id + ' に変わりました。QR を印刷し直してください', 'err');
+        } else {
+          showMsg('msg', t.name + '（' + id + '）を保存しました' + (t.box ? '　工具箱: ' + t.box.name : ''), 'ok');
+        }
         btnFlash(fresh.querySelector('button[data-act="save"]'), true, '✓ 保存しました');
         return;
       }
