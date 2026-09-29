@@ -1933,7 +1933,8 @@ UI.importPanelStudio = () => {
       UI.refresh(true);
       saveLocal();
       UI.toast(`Panel Studio の図面 ${r.added} ページを差し込みました` +
-        (r.replaced ? ` (前の ${r.replaced} ページを置き換え)` : "") +
+        (r.replaced ? ` (同じキャビネット${r.cabId ? ` [${r.cabId}]` : ""} の ${r.replaced} ページを置き換え)` : "") +
+        (r.others ? ` — 別のキャビネット ${r.others} 台のページはそのまま` : "") +
         (r.badCoords ? `。座標が 0〜extent の外の要素が ${r.badCoords} 件あります (そのまま描いています)` : ""), 6000);
     } catch (e) {
       alert("Panel Studio の図面を差し込めませんでした:\n" + e.message);

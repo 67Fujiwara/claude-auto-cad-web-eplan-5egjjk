@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 212;
+const APP_VERSION = 213;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5560,6 +5560,10 @@ function panelInsertPages(data) {
   const job = data.job || {};
   const panel = data.panel || {};
   const jobNo = String(job.jobNo || "");
+  /* キャビネットの識別 ID。1 つの図面に複数の盤 (制御盤と操作盤など) を
+     並べられるよう、置き換えは「同じ ID」のページだけに絞る。
+     Panel Studio 側の panel.id があればそれ、無ければ 型式 → 案件番号 */
+  const cabId = String(panel.id || panel.model || jobNo || "");
   // 縮尺は A3 横 (既定の用紙) の作図領域で選ぶ
   const keepPage = curPage();
   const probe = { paper: "A3", orient: "landscape", scale: "1:1" };
@@ -5573,7 +5577,7 @@ function panelInsertPages(data) {
     const outer = panel.outer || {};
     /* 重い中身 (entities/layers) は panelData へ。ページには参照キーだけ持つ —
        編集のたびに丸ごと直列化されるのを避ける (undo 控え・自動保存が軽くなる) */
-    const dataKey = `${jobNo}/${sh.id}/${stamp}`;
+    const dataKey = `${jobNo}/${cabId}/${sh.id}/${stamp}`;
     App.project.panelData = App.project.panelData || {};
     App.project.panelData[dataKey] = {
       entities: deepCopy(sh.entities || []), layers: deepCopy(sh.layers || {}) };
@@ -5583,7 +5587,7 @@ function panelInsertPages(data) {
       devices: [], wires: [], texts: [], zones: [],
       paper: "A3", orient: "landscape", scale: "1:" + n,
       panel: {
-        jobNo, sheetId: sh.id, title: sh.title || sh.id, dataKey,
+        jobNo, cabId, sheetId: sh.id, title: sh.title || sh.id, dataKey,
         extent: { w: sh.extent.w, h: sh.extent.h },
         job: deepCopy(job), model: panel.model || "",
         outer: deepCopy(outer), note: job.note || "",
@@ -5596,20 +5600,30 @@ function panelInsertPages(data) {
   });
   applySheet(keepPage);
   const pages = App.project.pages;
-  // 置き換え: 同じ案件の既存 panel ページを除く
+  // 置き換え: 同じキャビネット (ID) の既存 panel ページだけを除く —
+  // 別の盤のページは残す (1 つの図面に複数の盤を並べられる)
   const before = pages.length;
   App.project.pages = pages.filter(p2 => !(p2.kind === "panel" && p2.panel &&
-    p2.panel.jobNo === jobNo && PANEL_SHEET_IDS.includes(p2.panel.sheetId)));
+    p2.panel.jobNo === jobNo && panelCabIdOf(p2.panel) === cabId &&
+    PANEL_SHEET_IDS.includes(p2.panel.sheetId)));
   const replaced = before - App.project.pages.length;
-  // 仕様ページの直後 (無ければ表紙・目次の後、それも無ければ先頭) へ
+  // 別の盤が居るときは、ページ名に ID を付けてタブで見分けられるようにする
+  const otherIds = new Set(App.project.pages
+    .filter(p2 => p2.kind === "panel" && p2.panel && panelCabIdOf(p2.panel) !== cabId)
+    .map(p2 => panelCabIdOf(p2.panel)));
+  if (otherIds.size && cabId) pagesNew.forEach(p2 => { p2.name = `${p2.name} [${cabId}]`; });
+  // 仕様ページの直後 (無ければ表紙・目次の後)。すでに盤のページがあれば
+  // その後ろへ — 盤ごとのまとまりを崩さない
   let at = -1;
   App.project.pages.forEach((p2, i) => {
-    if (p2.kind === "spec" || p2.kind === "toc" || p2.kind === "cover") at = i;
+    if (p2.kind === "spec" || p2.kind === "toc" || p2.kind === "cover" || p2.kind === "panel") at = i;
   });
   App.project.pages.splice(at + 1, 0, ...pagesNew);
   panelNormalize(App.project);           // 置き換えで参照が切れたデータを捨てる
-  return { added: pagesNew.length, replaced, badCoords };
+  return { added: pagesNew.length, replaced, badCoords, cabId, others: otherIds.size };
 }
+/** パネルページのキャビネット識別 ID (旧データは 型式 → 案件番号 で読み替え) */
+function panelCabIdOf(pn) { return String((pn && (pn.cabId || pn.model || pn.jobNo)) || ""); }
 
 /* ── ZIP の読み出し (store / deflate)。設計完了 ZIP のまま渡されたとき用 ── */
 async function zipEntries(buf) {
