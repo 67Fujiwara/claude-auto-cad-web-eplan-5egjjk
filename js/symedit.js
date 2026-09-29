@@ -82,9 +82,10 @@ function symShapeSVG(sh, opts = {}) {
     : (sh.lw ? ` stroke-width="${sh.lw}"` : "");
   const extra = opts.hl ? ` stroke="${SEL}" stroke-width="0.8"` : "";
   if (sh.k === "raw") {
-    // 分解できない要素 (曲線など)。translate + rotate で移動・回転はできる
-    const tf = (sh.dx || sh.dy || sh.rot)
-      ? ` transform="translate(${+(sh.dx || 0).toFixed(2)},${+(sh.dy || 0).toFixed(2)}) rotate(${sh.rot || 0})"` : "";
+    // 分解できない要素 (曲線など)。translate + rotate + scale で移動・回転・縮小はできる
+    const sc = sh.sc && sh.sc !== 1 ? sh.sc : 0;
+    const tf = (sh.dx || sh.dy || sh.rot || sc)
+      ? ` transform="translate(${+(sh.dx || 0).toFixed(2)},${+(sh.dy || 0).toFixed(2)}) rotate(${sh.rot || 0})${sc ? ` scale(${sc})` : ""}"` : "";
     return `<g${tf}${opts.hl ? ` stroke="${SEL}"` : ""}>${sh.body}</g>`;
   }
   if (sh.k === "line") {
@@ -424,8 +425,11 @@ function rawShapeBB(sh) {
     _rawBBCache.set(sh, bb);
   }
   const a = ((sh.rot || 0) % 360) * Math.PI / 180;
-  const cs = [[bb[0], bb[1]], [bb[2], bb[1]], [bb[0], bb[3]], [bb[2], bb[3]]].map(([px, py]) =>
-    [px * Math.cos(a) - py * Math.sin(a) + (sh.dx || 0), px * Math.sin(a) + py * Math.cos(a) + (sh.dy || 0)]);
+  const sc = sh.sc || 1;                       // 縮小・拡大の倍率 (scale は rotate の内側)
+  const cs = [[bb[0], bb[1]], [bb[2], bb[1]], [bb[0], bb[3]], [bb[2], bb[3]]].map(([px0, py0]) => {
+    const px = px0 * sc, py = py0 * sc;
+    return [px * Math.cos(a) - py * Math.sin(a) + (sh.dx || 0), px * Math.sin(a) + py * Math.cos(a) + (sh.dy || 0)];
+  });
   const xs = cs.map(c => c[0]), ys = cs.map(c => c[1]);
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
@@ -495,6 +499,7 @@ UI.openSymbolEditor = (symId = null) => {
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn-solid" id="seDup" style="padding:4px 10px;font-size:11.5px" title="選択した図形・端子を +5mm ずらして複製 (Ctrl+D)">複製</button>
         <button class="btn-solid" id="seRot" style="padding:4px 10px;font-size:11.5px" title="選択を 90° 回転。未選択なら全体を回転 (R)">回転 90°</button>
+        <button class="btn-solid" id="seScale" style="padding:4px 10px;font-size:11.5px;white-space:nowrap" title="選択を倍率 (%) で縮小・拡大。未選択なら図全体 (端子の位置も一緒に)">縮小/拡大…</button>
         <button class="btn-solid" id="seUngrp" style="padding:4px 10px;font-size:11.5px" title="グループ (コネクタ・挿入シンボル) をほどく。グループが無ければ折れ線を線分に分解">分解</button>
         <button class="btn-solid" id="seConnEd" style="padding:4px 10px;font-size:11.5px" title="選択したコネクタの極数・信号名などを編集して作り直す">コネクタ編集</button>
       </div>
@@ -1464,6 +1469,59 @@ UI.openSymbolEditor = (symId = null) => {
     fitCanvas(); draw();
     UI.setMsg(has ? "選択を 90° 回転しました" : "全体を 90° 回転しました");
   };
+  /** 選択 (未選択なら全体) を倍率で縮小・拡大する。中心は外接箱の中央。
+      角R・円の半径・文字高さ・表の列幅/行高などの寸法も一緒に掛ける。
+      端子は 0.5mm 刻み (微調整と同じ) に乗せる */
+  const scaleSel = () => {
+    const has = S.msel.shapes.length || S.msel.pins.length || S.sel !== -1;
+    const idx = has ? selIdx() : { s: S.shapes.map((_, i) => i), p: S.pins.map((_, i) => i) };
+    if (!idx.s.length && !idx.p.length) { UI.setMsg("縮小する図形がありません"); return; }
+    const v = prompt("倍率 (%) — 100 より小さいと縮小、大きいと拡大", "50");
+    if (v === null) return;
+    const k = parseFloat(v) / 100;
+    if (!isFinite(k) || k <= 0) { alert("倍率は正の数字 (%) で入れてください (例: 50)"); return; }
+    const kk = Math.max(0.01, Math.min(20, k));
+    if (kk === 1) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    idx.s.forEach(i => {
+      const b = S.shapes[i] && shapeBBox(S.shapes[i]);
+      if (b) { x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]); }
+    });
+    idx.p.forEach(i => { const p = S.pins[i]; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); });
+    if (!isFinite(x0)) return;
+    const cx = symSnap((x0 + x1) / 2, GRID), cy = symSnap((y0 + y1) / 2, GRID);
+    push();
+    const r2 = n => Math.round(n * 100) / 100;
+    const PX = px => r2(cx + (px - cx) * kk), PY = py => r2(cy + (py - cy) * kk);
+    const L = len => r2(len * kk);
+    idx.s.forEach(i => {
+      const sh = S.shapes[i];
+      if (!sh) return;
+      if (sh.k === "line") sh.pts = sh.pts.map(([px, py]) => [PX(px), PY(py)]);
+      else if (sh.k === "rect") {
+        sh.x = PX(sh.x); sh.y = PY(sh.y);
+        sh.w = Math.max(0.2, L(sh.w)); sh.h = Math.max(0.2, L(sh.h));
+        if (sh.r) sh.r = L(sh.r);
+      } else if (sh.k === "circle" || sh.k === "arc" || sh.k === "half") {
+        sh.x = PX(sh.x); sh.y = PY(sh.y); sh.r = Math.max(0.1, L(sh.r));
+      } else if (sh.k === "text") {
+        sh.x = PX(sh.x); sh.y = PY(sh.y); sh.h = Math.max(1, L(sh.h || TEXT_H.normal));
+      } else if (sh.k === "table") {
+        sh.x = PX(sh.x); sh.y = PY(sh.y);
+        sh.colWs = (sh.colWs || []).map(w2 => Math.max(1, L(w2)));
+        sh.rowHs = (sh.rowHs || []).map(h2 => Math.max(1, L(h2)));
+        sh.th = Math.max(1, L(sh.th || TEXT_H.small));
+      } else if (sh.k === "raw") {
+        sh.dx = PX(sh.dx || 0); sh.dy = PY(sh.dy || 0);
+        sh.sc = r2((sh.sc || 1) * kk);
+      }
+    });
+    // 端子は微調整と同じ 0.5mm 刻みに乗せる (配線と合わせやすい)
+    const P5 = n => Math.round(n * 2) / 2;
+    idx.p.forEach(i => { const p = S.pins[i]; p.x = P5(cx + (p.x - cx) * kk); p.y = P5(cy + (p.y - cy) * kk); });
+    fitCanvas(); draw();
+    UI.setMsg(`${has ? "選択" : "全体"}を ${r2(kk * 100)}% に${kk < 1 ? "縮小" : "拡大"}しました (端子は 0.5mm 刻み)`);
+  };
   const deleteSel = () => {
     if (S.msel.shapes.length || S.msel.pins.length) {
       push();
@@ -1532,6 +1590,7 @@ UI.openSymbolEditor = (symId = null) => {
   };
   body.querySelector("#seDup").addEventListener("click", dupSel);
   body.querySelector("#seRot").addEventListener("click", rotateSel);
+  body.querySelector("#seScale").addEventListener("click", scaleSel);
   body.querySelector("#seUngrp").addEventListener("click", ungroupSel);
   body.querySelector("#seConnEd").addEventListener("click", connEditSel);
 
