@@ -126,7 +126,7 @@ UI.finishDesign = () => {
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlDxf" checked/><span>DXF (AutoCAD互換・ページごとに ${pages.length} ファイル)</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfIn" checked/><span>PDF 社内保存用 (すべての図面 ${pages.length} ページを1ファイルに)</span></label></div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlPdfCus" checked/><span>PDF 顧客提出用 (仕様・加工穴のみ${nDrop ? ` ${nDrop} ページ` : ""}を外した ${pages.length - nDrop} ページ)${nDrop ? "" : " — 外すページはありません"}</span></label></div>
-    <div class="prop-note" style="margin:4px 0 0">図枠: ${projectMeta().outPlain ? "出力時はシンプル図枠 (改訂欄 + 管理番号・頁の帯)" : "標準 (JIS)"} — 「図枠・表題欄の設定」の様式で切り替えられます</div>
+    <div class="prop-note" style="margin:4px 0 0">図枠: ${projectMeta().outPlain ? "顧客提出用 PDF と DXF はシンプル図枠 (改訂欄 + 管理番号・頁の帯)・社内保存用 PDF は JIS" : "標準 (JIS)"} — 「図枠・表題欄の設定」の様式で切り替えられます</div>
     <div class="prop-row"><label class="chk"><input type="checkbox" id="rlJson" checked/><span>図面データ (JSON・再編集用)</span></label></div>
     <div class="prop-sect">まとめ方</div>
     <div class="prop-row"><label>出力先</label><select id="rlPack">
@@ -206,33 +206,36 @@ UI.runRelease = async (opt) => {
   const pdfKinds = [];
   if (opt.pdfIn !== undefined ? opt.pdfIn : opt.pdf) pdfKinds.push("internal");
   if (opt.pdfCus !== undefined ? opt.pdfCus : opt.pdf) pdfKinds.push("customer");
-  /* DXF と PDF は「図枠スタイル」の設定どおり — 出力時シンプル図枠 (meta.outPlain)
-     なら、描いている間だけ様式を差し替える (画面と JSON は JIS のまま) */
-  await withOutputFrame(async () => {
-    if (opt.dxf) {
+  /* DXF と顧客提出用 PDF は「図枠スタイル」の設定どおり — 出力時シンプル図枠
+     (meta.outPlain) なら描いている間だけ様式を差し替える。
+     社内保存用 PDF は常に JIS 標準図枠のまま残す (シンプルは提出物だけ)。
+     ページ構成も様式も同じになるとき (仕様のページが無い・シンプル切替なし)
+     は 1 回だけ作って使い回す */
+  const pdfMade = new Map();
+  const buildKind = async (kind) => {
+    const label = releaseKindLabel(kind);
+    const list = releasePages(kind, pages);
+    const name = safe(`${pdfBaseName(now)}_${label}.pdf`);   // 日付_顧客名_装置名_版
+    const key = list.map(pg => pages.indexOf(pg)).join(",") + "|" + frameStyle();
+    if (pdfMade.has(key)) { out.push({ name, data: pdfMade.get(key) }); return; }
+    if (!list.length) { UI.setMsg(`PDF (${label}) に載せるページがありません`); return; }
+    UI.setMsg(`PDF (${label}) を作っています… (ページ数が多いと少しかかります)`);
+    try {
+      const blob = await withReleaseProject(kind, pgs => buildPDF(pgs, { dpi: opt.dpi || 200,
+        onProgress: (i, n) => UI.setMsg(`PDF (${label}) を作っています… ${i + 1}/${n} ページ`) }));
+      out.push({ name, data: blob });
+      pdfMade.set(key, blob);
+    } catch (e) {
+      UI.setMsg(`PDF (${label}) の作成に失敗しました — 他の形式だけ出力します`);
+    }
+  };
+  if (opt.dxf) {
+    await withOutputFrame(async () => {
       pages.forEach(pg => out.push({ name: safe(`${base}_p${pg.no}_${pg.name}.dxf`), data: dxfBytes(pageToDXF(pg)) }));
-    }
-    /* PDF は 2 通り。社内保存用はすべての図面、顧客提出用は仕様のページを外したもの。
-       ページ構成が同じになるとき (仕様のページが無い図面) は 1 回だけ作って使い回す */
-    const pdfMade = new Map();
-    for (const kind of pdfKinds) {
-      const label = releaseKindLabel(kind);
-      const list = releasePages(kind, pages);
-      const name = safe(`${pdfBaseName(now)}_${label}.pdf`);   // 日付_顧客名_装置名_版
-      const key = list.map(pg => pages.indexOf(pg)).join(",");
-      if (pdfMade.has(key)) { out.push({ name, data: pdfMade.get(key) }); continue; }
-      if (!list.length) { UI.setMsg(`PDF (${label}) に載せるページがありません`); continue; }
-      UI.setMsg(`PDF (${label}) を作っています… (ページ数が多いと少しかかります)`);
-      try {
-        const blob = await withReleaseProject(kind, pgs => buildPDF(pgs, { dpi: opt.dpi || 200,
-          onProgress: (i, n) => UI.setMsg(`PDF (${label}) を作っています… ${i + 1}/${n} ページ`) }));
-        out.push({ name, data: blob });
-        pdfMade.set(key, blob);
-      } catch (e) {
-        UI.setMsg(`PDF (${label}) の作成に失敗しました — 他の形式だけ出力します`);
-      }
-    }
-  });
+    });
+  }
+  if (pdfKinds.includes("internal")) await buildKind("internal");   // JIS のまま
+  if (pdfKinds.includes("customer")) await withOutputFrame(() => buildKind("customer"));
   if (opt.dxf || pdfKinds.length) applySheet(curPage());   // 図枠を画面用 (JIS) に戻す
 
   const files = out.map(f => f.name);

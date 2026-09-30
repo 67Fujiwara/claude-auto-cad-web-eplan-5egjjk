@@ -2704,7 +2704,7 @@ UI.sheetSetup = () => {
         ${opt("plain", meta.outPlain ? "plain" : "std", "出力時はシンプル図枠 (画面は JIS)")}
       </select></div>
     </div>
-    <div class="prop-note">画面の編集は常に JIS 標準図枠。シンプル図枠を選ぶと PDF・印刷・DXF・出図の出力時だけ下端の帯の様式に差し替わります。<br>
+    <div class="prop-note">画面の編集は常に JIS 標準図枠。シンプル図枠を選ぶと PDF・印刷・DXF・出図の出力時だけ下端の帯の様式に差し替わります (出図の社内保存用 PDF だけは JIS のまま残します)。<br>
       帯には 企業名 / 作成日・製図・検図・承認 / 管理番号 / 頁 (表紙 = 00) と改訂欄 (A〜C) が入り、区画参照・尺度欄・接点ミラー表は出ません。</div>
     <div class="prop-sect">表題欄</div>
     <div class="prop-grid2">

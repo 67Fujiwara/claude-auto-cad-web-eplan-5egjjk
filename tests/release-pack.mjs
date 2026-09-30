@@ -15,8 +15,8 @@
    ・relKeep   : 出図しても元の図面のページ番号・ページ数は変わらない
    ・relOut    : 設計完了で PDF が 2 本 (社内保存用 / 顧客提出用) 出る。
                  顧客提出用の中身は仕様のページぶん少ない
-   ・outPlain  : 「出力時シンプル図枠」の図面では出図 PDF が 2 本とも
-                 シンプル図枠で描かれ、済むと画面様式 (JIS) に戻る
+   ・outPlain  : 「出力時シンプル図枠」でも社内保存用 PDF は JIS のまま、
+                 顧客提出用 PDF だけシンプル図枠。済むと画面様式 (JIS) に戻る
    ・pdfName   : 出図 PDF の名前は 日付_顧客名_装置名_版.pdf
                  (顧客名 = 表紙の 1 行目、装置名 = 表紙の 2 行目)
    ・exportName: メニューの PDF出力も 日付_顧客名_装置名.pdf。
@@ -139,8 +139,9 @@ const R2 = await p.evaluate(async () => {
     }
     return { how: "テスト", name: "" };
   };
-  /* 「出力時シンプル図枠」(meta.outPlain) を入れると、出図の PDF は 2 本とも
-     シンプル図枠で描かれること。buildPDF を横取りして描画中の様式を記録する */
+  /* 「出力時シンプル図枠」(meta.outPlain) でも、社内保存用 PDF は JIS のまま、
+     顧客提出用 PDF だけシンプル図枠で描かれること (シンプルは提出物だけ)。
+     buildPDF を横取りして描画中の様式を記録する */
   projectMeta().outPlain = true;
   const cover = pages.find(pg => pg.kind === "cover");
   cover.cover = { customer: "テスト顧客株式会社", title: "検査装置一式" };
@@ -150,11 +151,31 @@ const R2 = await p.evaluate(async () => {
   const styles = [];
   window.buildPDF = (pgs, opts) => { styles.push({ n: pgs.length, style: frameStyle() }); return keepBuild(pgs, opts); };
   await UI.runRelease({ dxf: false, json: false, pdfIn: true, pdfCus: true, dpi: 72, pack: "zip", rev: "0" });
+  o.out = grabbed.slice();
+  o.pdfStyles = styles.slice();
+  o.styleAfter = frameStyle();
+  /* ページ構成が同じ (仕様・加工穴なし) でも、様式が違うので使い回さず
+     2 本とも作ること (JIS と plain)。出図 DXF はシンプル図枠 (帯の
+     「管理番号」が入る) のまま */
+  // 出図後は新規プロジェクトに切り替わっている (release-wip) — 仕様の無い
+  // 構成にして、シンプル出力も改めて入れる
+  App.project.pages = App.project.pages.filter(pg => pg.kind !== "spec" && !/加工穴/.test(pg.name || ""));
+  projectMeta().outPlain = true;
+  UI.renumberPages();
+  styles.length = 0; grabbed.length = 0;
+  const dxfGrab = [];
+  window.saveReleaseFiles = async (out2) => {
+    for (const f of out2) {
+      if (/\.dxf$/i.test(f.name)) dxfGrab.push(new TextDecoder("shift_jis").decode(f.data));
+    }
+    return { how: "テスト", name: "" };
+  };
+  await UI.runRelease({ dxf: true, json: false, pdfIn: true, pdfCus: true, dpi: 72, pack: "zip", rev: "0" });
   window.buildPDF = keepBuild;
   window.saveReleaseFiles = keepSave;
-  o.out = grabbed;
-  o.pdfStyles = styles;
-  o.styleAfter = frameStyle();
+  o.sameSet = { styles: styles.map(s2 => s2.style).join(","),
+    sameN: styles.length === 2 && styles[0].n === styles[1].n,
+    dxfPlain: dxfGrab.length > 0 && dxfGrab.every(t => t.includes("管理番号")) };
   return o;
 });
 
@@ -310,8 +331,10 @@ const checks = {
   exportName: EX.dl === `${EX.today}_サンプル商事_搬送装置.pdf` &&
     EX.noCover === `${EX.today}_名前確認`,
   outPlain: Array.isArray(R2.pdfStyles) && R2.pdfStyles.length === 2 &&
-    R2.pdfStyles.every(s => s.style === "plain") &&
-    R2.pdfStyles[1].n < R2.pdfStyles[0].n && R2.styleAfter === "std",
+    R2.pdfStyles[0].style === "std" && R2.pdfStyles[1].style === "plain" &&
+    R2.pdfStyles[1].n < R2.pdfStyles[0].n && R2.styleAfter === "std" &&
+    R2.sameSet.styles === "std,plain" && R2.sameSet.sameN === true &&
+    R2.sameSet.dxfPlain === true,
   zipPack: R.zipPack.type === "application/zip" && R.zipPack.local === 2 && R.zipPack.central === 2 && R.zipPack.end === 1,
   zipRead: zipOK === true,
   menu: menuHas.includes("PDF出力 (全ページを1ファイル)"),
