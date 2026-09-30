@@ -1467,10 +1467,9 @@ UI.addSpecialPage = (kind) => {
 };
 UI.newProject = async (opts = {}) => {
   // 作業中に入れてある図面は、新しく作る前に取っておく (取りこぼさない)。
-  // 出図直後 (fromRelease) は枠が無くても必ず作業中へ確保してから移る —
-  // 図面は設計完了履歴と作業中の両方に残るので、確認は出さない
-  if (opts.fromRelease) { try { await UI.wipSave(); } catch (e) { } }
-  else if (wipCurrent()) await UI.wipSave();
+  // 出図直後 (fromRelease) は保存しない — 出図済みの案件は設計完了履歴に
+  // あり、「作業中」の一覧からは外す運用 (枠の後始末は runRelease 側)
+  if (!opts.fromRelease && wipCurrent()) await UI.wipSave();
   if (!opts.fromRelease && !confirm(`「${App.project.name}」を閉じて新しい図面を作ります。\n` +
     "保存していない変更は失われます (ブラウザの自動保存も新しい図面で上書きされます)。\nよろしいですか？")) return;
   if (App.sim.running) UI.toggleSim(); // 確定後にのみ停止 (キャンセルは完全な無操作)

@@ -258,9 +258,20 @@ UI.runRelease = async (opt) => {
   const saved = await relPutSnapshot(id, App.project);
   relSaveList(relList().map(r => (r.id === id ? { ...r, saved } : r)));
   if (!saved) UI.setMsg("設計完了しました (図面本体は保存できませんでした。履歴からの再出力はできません)");
-  /* 出図が済んだら次の案件へ — 今の図面を「作業中」に確保して新規作成画面へ移る */
+  /* 出図が済んだ案件は「作業中」の一覧から外す — 図面は設計完了履歴に
+     保存済みで、「設計完了履歴 → 開く」からいつでも戻せる。
+     マスターファイルの枠 (標準回路のひな型) は消さない */
+  const wid = wipCurrent();
+  const wEntry = wipList().find(r => r.id === wid);
+  if (wEntry && !wEntry.master) {
+    wipSaveList(wipList().filter(r => r.id !== wid));
+    wipSetCurrent("");
+    relDelSnapshot(wid);                 // 中身の削除は待たない
+  } else if (wEntry) {
+    wipSetCurrent("");
+  }
   await UI.newProject({ fromRelease: true });
-  UI.toast(`出図した「${entry.project}」は作業中と設計完了履歴に残しました — 新しい図面から始められます`, 6000);
+  UI.toast(`出図した「${entry.project}」は設計完了履歴に保存し、作業中の一覧からは外しました — 新しい図面から始められます`, 6000);
 };
 
 /** 出図したファイルの保存先。フォルダ / ZIP / 個別 の 3 通り */
