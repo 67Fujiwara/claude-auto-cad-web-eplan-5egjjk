@@ -598,13 +598,13 @@ function mirrorSVG(coilDev) {
   const org = mirrorOrigin(coilDev);      // 位置は検図・DXF と同じ探索結果を使う
   const x = org.x, y0 = org.y0;
   const rowH = 4.2 * mfr;
-  const MAXROWS = 4;
-  const cols = mirrorCols(contacts.slice(0, 4));   // 桁被りを防ぐ動的な列位置
+  const cols = mirrorCols(contacts);   // 桁被りを防ぐ動的な列位置
   let out = `<g font-family="monospace">`;
   // 見出し = コイルタグ。表は左下の帯にまとまるので、どのリレーの表かを名前で示す
   const mtag = displayTag(coilDev);
   if (mtag) out += `<text x="${x}" y="${y0 - 2.6 * mfr}" font-size="${svgFontSizeFor(mtag, TEXT_H.small * mfr, true, { bold: true })}" font-family="monospace" font-weight="bold" fill="${INK}">${escXML(mtag)}</text>`;
-  contacts.slice(0, MAXROWS).forEach((c, i) => {
+  // 全接点を載せる (以前は 4 行 + 「+n …」で省略していた)
+  contacts.forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = symOf(c.sym);
     const pinLabel = contactPinLabel(c);
@@ -620,9 +620,6 @@ function mirrorSVG(coilDev) {
     out += `<text x="${x + M(cols.pin)}" y="${cy + M(2.3)}" font-size="${svgFontSizeFor(pinLabel, TEXT_H.small * mfr, true)}" font-family="monospace" fill="${INK_SOFT}">${pinLabel}</text>`;
     out += `<text x="${x + M(cols.ref)}" y="${cy + M(2.3)}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="#7a4ec2">/${devLocation(c)}</text>`;
   });
-  if (contacts.length > MAXROWS) {
-    out += `<text x="${x}" y="${y0 + MAXROWS * rowH + 2 * mfr}" font-size="${svgFontSize(TEXT_H.small * mfr, true)}" font-family="monospace" fill="${INK_SOFT}">+${contacts.length - MAXROWS} …</text>`;
-  }
   out += `</g>`;
   return out;
 }

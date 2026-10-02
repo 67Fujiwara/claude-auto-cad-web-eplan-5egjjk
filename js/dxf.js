@@ -520,10 +520,11 @@ function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return "";
   const org = mirrorOrigin(coilDev);      // 位置は画面・検図と同じ探索結果を使う
-  const x = org.x, y0 = org.y0, rowH = S(4.2), MAXROWS = 4;
+  const x = org.x, y0 = org.y0, rowH = S(4.2);
   // 見出し = コイルタグ (画面と同じ — 表は左下の帯にまとまる)
   let out = dxfText(x, y0 - S(2.6), S(TEXT_H.small), displayTag(coilDev) || "", "WIRENUM", "start", 0, { bold: true });
-  contacts.slice(0, MAXROWS).forEach((c, i) => {
+  // 全接点を載せる (以前は 4 行 + 「+n」で省略していた)
+  contacts.forEach((c, i) => {
     const cy = y0 + i * rowH;
     const csym = symOf(c.sym);
     // ミニ接点グリフ (b接点は横バーつき / c接点は行き先が2つ) — DXF だけ種別が分からなくならないように
@@ -540,9 +541,6 @@ function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
     if (pinLabel) out += dxfText(x + S(cols.pin), cy + S(2.3), S(TEXT_H.small), pinLabel, "WIRENUM");
     out += dxfText(x + S(cols.ref), cy + S(2.3), S(TEXT_H.small), "/" + devLocation(c), "WIRENUM");
   });
-  if (contacts.length > MAXROWS) {
-    out += dxfText(x, y0 + MAXROWS * rowH + S(2), S(TEXT_H.small), `+${contacts.length - MAXROWS}`, "WIRENUM");
-  }
   return out;
 }
 

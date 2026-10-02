@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 216;
+const APP_VERSION = 217;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -3267,12 +3267,11 @@ function mirrorOrigin(coilDev) {
     const sz = d.id === coilDev.id ? size : mirrorTableSize(d);
     if (!sz) continue;
     if (d.id === coilDev.id) {
+      // 全接点を載せる (以前は 4 行 + 「+n …」で省略していた)
       const n = linkedContacts(d).length;
-      const shown = Math.min(n, 4);
-      const extra = n > shown ? 4.2 * f : 0;
       // 帯からあふれる分は左へ寄せてでも帯の中に留める (重なりは検図が知らせる)
       if (x + sz.w > limit) x = Math.max(left, limit - sz.w);
-      return { x, y0: bottom - shown * 4.2 * f - extra };
+      return { x, y0: bottom - n * 4.2 * f };
     }
     x += sz.w + 6 * f;
   }
@@ -3284,13 +3283,12 @@ function mirrorTableSize(coilDev) {
   const contacts = linkedContacts(coilDev);
   if (!contacts.length) return null;
   const f = contentScale();
-  const shown = contacts.slice(0, 4);
+  const shown = contacts;                  // 全接点を載せる (省略行なし)
   const cols = mirrorCols(shown);
   const h = TEXT_H.small * f;
   let wMax = textWidthMM(displayTag(coilDev) || "", h, true, true);
   shown.forEach(c => { wMax = Math.max(wMax, cols.ref * f + textWidthMM("/" + devLocation(c), h, false, true)); });
-  const extra = contacts.length > shown.length ? 4.2 * f : 0;
-  return { w: wMax, h: MIRROR_HEAD * f + shown.length * 4.2 * f + 2 * f + extra };
+  return { w: wMax, h: MIRROR_HEAD * f + shown.length * 4.2 * f + 2 * f };
 }
 
 /** 接点ミラー表の文字矩形 (検図・当たり判定用)。画面/DXF と同じ割付を使う */
@@ -3301,8 +3299,8 @@ function mirrorLabelBoxes(coilDev) {
   const f = contentScale();
   const org = mirrorOrigin(coilDev);
   const x = org.x, y0 = org.y0;
-  const rowH = 4.2 * f, MAXROWS = 4;
-  const shown = contacts.slice(0, MAXROWS);
+  const rowH = 4.2 * f;
+  const shown = contacts;                  // 全接点 (省略行なし)
   const cols = mirrorCols(shown);
   const h = TEXT_H.small * f;
   const out = [];
