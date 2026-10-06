@@ -94,6 +94,7 @@ UI.buildPalette = (filter = "") => {
 /* ══════════════ ページタブ ══════════════ */
 /** ページ番号を振り直し、ページ固有の図番も並び順に同期する */
 UI.renumberPages = () => {
+  tocEnsurePages();          // 目次の枚数を行数に合わせる (こぼれを防ぐ)
   const meta = projectMeta();
   const base = (meta.dwgNo || "").trim();
   const auto = meta.dwgNoAuto !== false;

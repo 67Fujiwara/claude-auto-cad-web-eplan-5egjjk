@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 218;
+const APP_VERSION = 219;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -2485,6 +2485,32 @@ function tocRows() {
   return App.project.pages
     .filter(pg => pg.kind !== "cover" && pg.kind !== "toc")
     .map(pg => ({ name: pg.name, no: pageDwgNo(pg) }));
+}
+/** 目次 1 枚に載る行数 (15 行 × 2 列) */
+const TOC_CAP = 30;
+/** 目次ページの枚数を行数に合わせる (ページ番号の振り直しのたびに呼ぶ)。
+    マスターをコピーして図面を増やすと 1 枚に入りきらず目次からこぼれて
+    いた — 足りなければ目次の直後へ自動で増やし、余れば「自動で足した分
+    だけ」後ろから外す (手で追加した目次ページは消さない) */
+function tocEnsurePages() {
+  const pages = App.project.pages;
+  let tocs = pages.filter(pg => pg.kind === "toc");
+  if (!tocs.length) return;                 // 目次を使わない図面はそのまま
+  const need = Math.max(1, Math.ceil(tocRows().length / TOC_CAP));
+  let at = pages.indexOf(tocs[tocs.length - 1]);
+  for (let i = tocs.length; i < need; i++) {
+    pages.splice(++at, 0, { id: uid("pg"), no: 0, kind: "toc",
+      name: `目次 (${i + 1})`, tocAuto: true,
+      devices: [], wires: [], texts: [], zones: [] });
+  }
+  tocs = pages.filter(pg => pg.kind === "toc");
+  while (tocs.length > need) {
+    const drop = [...tocs].reverse().find(pg => pg.tocAuto);
+    if (!drop) break;                       // 手で足した目次だけなら触らない
+    pages.splice(pages.indexOf(drop), 1);
+    tocs = pages.filter(pg => pg.kind === "toc");
+  }
+  if (App.pageIdx >= pages.length) App.pageIdx = pages.length - 1;
 }
 /** プロジェクトに同梱されたシンボル定義を辞書へ取り込む (読込・undo 後に呼ぶ)。
     同じ id なのに絵が違う定義が来たら (旧式データ: 編集で id を使い回していた)、

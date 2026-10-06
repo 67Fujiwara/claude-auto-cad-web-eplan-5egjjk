@@ -718,7 +718,7 @@ function tocSVG(page) {
   /* 1 枚に 30 件。用紙いっぱいに広げて割り付ける (2 列 × 15 行)。
      31 件目からは次の目次ページへ送る — 以前は 28 件で打ち切っていて、
      それより後のページが目次に載らなかった */
-  const PER_COL = 15, N_COL = 2, CAP = PER_COL * N_COL;
+  const PER_COL = 15, N_COL = 2, CAP = TOC_CAP;   // 1 枚 30 行 (tocEnsurePages と共有)
   const y0 = b.y + 16 * f;
   const GAP = 10 * f;
   const CW = (b.w - 8 * f - GAP) / N_COL;                    // 列の幅 (用紙いっぱい)

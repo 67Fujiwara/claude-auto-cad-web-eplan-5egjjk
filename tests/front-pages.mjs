@@ -5,8 +5,8 @@
    ・tocAuto      : 目次はページ名と図番の一覧。ページを足すと自動で増え、
                     表紙と目次そのものは載らない
    ・coverPh      : 客先名の例示に実在の会社名を出さない (○○株式会社 △△工場)
-   ・tocFull      : 目次は 1 枚 30 件で用紙いっぱい。31 件目からは次の目次へ送り、
-                    目次が 1 枚しか無いときは「ほか n 件」と知らせる
+   ・tocFull      : 目次は 1 枚 30 件で用紙いっぱい。31 件目からは自動で増えた
+                    2 枚目の目次に載る (「ほか n 件」の注記は出ない)
    ・specDefault  : 仕様は既定の選択 (IP54 など) で ◯ が付いている
    ・specFormat   : 紙の仕様書と同じ表組み (使用環境・保護等級・材質・電源接続方法 /
                     単線の表・マークチューブの表と図) で描かれる
@@ -89,7 +89,7 @@ const R = await p.evaluate(async () => {
       rows: all.length,
       shown30: html.includes(all[29].name) && html.includes(all[29].no),   // 30 件目まで載る
       not31: !html.includes(all[30].no),                                   // 31 件目は次の目次へ
-      note: /ほか \d+ 件/.test(html),
+      note: /ほか \d+ 件/.test(html),                   // 自動で 2 枚目が増えるので注記は出ない
       // 用紙いっぱい: 表の下端が図枠の 70% より下まで届いている
       deep: (() => {
         const b = sheetInner();
@@ -97,10 +97,9 @@ const R = await p.evaluate(async () => {
         return ys.length ? Math.max(...ys) > b.y + b.h * 0.7 : false;
       })(),
     };
-    // 目次をもう 1 枚足すと続きが載る
-    UI.addSpecialPage("toc");
-    UI.renumberPages();
+    // 31 件目からは、自動で増えた 2 枚目の目次に続きが載る (toc-auto も参照)
     const tocs = App.project.pages.filter(pg => pg.kind === "toc");
+    out.tocFull.autoN = tocs.length;
     App.pageIdx = App.project.pages.indexOf(tocs[1]); UI.refresh();
     await new Promise(r => setTimeout(r, 200));
     const html2 = kindSVG(tocs[1]);
@@ -244,8 +243,8 @@ const checks = {
   coverDraw: R.coverDraw.cust && R.coverDraw.title && R.coverDraw.underlines && R.coverProp === true,
   coverPh: /^例: [○◯△]/.test(R.coverPh) && !/株式会社\s*\S/.test(R.coverPh.replace("○○株式会社", "")),
   tocAuto: R.tocAuto.after.length === R.tocAuto.before.length + 1 && R.tocAuto.noCover && R.tocAuto.drawn,
-  tocFull: R.tocFull.shown30 === true && R.tocFull.not31 === true && R.tocFull.note === true
-    && R.tocFull.deep === true && R.tocFull.second === true,
+  tocFull: R.tocFull.shown30 === true && R.tocFull.not31 === true && R.tocFull.note === false
+    && R.tocFull.autoN === 2 && R.tocFull.deep === true && R.tocFull.second === true,
   specDefault: R.specDefault.ip === 5 && R.specDefault.env === 0 && R.specDefault.circles >= 10,
   specFormat: R.specFormat.heads.length === 0 && R.specFormat.wire.length === 0
     && R.specFormat.mat.length === 0 && R.specFormat.tubeFig === 4
