@@ -38,6 +38,11 @@ const R = await p.evaluate(async () => {
   // ジグザグ形は山形の折れ線 (L が 7 回) で描かれる
   out.zigzag = (SYMBOLS_BY_ID.resistor_z.body.match(/L/g) || []).length >= 7 &&
     !SYMBOLS_BY_ID.resistor_z.body.includes("<rect");
+  // プルアップ/プルダウンに矢印などの飾りは付けない — 絵は抵抗器と同じ
+  out.noArrow = SYMBOLS_BY_ID.resistor_pullup.body === SYMBOLS_BY_ID.resistor.body &&
+    SYMBOLS_BY_ID.resistor_pulldown.body === SYMBOLS_BY_ID.resistor.body &&
+    SYMBOLS_BY_ID.resistor_pullup_z.body === SYMBOLS_BY_ID.resistor_z.body &&
+    SYMBOLS_BY_ID.resistor_pulldown_z.body === SYMBOLS_BY_ID.resistor_z.body;
   // 旧版のピン一覧からの追い足し (DB_PINNED_VER の移行)
   localStorage.setItem("electracad.dbPinned", JSON.stringify(["cable_core"]));
   localStorage.setItem("electracad.dbPinnedVer", "7");
@@ -85,7 +90,8 @@ const R = await p.evaluate(async () => {
 
 const checks = {
   noPageErrors: errs.length === 0,
-  have: R.have === true && R.letters === "R,Z,TH,CR" && R.zigzag === true,
+  have: R.have === true && R.letters === "R,Z,TH,CR" && R.zigzag === true &&
+    R.noArrow === true,
   palette: R.palette === true,
   migrate: R.migrate === true && R.migrate8 === true,
   value: R.value.desc === true && R.value.svg === true && R.value.dxf === true &&
