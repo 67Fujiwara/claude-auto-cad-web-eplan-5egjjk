@@ -15,6 +15,10 @@ const DB_DEFAULT_PINNED = [
   "kv_n14at_in", "kv_n14at_out", "kv_n24at_in1", "kv_n24at_in2", "kv_n24at_out1", "kv_n24at_out2",
   "kv_n40at_in1", "kv_n40at_in2", "kv_n40at_in3", "kv_n40at_out1", "kv_n40at_out2",
   "kv_n14ar_in", "kv_n14ar_out",
+  // 受動部品・半導体 (プルアップ抵抗ほか — 値はプロパティの「値・定格」に手入力)
+  "resistor", "var_resistor", "resistor_pullup", "resistor_pulldown",
+  "varistor", "thermistor", "cr_unit",
+  "capacitor", "cap_pol", "diode", "led", "zener",
 ];
 
 /** 多極コネクタ (レセプタクル) を作る。
@@ -804,6 +808,43 @@ const DB_SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}], sim: "passthru", bounds: [-2,-2, 9, 24],
     body: `<path d="M0,0 V2.5"/><path d="M0,2.5 A2.5,2.5 0 0 1 0,7.5 A2.5,2.5 0 0 1 0,12.5 A2.5,2.5 0 0 1 0,17.5"/><path d="M0,17.5 V20"/><path d="M5,3 V17"/>`,
   },
+  {
+    id: "resistor_pullup", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "R",
+    name: "プルアップ抵抗", nameEn: "Pull-up resistor",
+    desc: "信号線を +V へ吊る抵抗 (上端が電源側 — 上向き矢印が印)。抵抗値・W 数はプロパティの「値・定格」に手入力すると図面に出ます",
+    stdNote: "固定抵抗器 (JIS C 0617 04-01-01) の用途別の呼び。電源側の矢印は補助表現",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-4.5,-2, 9, 24],
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M0,0 L-1.6,2.6 M0,0 L1.6,2.6"/>`,
+  },
+  {
+    id: "resistor_pulldown", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "R",
+    name: "プルダウン抵抗", nameEn: "Pull-down resistor",
+    desc: "信号線を 0V へ落とす抵抗 (下端が 0V 側 — 下向き矢印が印)。抵抗値・W 数は「値・定格」に手入力",
+    stdNote: "固定抵抗器 (JIS C 0617 04-01-01) の用途別の呼び。0V 側の矢印は補助表現",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-4.5,-2, 9, 24],
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M0,20 L-1.6,17.4 M0,20 L1.6,17.4"/>`,
+  },
+  {
+    id: "varistor", db: true, group: "受動部品", jis: "04-01-07", cat: "db", letter: "Z",
+    name: "バリスタ", nameEn: "Varistor",
+    desc: "電圧依存抵抗 (サージ吸収)。コイル・接点の保護に。品番・電圧は「値・定格」に手入力",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "none", bounds: [-7,-2, 16, 24],
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M-5,16.5 L4.2,4.5 H6.8"/><text x="7.2" y="10" data-h="2.5" text-anchor="start" fill="currentColor" stroke="none" font-family="sans-serif">U</text>`,
+  },
+  {
+    id: "thermistor", db: true, group: "受動部品", jis: "04-01-09", cat: "db", letter: "TH",
+    name: "サーミスタ", nameEn: "Thermistor",
+    desc: "温度依存抵抗 (温度検出・突入電流制限)。特性・値は「値・定格」に手入力",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-7,-2, 16.5, 24],
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M-5,16.5 L4.2,4.5 H6.8"/><text x="7.2" y="10" data-h="2.5" text-anchor="start" fill="currentColor" stroke="none" font-family="sans-serif">θ</text>`,
+  },
+  {
+    id: "cr_unit", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "CR",
+    name: "CRユニット (サージキラー)", nameEn: "RC snubber",
+    desc: "抵抗+コンデンサのサージ吸収ユニット。電磁接触器・リレーのコイルと並列に。品番は「値・定格」に手入力",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "none", bounds: [-5.5,-2, 11, 24],
+    body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-4" y="5" width="8" height="10"/><text x="0" y="11.1" data-h="2.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">CR</text>`,
+  },
 
   /* ── 半導体 (JIS C 0617-5) ── */
   {
@@ -1114,7 +1155,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 7;
+const DB_PINNED_VER = 8;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");

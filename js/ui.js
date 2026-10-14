@@ -544,7 +544,11 @@ function bindPnDraw(pane) {
         </div>
       </div>
       <div class="prop-row"><label>デバイスタグ (DT)</label><input id="pTag" class="mono" value="${dev.linkTo ? displayTag(dev) : (dev.tag || "")}" ${dev.linkTo ? "disabled" : ""}/></div>
-      <div class="prop-row"><label>機能テキスト</label><input id="pDesc" value="${(dev.desc || "").replace(/"/g, "&quot;")}"/></div>
+      ${(() => {
+        // 受動部品・半導体は「値・定格」として手入力 (タグの横に図面表示)
+        const isVal = sym.group === "受動部品" || sym.group === "半導体";
+        return `<div class="prop-row"><label>${isVal ? "値・定格 (図面に表示)" : "機能テキスト"}</label><input id="pDesc" value="${(dev.desc || "").replace(/"/g, "&quot;")}"${isVal ? ' placeholder="例: 10kΩ 1/4W"' : ""}/></div>`;
+      })()}
       <div class="prop-row"><label>型式 (部品表用)</label><input id="pType" class="mono" value="${(dev.typeRef || "").replace(/"/g, "&quot;")}" placeholder="${sym.typ ? "例: " + sym.typ : "型式を入力"}"/></div>
       <div class="prop-grid2">
         <div class="prop-row"><label>X (mm)</label><input id="pX" class="mono" type="number" step="0.5" value="${dev.x}"/></div>
