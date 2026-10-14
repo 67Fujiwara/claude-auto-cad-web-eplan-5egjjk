@@ -21,7 +21,8 @@ await p.waitForTimeout(900);
 
 const R = await p.evaluate(async () => {
   const out = {};
-  const IDS = ["resistor_pullup", "resistor_pulldown", "varistor", "thermistor", "cr_unit"];
+  const IDS = ["resistor_pullup", "resistor_pulldown", "varistor", "thermistor", "cr_unit",
+    "resistor_z", "resistor_pullup_z", "resistor_pulldown_z"];
   out.have = IDS.every(id => {
     const s = SYMBOLS_BY_ID[id];
     return s && s.group === "受動部品" && s.pins.length === 2 && symThumbSVG(s).includes("<path");
@@ -32,13 +33,21 @@ const R = await p.evaluate(async () => {
   UI.buildPalette();
   const palNames = [...document.querySelectorAll("#symTree .sym-name")].map(e2 => e2.textContent);
   out.palette = ["プルアップ抵抗", "プルダウン抵抗", "バリスタ", "サーミスタ", "CRユニット (サージキラー)",
-    "抵抗器", "コンデンサ", "ダイオード"].every(n => palNames.includes(n));
+    "抵抗器", "コンデンサ", "ダイオード",
+    "抵抗器 (ジグザグ形)", "プルアップ抵抗 (ジグザグ形)", "プルダウン抵抗 (ジグザグ形)"].every(n => palNames.includes(n));
+  // ジグザグ形は山形の折れ線 (L が 7 回) で描かれる
+  out.zigzag = (SYMBOLS_BY_ID.resistor_z.body.match(/L/g) || []).length >= 7 &&
+    !SYMBOLS_BY_ID.resistor_z.body.includes("<rect");
   // 旧版のピン一覧からの追い足し (DB_PINNED_VER の移行)
   localStorage.setItem("electracad.dbPinned", JSON.stringify(["cable_core"]));
   localStorage.setItem("electracad.dbPinnedVer", "7");
   const merged = dbPinnedList();
   out.migrate = merged.includes("resistor_pullup") && merged.includes("varistor") &&
-    merged.includes("cable_core");
+    merged.includes("resistor_pullup_z") && merged.includes("cable_core");
+  // すでに ver8 (箱形の追い足し済み) の利用者にも、ジグザグ形が追い足される
+  localStorage.setItem("electracad.dbPinned", JSON.stringify(["cable_core", "resistor_pullup"]));
+  localStorage.setItem("electracad.dbPinnedVer", "8");
+  out.migrate8 = dbPinnedList().includes("resistor_pullup_z");
 
   // ── 値の手入力 → 図面・印刷・DXF に出る ──
   App.project = newProject("プルアップ"); UI.renumberPages();
@@ -76,9 +85,9 @@ const R = await p.evaluate(async () => {
 
 const checks = {
   noPageErrors: errs.length === 0,
-  have: R.have === true && R.letters === "R,Z,TH,CR",
+  have: R.have === true && R.letters === "R,Z,TH,CR" && R.zigzag === true,
   palette: R.palette === true,
-  migrate: R.migrate === true,
+  migrate: R.migrate === true && R.migrate8 === true,
   value: R.value.desc === true && R.value.svg === true && R.value.dxf === true &&
     R.bom === true,
   label: R.label.val === true && R.label.ph === true && R.label.coil === true,

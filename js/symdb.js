@@ -17,6 +17,7 @@ const DB_DEFAULT_PINNED = [
   "kv_n14ar_in", "kv_n14ar_out",
   // 受動部品・半導体 (プルアップ抵抗ほか — 値はプロパティの「値・定格」に手入力)
   "resistor", "var_resistor", "resistor_pullup", "resistor_pulldown",
+  "resistor_z", "resistor_pullup_z", "resistor_pulldown_z",
   "varistor", "thermistor", "cr_unit",
   "capacitor", "cap_pol", "diode", "led", "zener",
 ];
@@ -838,6 +839,32 @@ const DB_SYMBOLS = [
     pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-7,-2, 16.5, 24],
     body: `<path d="M0,0 V5 M0,20 V15"/><rect x="-2.5" y="5" width="5" height="10"/><path d="M-5,16.5 L4.2,4.5 H6.8"/><text x="7.2" y="10" data-h="2.5" text-anchor="start" fill="currentColor" stroke="none" font-family="sans-serif">θ</text>`,
   },
+  /* ジグザグ形の抵抗 (旧 JIS C 0301・米国 ANSI/IEEE 系)。現行 JIS C 0617 は
+     箱形だが、現場図面では今も使われるので両方から選べるようにする */
+  {
+    id: "resistor_z", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "R",
+    name: "抵抗器 (ジグザグ形)", nameEn: "Resistor (zigzag)",
+    desc: "旧 JIS・ANSI 系の山形の抵抗。値は「値・定格」に手入力",
+    stdNote: "旧 JIS C 0301 / ANSI Y32 の形。現行 JIS C 0617 では箱形 (04-01-01)",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-4.5,-2, 9, 24],
+    body: `<path d="M0,0 V5 M0,20 V15 M0,5 L2.4,5.8 L-2.4,7.5 L2.4,9.2 L-2.4,10.8 L2.4,12.5 L-2.4,14.2 L0,15"/>`,
+  },
+  {
+    id: "resistor_pullup_z", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "R",
+    name: "プルアップ抵抗 (ジグザグ形)", nameEn: "Pull-up resistor (zigzag)",
+    desc: "山形のプルアップ抵抗 (上端が電源側 — 上向き矢印が印)。値は「値・定格」に手入力",
+    stdNote: "旧 JIS C 0301 / ANSI 系の形。現行 JIS C 0617 では箱形",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-4.5,-2, 9, 24],
+    body: `<path d="M0,0 V5 M0,20 V15 M0,5 L2.4,5.8 L-2.4,7.5 L2.4,9.2 L-2.4,10.8 L2.4,12.5 L-2.4,14.2 L0,15"/><path d="M0,0 L-1.6,2.6 M0,0 L1.6,2.6"/>`,
+  },
+  {
+    id: "resistor_pulldown_z", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "R",
+    name: "プルダウン抵抗 (ジグザグ形)", nameEn: "Pull-down resistor (zigzag)",
+    desc: "山形のプルダウン抵抗 (下端が 0V 側 — 下向き矢印が印)。値は「値・定格」に手入力",
+    stdNote: "旧 JIS C 0301 / ANSI 系の形。現行 JIS C 0617 では箱形",
+    pins: [{x:0,y:0,n:""},{x:0,y:20,n:""}], sim: "load", bounds: [-4.5,-2, 9, 24],
+    body: `<path d="M0,0 V5 M0,20 V15 M0,5 L2.4,5.8 L-2.4,7.5 L2.4,9.2 L-2.4,10.8 L2.4,12.5 L-2.4,14.2 L0,15"/><path d="M0,20 L-1.6,17.4 M0,20 L1.6,17.4"/>`,
+  },
   {
     id: "cr_unit", nonstd: true, db: true, group: "受動部品", cat: "db", letter: "CR",
     name: "CRユニット (サージキラー)", nameEn: "RC snubber",
@@ -1155,7 +1182,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 8;
+const DB_PINNED_VER = 9;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");
