@@ -293,8 +293,8 @@ const SYMBOLS = [
     body: `<path d="M-5,0 V11.9 M5,0 V11.9"/><circle cx="0" cy="20" r="9.5"/><path d="M0,29.5 V35"/><text x="0" y="19.5" data-h="5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif" font-weight="bold">M</text><text x="0" y="26" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="sans-serif">1~</text>`,
   },
   {
-    id: "main_cont", cat: "output", letter: "MC", name: "主接点 (3極)", nameEn: "Main contacts 3P",
-    desc: "電磁接触器の主メーク接点 3極", jis: "07-13-02", typ: "SD-T21", linked: true,
+    id: "main_cont", cat: "output", letter: "MC", name: "電磁接触器 (MC) 主接点 3極", nameEn: "Contactor main contacts 3P",
+    desc: "電磁接触器の主メーク接点 3極 (コイルは「電磁接触器コイル」をリンク)", jis: "07-13-02", typ: "SD-T21", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "contact3_no", bounds: [-6.8,-2, 30.6, 24],
     body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` + gLink(bladeXNO(9), bladeXNO(9) + 20, 9),
@@ -368,7 +368,7 @@ const SYMBOLS = [
     body: `<g>${G_CB}</g><g transform="translate(10,0)">${G_CB}</g>` + gLink(bladeXNO(10.5), bladeXNO(10.5) + 10, 10.5),
   },
   {
-    id: "main_cont2", jis: "07-13-02", cat: "output", letter: "MC", name: "主接点 (2極)", nameEn: "Main contacts 2P",
+    id: "main_cont2", jis: "07-13-02", cat: "output", letter: "MC", name: "電磁接触器 (MC) 主接点 2極", nameEn: "Contactor main contacts 2P",
     desc: "電磁接触器の主接点 (単相用)", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "contact2_no", bounds: [-6.8,-2, 20.6, 24],

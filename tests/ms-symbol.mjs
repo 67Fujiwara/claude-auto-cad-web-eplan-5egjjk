@@ -38,6 +38,17 @@ const R = await p.evaluate(() => {
   const cats = [...document.querySelectorAll("#symTree .sym-cat")];
   out.palette = cats.some(c => c.textContent.includes("アウトプット機器") &&
     c.textContent.includes("電磁開閉器 (MS) 3極") && c.textContent.includes("電磁開閉器 (MS) 2極"));
+  // 電磁接触器 (MC): コイル + 主接点がその名前で検索に掛かる
+  out.mc = {
+    n3: SYMBOLS_BY_ID.main_cont.name, n2: SYMBOLS_BY_ID.main_cont2.name,
+    found: (() => {
+      UI.buildPalette("電磁接触器");
+      const names = [...document.querySelectorAll("#symTree .sym-name")].map(e2 => e2.textContent);
+      UI.buildPalette();
+      return ["電磁接触器コイル", "電磁接触器 (MC) 主接点 3極", "電磁接触器 (MC) 主接点 2極"]
+        .every(n => names.includes(n));
+    })(),
+  };
 
   // ── コイルへのリンクと、サーマル接点から MS へのリンク ──
   App.project = newProject("MS確認"); UI.renumberPages();
@@ -68,6 +79,8 @@ const checks = {
     R.have.linked === true && R.have.mirror === true,
   draw: R.draw.arc === true && R.draw.ol === true && R.draw.dash === true,
   palette: R.palette === true,
+  mc: R.mc.n3 === "電磁接触器 (MC) 主接点 3極" && R.mc.n2 === "電磁接触器 (MC) 主接点 2極" &&
+    R.mc.found === true,
   link: R.link.inCoil === true && R.link.inMs === true && R.link.msMirror === true,
   out: R.out.svg === true && R.out.dxf === true,
 };
