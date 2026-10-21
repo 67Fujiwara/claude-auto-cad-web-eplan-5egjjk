@@ -48,6 +48,7 @@ const G_CO_R = `<path d="M0,20 V13 M0,0 V7 M0,7 L-6,15 M-10,20 V13 H-2.6"/>`;
 // 可動刃の線上の x (機械リンクの破線を刃にぴったり終端させるために使う)
 const bladeXNO = (y) => +(-4.8 * (13 - y) / 8).toFixed(3);     // G_NO: (0,13)→(-4.8,5)
 const bladeXNC = (y) => +(-4.8 * (13 - y) / 9.6).toFixed(3);   // G_NC: (0,13)→(-4.8,3.4)
+const bladeXCONT = (y) => +(-4.8 * (13 - y) / 6).toFixed(3);   // G_NO_CONT: (0,13)→(-4.8,7)
 // 機械リンク (破線)。両端は必ず操作部と可動刃に接する
 const gLink = (x1, x2, y) => `<path d="M${x1},${y} H${x2}" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`;
 // 押しボタン操作部 (E形キャップ + 破線リンク)。x2 = 可動刃上の終端
@@ -56,10 +57,11 @@ const G_PB = (x2) => `<path d="M-12,6.5 H-15 V13.5 H-12"/><path d="M-15,10 H-13"
 const G_MUSH = (x2) => `<path d="M-13,4.5 A6.5,6.5 0 0 0 -13,15.5"/><path d="M-13,4.5 V15.5"/>` +
   `<path d="M-13,10 H-11"/>` + gLink(-11, x2, 10) + `<path d="M-8.5,10 L-7,12.5 L-5.5,10"/>`;
 /* 接触器主接点1極 (JIS C 0617 07-13-02)。固定接点の印は「半円」—
-   導体の線を半円の下端まで通し (直径が導体に重なる)、膨らみは可動刃と
-   反対側 (右) へ向ける。規格書の図どおりの「d」形 */
-const G_NO_CONT = `<path d="M0,0 V8.6 M0,20 V13 M0,13 L-4.8,5"/>` +
-  `<path d="M0,5 A1.8,1.8 0 0 0 0,8.6"/>`;             // 半円: (0,5)-(0,8.6) を直径に右へ膨らむ
+   導体の線を半円の下端 (0,8.6) まで通し (直径が導体に重なる)、膨らみは
+   可動刃の側 (左)。可動刃の先端 (-4.8,7) は半円の頂点 (-1.8,6.8) の横に
+   置き、1-2 番間のあきを規格書の図に合わせる */
+const G_NO_CONT = `<path d="M0,0 V8.6 M0,20 V13 M0,13 L-4.8,7"/>` +
+  `<path d="M0,5 A1.8,1.8 0 0 0 0,8.6"/>`;             // 半円: (0,5)-(0,8.6) を直径に左へ膨らむ
 // 接触器主接点1極 (ブレーク)。固定接点バーを -7 まで延ばし、可動刃の交点 (x=-3) を
 // 避けた自由端側に円弧を置く。円弧は下へ膨らみ、開口は可動接点 (バーの上側) に向く。
 const G_NC_CONT = `<path d="M0,0 V7 M0,7 H-8 M0,13 L-4.8,3.4 M0,20 V13"/>` +
@@ -299,7 +301,7 @@ const SYMBOLS = [
     desc: "電磁接触器の主メーク接点 3極 (コイルは「電磁接触器コイル」をリンク)", jis: "07-13-02", typ: "SD-T21", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "contact3_no", bounds: [-6.8,-2, 30.6, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` + gLink(bladeXNO(9), bladeXNO(9) + 20, 9),
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` + gLink(bladeXCONT(9), bladeXCONT(9) + 20, 9),
   },
 
   /* ══════════ 電源・保護 ══════════ */
@@ -374,7 +376,7 @@ const SYMBOLS = [
     desc: "電磁接触器の主接点 (単相用)", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "contact2_no", bounds: [-6.8,-2, 20.6, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` + gLink(bladeXNO(9), bladeXNO(9) + 10, 9),
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` + gLink(bladeXCONT(9), bladeXCONT(9) + 10, 9),
   },
   {
     /* 電磁開閉器 (MS) = 電磁接触器の主接点 + サーマルリレーを 1 体で置く
@@ -387,7 +389,7 @@ const SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:40,n:"2"},{x:10,y:0,n:"3"},{x:10,y:40,n:"4"},{x:20,y:0,n:"5"},{x:20,y:40,n:"6"}],
     sim: "contact3_no", bounds: [-7,-2, 34, 44],
     body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` +
-      gLink(bladeXNO(9), bladeXNO(9) + 20, 9) +
+      gLink(bladeXCONT(9), bladeXCONT(9) + 20, 9) +
       `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g><g transform="translate(20,20)">${G_OL}</g>` +
       `<rect x="-5" y="25" width="30" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },
@@ -399,7 +401,7 @@ const SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:40,n:"2"},{x:10,y:0,n:"3"},{x:10,y:40,n:"4"}],
     sim: "contact2_no", bounds: [-7,-2, 24, 44],
     body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` +
-      gLink(bladeXNO(9), bladeXNO(9) + 10, 9) +
+      gLink(bladeXCONT(9), bladeXCONT(9) + 10, 9) +
       `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g>` +
       `<rect x="-5" y="25" width="20" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
   },

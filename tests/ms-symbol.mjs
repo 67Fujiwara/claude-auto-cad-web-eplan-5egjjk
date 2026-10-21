@@ -32,9 +32,11 @@ const R = await p.evaluate(() => {
   out.draw = {
     arc: (m3.body.match(/A1\.8,1\.8/g) || []).length === 3,     // 接触器の半円 ×3 極
     // 半円は JIS 07-13-02 の形: 導体の線が半円の下端 (0,8.6) まで通り、
-    // 膨らみは可動刃と反対側 (右) — 規格書の「d」形
+    // 膨らみは可動刃の側 (左)。可動刃の先端 (-4.8,7) は半円の頂点の横
     half: (m3.body.match(/M0,5 A1\.8,1\.8 0 0 0 0,8\.6/g) || []).length === 3 &&
-      (m3.body.match(/M0,0 V8\.6/g) || []).length === 3,
+      (m3.body.match(/M0,0 V8\.6/g) || []).length === 3 &&
+      (m3.body.match(/M0,13 L-4\.8,7/g) || []).length === 3 &&
+      m3.body.includes('M-3.2,9 H16.8'),   // 機械リンクは可動刃に接する
     ol: (m3.body.match(/H-3 V/g) || []).length === 3,           // 熱動素子のコの字 ×3 極
     dash: m3.body.includes("stroke-dasharray"),
   };
