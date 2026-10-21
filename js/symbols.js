@@ -375,6 +375,33 @@ const SYMBOLS = [
     body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` + gLink(bladeXNO(9), bladeXNO(9) + 10, 9),
   },
   {
+    /* 電磁開閉器 (MS) = 電磁接触器の主接点 + サーマルリレーを 1 体で置く
+       合成シンボル。コイル (cont_coil) にリンクして使い、サーマル接点
+       (95-96 / 97-98) はこの機器へリンクできる (mirror) */
+    id: "ms3", cat: "output", letter: "MS", name: "電磁開閉器 (MS) 3極", nameEn: "Magnetic starter 3P",
+    desc: "主接点+サーマルリレー一体 (モータ主回路用)。コイルにリンクし、95-96/97-98 はこの機器へリンク",
+    stdNote: "電磁接触器主接点 (07-13-02) + 熱動継電器 (07-21-04) の組合せ記号",
+    typ: "MSO-T10 5A", linked: true, mirror: true, maxContacts: 2,
+    pins: [{x:0,y:0,n:"1"},{x:0,y:40,n:"2"},{x:10,y:0,n:"3"},{x:10,y:40,n:"4"},{x:20,y:0,n:"5"},{x:20,y:40,n:"6"}],
+    sim: "contact3_no", bounds: [-7,-2, 34, 44],
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` +
+      gLink(bladeXNO(9), bladeXNO(9) + 20, 9) +
+      `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g><g transform="translate(20,20)">${G_OL}</g>` +
+      `<rect x="-5" y="25" width="30" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+  },
+  {
+    id: "ms2", cat: "output", letter: "MS", name: "電磁開閉器 (MS) 2極", nameEn: "Magnetic starter 2P",
+    desc: "主接点+サーマルリレー一体 (単相用)。コイルにリンクし、95-96/97-98 はこの機器へリンク",
+    stdNote: "電磁接触器主接点 (07-13-02) + 熱動継電器 (07-21-04) の組合せ記号",
+    typ: "MSO-T10 3.6A", linked: true, mirror: true, maxContacts: 2,
+    pins: [{x:0,y:0,n:"1"},{x:0,y:40,n:"2"},{x:10,y:0,n:"3"},{x:10,y:40,n:"4"}],
+    sim: "contact2_no", bounds: [-7,-2, 24, 44],
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` +
+      gLink(bladeXNO(9), bladeXNO(9) + 10, 9) +
+      `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g>` +
+      `<rect x="-5" y="25" width="20" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+  },
+  {
     id: "ol2", jis: "07-21-04", cat: "power", letter: "THR", name: "サーマルリレー 2極", nameEn: "Thermal overload 2P",
     desc: "モータ過負荷保護 (単相用)", typ: "TH-T18 3.6A", mirror: true, maxContacts: 2,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
