@@ -30,7 +30,9 @@ const R = await p.evaluate(() => {
     linked: m3 && m3.linked === true, mirror: m3 && m3.mirror === true,
   };
   out.draw = {
-    arc: (m3.body.match(/A1\.8,1\.8/g) || []).length === 3,     // 接触器の小円弧 ×3 極
+    arc: (m3.body.match(/A1\.8,1\.8/g) || []).length === 3,     // 接触器の半円 ×3 極
+    // 半円は JIS 07-13-02 の形: 直径 (0,5)-(0,8.6) を導体に沿わせ左へ膨らむ
+    half: (m3.body.match(/M0,5 A1\.8,1\.8 0 0 1 0,8\.6/g) || []).length === 3,
     ol: (m3.body.match(/H-3 V/g) || []).length === 3,           // 熱動素子のコの字 ×3 極
     dash: m3.body.includes("stroke-dasharray"),
   };
@@ -77,7 +79,7 @@ const checks = {
   have: R.have.both === true && R.have.letter === "MS" && R.have.sim3 === "contact3_no" &&
     R.have.sim2 === "contact2_no" && R.have.span === true && R.have.pitch === true &&
     R.have.linked === true && R.have.mirror === true,
-  draw: R.draw.arc === true && R.draw.ol === true && R.draw.dash === true,
+  draw: R.draw.arc === true && R.draw.half === true && R.draw.ol === true && R.draw.dash === true,
   palette: R.palette === true,
   mc: R.mc.n3 === "電磁接触器 (MC) 主接点 3極" && R.mc.n2 === "電磁接触器 (MC) 主接点 2極" &&
     R.mc.found === true,
