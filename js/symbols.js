@@ -48,7 +48,6 @@ const G_CO_R = `<path d="M0,20 V13 M0,0 V7 M0,7 L-6,15 M-10,20 V13 H-2.6"/>`;
 // 可動刃の線上の x (機械リンクの破線を刃にぴったり終端させるために使う)
 const bladeXNO = (y) => +(-4.8 * (13 - y) / 8).toFixed(3);     // G_NO: (0,13)→(-4.8,5)
 const bladeXNC = (y) => +(-4.8 * (13 - y) / 9.6).toFixed(3);   // G_NC: (0,13)→(-4.8,3.4)
-const bladeXCONT = (y) => +(-4.8 * (13 - y) / 6).toFixed(3);   // G_NO_CONT: (0,13)→(-4.8,7)
 // 機械リンク (破線)。両端は必ず操作部と可動刃に接する
 const gLink = (x1, x2, y) => `<path d="M${x1},${y} H${x2}" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`;
 // 押しボタン操作部 (E形キャップ + 破線リンク)。x2 = 可動刃上の終端
@@ -301,7 +300,7 @@ const SYMBOLS = [
     desc: "電磁接触器の主メーク接点 3極 (コイルは「電磁接触器コイル」をリンク)", jis: "07-13-02", typ: "SD-T21", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"},{x:20,y:0,n:"5"},{x:20,y:20,n:"6"}],
     sim: "contact3_no", bounds: [-6.8,-2, 30.6, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` + gLink(bladeXCONT(9), bladeXCONT(9) + 20, 9),
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>`,
   },
 
   /* ══════════ 電源・保護 ══════════ */
@@ -376,7 +375,7 @@ const SYMBOLS = [
     desc: "電磁接触器の主接点 (単相用)", linked: true,
     pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"},{x:10,y:0,n:"3"},{x:10,y:20,n:"4"}],
     sim: "contact2_no", bounds: [-6.8,-2, 20.6, 24],
-    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` + gLink(bladeXCONT(9), bladeXCONT(9) + 10, 9),
+    body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>`,
   },
   {
     /* 電磁開閉器 (MS) = 電磁接触器の主接点 + サーマルリレーを 1 体で置く
@@ -389,9 +388,7 @@ const SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:40,n:"2"},{x:10,y:0,n:"3"},{x:10,y:40,n:"4"},{x:20,y:0,n:"5"},{x:20,y:40,n:"6"}],
     sim: "contact3_no", bounds: [-7,-2, 34, 44],
     body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g><g transform="translate(20,0)">${G_NO_CONT}</g>` +
-      gLink(bladeXCONT(9), bladeXCONT(9) + 20, 9) +
-      `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g><g transform="translate(20,20)">${G_OL}</g>` +
-      `<rect x="-5" y="25" width="30" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+      `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g><g transform="translate(20,20)">${G_OL}</g>`,
   },
   {
     id: "ms2", cat: "output", letter: "MS", name: "電磁開閉器 (MS) 2極", nameEn: "Magnetic starter 2P",
@@ -401,9 +398,7 @@ const SYMBOLS = [
     pins: [{x:0,y:0,n:"1"},{x:0,y:40,n:"2"},{x:10,y:0,n:"3"},{x:10,y:40,n:"4"}],
     sim: "contact2_no", bounds: [-7,-2, 24, 44],
     body: `<g>${G_NO_CONT}</g><g transform="translate(10,0)">${G_NO_CONT}</g>` +
-      gLink(bladeXCONT(9), bladeXCONT(9) + 10, 9) +
-      `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g>` +
-      `<rect x="-5" y="25" width="20" height="10" stroke-dasharray="3 0.75" stroke-width="0.25" stroke-linecap="butt"/>`,
+      `<g transform="translate(0,20)">${G_OL}</g><g transform="translate(10,20)">${G_OL}</g>`,
   },
   {
     id: "ol2", jis: "07-21-04", cat: "power", letter: "THR", name: "サーマルリレー 2極", nameEn: "Thermal overload 2P",

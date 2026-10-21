@@ -2,7 +2,8 @@
 
    ・have   : 3極 (ms3)・2極 (ms2) がライブラリに居る。文字記号 MS、
              端子は上下 40mm 幅 (接点 20 + 熱動 20)、極ピッチ 10mm
-   ・draw   : 絵は 接触器主接点 (小円弧) + 熱動素子 (コの字) + 破線の囲い。
+   ・draw   : 絵は 接触器主接点 (小円弧) + 熱動素子 (コの字)。破線 (極間の
+             機械リンク・囲い) は MC・MS には描かない (ユーザー要望)。
              パレットのアウトプット機器の棚に出る
    ・link   : コイルにリンクでき、コイルの接点ミラー表に載る (contact3_no)
    ・thermal: サーマル接点 (95-96) を MS 本体へリンクできる (mirror) —
@@ -35,10 +36,11 @@ const R = await p.evaluate(() => {
     // 膨らみは可動刃の側 (左)。可動刃の先端 (-4.8,7) は半円の頂点の横
     half: (m3.body.match(/M0,5 A1\.8,1\.8 0 0 0 0,8\.6/g) || []).length === 3 &&
       (m3.body.match(/M0,0 V8\.6/g) || []).length === 3 &&
-      (m3.body.match(/M0,13 L-4\.8,7/g) || []).length === 3 &&
-      m3.body.includes('M-3.2,9 H16.8'),   // 機械リンクは可動刃に接する
+      (m3.body.match(/M0,13 L-4\.8,7/g) || []).length === 3,
     ol: (m3.body.match(/H-3 V/g) || []).length === 3,           // 熱動素子のコの字 ×3 極
-    dash: m3.body.includes("stroke-dasharray"),
+    // 破線 (機械リンク・囲い) は MC/MS に出さない
+    noDash: ![m3, m2, SYMBOLS_BY_ID.main_cont, SYMBOLS_BY_ID.main_cont2]
+      .some(s => s.body.includes("stroke-dasharray")),
   };
   UI.buildPalette();
   const cats = [...document.querySelectorAll("#symTree .sym-cat")];
@@ -83,7 +85,7 @@ const checks = {
   have: R.have.both === true && R.have.letter === "MS" && R.have.sim3 === "contact3_no" &&
     R.have.sim2 === "contact2_no" && R.have.span === true && R.have.pitch === true &&
     R.have.linked === true && R.have.mirror === true,
-  draw: R.draw.arc === true && R.draw.half === true && R.draw.ol === true && R.draw.dash === true,
+  draw: R.draw.arc === true && R.draw.half === true && R.draw.ol === true && R.draw.noDash === true,
   palette: R.palette === true,
   mc: R.mc.n3 === "電磁接触器 (MC) 主接点 3極" && R.mc.n2 === "電磁接触器 (MC) 主接点 2極" &&
     R.mc.found === true,
