@@ -4,7 +4,8 @@
   1. まず、この端末（localStorage の端末ID）で借りている工具があれば「借りている工具」の一覧を出す。
      読み取った工具がその中にあれば最初から選択済み。複数選んで画面下の固定バー「返却」でまとめて返却する。
   2. 借りている工具が無い（または「借りる」ボタンを押した）ときは、読み取った工具の申請フォームを出す。
-     空きなら名前・返却日・コメント（任意）を入力して「借りる」。使用中なら誰がいつまで使っているかを表示。
+     空きなら名前・返却日・コメント（任意）を入力して「借りる」。使用中なら誰がいつまで使っているかを表示し、
+     借りたときの名前を入力すれば返却できる（端末IDが一致しない場合の本人確認。iPhone の Safari 対策）。
   名前は localStorage に保存して次回自動入力する。（社内利用のためメール欄は無し）
 -->
 <!DOCTYPE html>
@@ -51,6 +52,19 @@
         <div style="margin-top:8px"><?= data.tool.user ?>さんが <?= data.tool.dueLabel ?> まで使用中</div>
         <? if (data.tool.overdue) { ?><div class="overdue-text" style="margin-top:4px">返却期限を <?= data.tool.overdueDays ?> 日過ぎています</div><? } ?>
         <? if (data.tool.comment) { ?><div class="muted" style="margin-top:4px"><?= data.tool.comment ?></div><? } ?>
+      </div>
+      <!-- 端末IDが一致しない（別の端末・保存データが消えた）場合は、借りたときの名前で本人確認して返却できる -->
+      <form id="nameReturn" class="card">
+        <div><b>この工具を返却する</b></div>
+        <div class="muted" style="margin-top:4px">借りたときの名前を入力してください（本人確認）</div>
+        <label for="retName">名前</label>
+        <input type="text" id="retName" autocomplete="name" required>
+        <div id="retMsg"></div>
+        <button type="submit" id="retSubmit" class="btn red full">返却</button>
+      </form>
+      <div id="retDone" class="card" hidden>
+        <div class="msg ok" id="retDoneText"></div>
+        <a class="btn small green" href="<?= appUrl ?>?tool=<?= data.tool.id ?>" target="_top">この工具を借りる</a>
       </div>
       <a class="btn gray full" href="<?= appUrl ?>?view=list" target="_top">一覧へ</a>
     <? } else { ?>
@@ -150,7 +164,10 @@
       acts.innerHTML = '<button type="button" class="btn small green" id="goRent">この工具を借りる</button>';
       document.getElementById('goRent').addEventListener('click', showScanned);
     } else if (SCANNED && !mineTools.some(t => t.id === TOOL_ID)) {
-      acts.innerHTML = '<span class="muted">' + esc(SCANNED.user) + 'さんが ' + esc(fmtMd(SCANNED.due)) + ' まで使用中</span>';
+      // 別の端末（または保存データが消えた）で借りた工具 → 名前で確認して返却できる画面へ
+      acts.innerHTML = '<span class="muted">' + esc(SCANNED.user) + 'さんが ' + esc(fmtMd(SCANNED.due)) + ' まで使用中</span>' +
+        '<button type="button" class="btn small gray" id="goNameReturn">返却（名前で確認）</button>';
+      document.getElementById('goNameReturn').addEventListener('click', showScanned);
     } else {
       acts.innerHTML = '<span class="muted">上の一覧で選択済み</span>';
     }
@@ -197,6 +214,34 @@
       btn.disabled = false;
     }
   });
+
+  // 名前で確認して返却（端末IDが一致しない場合）
+  (function () {
+    const form = document.getElementById('nameReturn');
+    if (!form) return;
+    const nameEl = document.getElementById('retName');
+    const btn = document.getElementById('retSubmit');
+    nameEl.value = storeGet('local', 'tr_name') || '';
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      const name = nameEl.value.trim();
+      if (!name) { showMsg('retMsg', '名前を入力してください', 'err'); return; }
+      if (!confirm(SCANNED.name + ' を返却しますか？')) return;
+      btnBusy(btn, '返却中…');
+      storeSet('local', 'tr_name', name);
+      try {
+        const r = await call('apiReturnMany', [TOOL_ID], deviceId(), name);
+        if (r.failed.length) throw new Error(r.failed[0].message);
+        form.hidden = true;
+        document.getElementById('retDoneText').textContent = r.ok[0].name + ' を返却しました。' + returnToSummary(r.ok);
+        document.getElementById('retDone').hidden = false;
+        btnReset(btn);
+      } catch (e) {
+        btnFlash(btn, false);
+        showMsg('retMsg', e.message || String(e), 'err');
+      }
+    });
+  })();
 
   // 申請フォーム
   (function () {

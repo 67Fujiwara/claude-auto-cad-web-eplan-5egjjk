@@ -252,9 +252,9 @@ function apiRequest(toolId, userName, userEmail, due, comment, deviceId) {
   return rentTool_(toolId, userName, userEmail || '', due, '申請画面', comment, deviceId);
 }
 
-/** 一覧画面から。借りた端末（deviceId 一致）だけ返却できる */
-function apiReturn(toolId, deviceId) {
-  return returnTool_(toolId, '一覧画面', { deviceId: deviceId });
+/** 一覧画面から。借りた端末（deviceId 一致）か、借りたときの名前（userName）で返却できる */
+function apiReturn(toolId, deviceId, userName) {
+  return returnTool_(toolId, '一覧画面', { deviceId: deviceId, userName: userName });
 }
 
 /** この端末（deviceId）で借りている工具の一覧。QR を読んだ直後の「借りている工具」表示に使う */
@@ -268,10 +268,10 @@ function apiMyTools(deviceId) {
 }
 
 /**
- * 複数の工具をまとめて返却する（借りた端末からのみ）。
+ * 複数の工具をまとめて返却する。端末IDが一致しない工具は userName（借りたときの名前）で本人確認する。
  * 戻り値: { ok: [返却した工具], failed: [{ id, name, message }] }
  */
-function apiReturnMany(toolIds, deviceId) {
+function apiReturnMany(toolIds, deviceId, userName) {
   const ids = Array.from(new Set((toolIds || []).map(v => String(v || '').trim()).filter(Boolean)));
   if (!ids.length) throw new Error('工具を選択してください');
   const ok = [], failed = [];
@@ -279,7 +279,7 @@ function apiReturnMany(toolIds, deviceId) {
   ids.forEach(id => {
     try {
       const before = findTool_(id);
-      const t = returnTool_(id, '申請画面', { deviceId: deviceId, skipNotify: true });
+      const t = returnTool_(id, '申請画面', { deviceId: deviceId, userName: userName, skipNotify: true });
       if (before) user = { name: before.user, email: before.email };
       ok.push(t);
     } catch (err) {
@@ -596,20 +596,27 @@ function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId, op
 }
 
 /**
- * 返却。opt = { deviceId: '端末ID', force: true|false, skipNotify: true|false }
- *   借りたときの端末IDが記録されている工具は、同じ端末IDからしか返却できない。
- *   force=true（管理画面・メールリンク）なら端末に関係なく返却できる。
+ * 返却。opt = { deviceId: '端末ID', userName: '借りたときの名前', force: true|false, skipNotify: true|false }
+ *   借りたときの端末IDが記録されている工具は、同じ端末IDから返却できる。
+ *   端末IDが一致しないとき（iPhone の Safari は枠内の保存データをタブを閉じると消すため起こりうる）は、
+ *   借りたときの使用者名と一致する userName を渡せば返却できる（名前で本人確認）。
+ *   force=true（管理画面・メールリンク）なら端末・名前に関係なく返却できる。
  */
 function returnTool_(toolId, note, opt) {
   opt = opt || {};
   const deviceId = normDevice_(opt.deviceId);
+  const userName = String(opt.userName || '').trim();
   let ev = null;
+  let byName = false;
   const result = withLock_(() => {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     if (t.status !== STATUS_USED) throw new Error(t.name + ' はすでに返却済みです');
-    if (!opt.force && (!deviceId || t.device !== deviceId) && t.device) {
-      throw new Error('この工具は別の端末から借りられています。借りた端末で返却するか、管理者に返却を依頼してください');
+    const deviceOk = !t.device || (!!deviceId && t.device === deviceId);
+    if (!opt.force && !deviceOk) {
+      if (!userName) throw new Error('借りた端末ではありません。借りたときの名前を入力すると返却できます');
+      if (normName_(userName) !== normName_(t.user)) throw new Error('名前が借りたときの使用者名と一致しません');
+      byName = true;
     }
     ev = {
       type: 'return',
@@ -621,7 +628,7 @@ function returnTool_(toolId, note, opt) {
       comment: t.comment,
       note: note,
     };
-    appendLog_(t, '返却', { start: '', due: t.due, note: joinNote_(note, t.comment), device: opt.force ? (deviceId || t.device) : deviceId });
+    appendLog_(t, '返却', { start: '', due: t.due, note: joinNote_(byName ? (note || '') + '（名前で確認）' : note, t.comment), device: opt.force ? (deviceId || t.device) : deviceId });
     t.status = STATUS_FREE;
     t.user = '';
     t.email = '';
@@ -1112,6 +1119,11 @@ function fmtMd_(ymd) {
 function normDevice_(v) {
   const s = String(v || '').trim();
   return /^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : '';
+}
+
+/** 名前の比較用に正規化（前後と途中の空白・全角空白を除き、英字は小文字に） */
+function normName_(s) {
+  return String(s || '').replace(/[\s\u3000]+/g, '').toLowerCase();
 }
 
 /** ログの備考欄に「操作元」とコメントを併記する */

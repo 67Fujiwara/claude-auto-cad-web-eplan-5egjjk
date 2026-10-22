@@ -4,7 +4,9 @@
   空きの工具には「選択」ボタン。押すと青い「選択中」になり、1 つでも選ぶと画面下に固定の「借りる」バーが出る。
   「借りる」→ 名前・返却日・コメントを入れて「確定」で、選んだ工具をまとめて借りる（apiRequestMany）。
   工具箱が登録されていれば工具箱ごとに見出し分けし、使用中の工具には「返却先: 管理者名」を表示する。
-  自分が借りている工具（端末IDが一致）には「返却を選択」ボタン。押すと青い「返却選択中」になり、
+  自分が借りている工具（端末IDが一致）には「返却を選択」ボタン。端末IDが一致しない使用中の工具には
+  「返却を選択（名前で確認）」ボタンが出て、画面下のバーで借りたときの名前を入力すると返却できる
+  （iPhone の Safari は枠内の保存データをタブを閉じると消すため、端末IDが変わることがある）。押すと青い「返却選択中」になり、
   画面下のバーの「返却」でまとめて返却する（apiReturnMany）。延長は「+3日 / +7日 / 日付指定」。
 -->
 <!DOCTYPE html>
@@ -36,6 +38,10 @@
         <button type="button" class="btn red" id="doReturn" hidden>返却</button>
         <button type="button" class="btn green" id="openRent" hidden>借りる</button>
       </div>
+    </div>
+    <div id="retNameRow" hidden>
+      <label for="retName">借りたときの名前（端末が違うため本人確認）</label>
+      <input type="text" id="retName" autocomplete="name">
     </div>
     <form id="rentForm" hidden>
       <div class="muted" id="rentList"></div>
@@ -82,7 +88,7 @@
     tools = sortOverdueFirst(tools);
     // 使用中になった工具は貸出選択から外し、返却できなくなった工具は返却選択から外す
     Array.from(selected).forEach(id => { if (!toolsById[id] || toolsById[id].inUse) selected.delete(id); });
-    Array.from(selectedRet).forEach(id => { if (!toolsById[id] || !toolsById[id].canReturn) selectedRet.delete(id); });
+    Array.from(selectedRet).forEach(id => { if (!toolsById[id] || !toolsById[id].inUse) selectedRet.delete(id); });
     // 工具箱ごとにまとめる（工具箱が 1 つも無ければ見出しなし）
     const groups = [];
     tools.forEach(t => {
@@ -106,9 +112,7 @@
   function renderCard(t) {
     {
       const badge = t.inUse ? usedBadge(t) : '<span class="badge free">空き</span>';
-      const returnBtn = t.canReturn
-        ? retBtn(t.id)
-        : '<span class="muted" style="align-self:center">返却は借りた端末から</span>';
+      const returnBtn = retBtn(t.id);
       const actions = t.inUse ? (
         '<div class="row">' +
         returnBtn +
@@ -142,10 +146,16 @@
     const on = selected.has(id);
     return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="select" data-id="' + esc(id) + '">' + (on ? '選択中' : '選択') + '</button>';
   }
-  // 返却ボタン: 未選択=灰色「返却を選択」、選択中=青「返却選択中」
+  // 返却ボタン: 未選択=灰色「返却を選択」、選択中=青「返却選択中」。
+  // 端末IDが一致しない工具は「（名前で確認）」付き（バーで借りたときの名前を入力する）
   function retBtn(id) {
     const on = selectedRet.has(id);
-    return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="selectRet" data-id="' + esc(id) + '">' + (on ? '返却選択中' : '返却を選択') + '</button>';
+    const needName = !(toolsById[id] && toolsById[id].canReturn);
+    const label = (on ? '返却選択中' : '返却を選択') + (needName ? '（名前で確認）' : '');
+    return '<button type="button" class="btn small ' + (on ? '' : 'gray') + '" data-act="selectRet" data-id="' + esc(id) + '"' + (needName ? ' data-needname="1"' : '') + '>' + label + '</button>';
+  }
+  function needsName() {
+    return Array.from(selectedRet).some(id => !(toolsById[id] && toolsById[id].canReturn));
   }
   function toggleSelect(id, btn) {
     if (selected.has(id)) selected.delete(id); else selected.add(id);
@@ -167,6 +177,9 @@
     document.getElementById('openRent').textContent = '借りる' + (n ? '（' + n + '）' : '');
     document.getElementById('doReturn').hidden = m === 0;
     document.getElementById('doReturn').textContent = '返却' + (m ? '（' + m + '）' : '');
+    const nameRow = document.getElementById('retNameRow');
+    nameRow.hidden = !(m > 0 && needsName());
+    if (!nameRow.hidden && !document.getElementById('retName').value) document.getElementById('retName').value = storeGet('local', 'tr_name') || '';
     if (n === 0) closeRentForm();
     document.getElementById('rentList').textContent = Array.from(selected).map(id => toolsById[id] ? toolsById[id].name : id).join('、');
   }
@@ -204,11 +217,14 @@
   document.getElementById('doReturn').addEventListener('click', async function () {
     const ids = Array.from(selectedRet);
     const names = ids.map(id => toolsById[id] ? toolsById[id].name : id);
+    const retName = document.getElementById('retName').value.trim();
+    if (needsName() && !retName) { showMsg('msg', '借りたときの名前を入力してください', 'err'); document.getElementById('retName').focus(); return; }
     if (!confirm(names.join('、') + ' を返却しますか？')) return;
     const btn = this;
     btn.disabled = true;
+    if (retName) storeSet('local', 'tr_name', retName);
     try {
-      const r = await call('apiReturnMany', ids, deviceId());
+      const r = await call('apiReturnMany', ids, deviceId(), retName);
       let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
       showMsg('msg', text, r.failed.length ? 'err' : 'ok');
