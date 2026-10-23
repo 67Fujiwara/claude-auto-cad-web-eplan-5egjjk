@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 228;
+const APP_VERSION = 229;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -2914,13 +2914,24 @@ function sheetRow(y, sh = SHEET) {
     表紙・目次・仕様 = A 系列 / 回路図面 = B 系列で、それぞれ 1 から数える */
 // panel = Panel Studio の盤配置図 / parts = 機器リスト。どちらも書類側の A 系列で数える
 const DWG_FRONT_KINDS = new Set(["cover", "toc", "spec", "panel", "parts"]);
+/* そのページが数えられる系列: "A" / "B" / null (どちらにも数えない)。
+   図番を手入力で固定したページは、ページの種類ではなく入力した図番の
+   系列で数える — 回路図面のページに A-010 と付けても B 系列はずれない */
+function dwgSeriesOf(pg) {
+  if (pg.dwgNoManual && pg.dwgNo) {
+    const m = /^\s*([AB])\s*-/i.exec(pg.dwgNo);
+    return m ? m[1].toUpperCase() : null;
+  }
+  return DWG_FRONT_KINDS.has(pg.kind) ? "A" : "B";
+}
 function defaultDwgNo(page) {
   const pages = (App.project && App.project.pages) || [page];
   const front = DWG_FRONT_KINDS.has(page.kind);
+  const ser = front ? "A" : "B";
   let n = 0, found = false;
   for (const pg of pages) {
-    if (DWG_FRONT_KINDS.has(pg.kind) === front) n++;
-    if (pg === page) { found = true; break; }
+    if (pg === page) { n++; found = true; break; }
+    if (dwgSeriesOf(pg) === ser) n++;
   }
   if (!found) n = page.no || 1;
   return (front ? "A-" : "B-") + String(n).padStart(3, "0");
