@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 229;
+const APP_VERSION = 230;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5651,7 +5651,7 @@ function panelInsertPages(data) {
   const replaced = before - App.project.pages.length;
   // 別の盤が居るときは、ページ名に ID を付けてタブで見分けられるようにする
   const otherIds = new Set(App.project.pages
-    .filter(p2 => p2.kind === "panel" && p2.panel && panelCabIdOf(p2.panel) !== cabId)
+    .filter(p2 => p2.kind === "panel" && p2.panel && !p2.panel.dxf && panelCabIdOf(p2.panel) !== cabId)
     .map(p2 => panelCabIdOf(p2.panel)));
   if (otherIds.size && cabId) pagesNew.forEach(p2 => { p2.name = `${p2.name} [${cabId}]`; });
   // 仕様ページの直後 (無ければ表紙・目次の後)。すでに盤のページがあれば
@@ -5666,6 +5666,75 @@ function panelInsertPages(data) {
 }
 /** パネルページのキャビネット識別 ID (旧データは 型式 → 案件番号 で読み替え) */
 function panelCabIdOf(pn) { return String((pn && (pn.cabId || pn.model || pn.jobNo)) || ""); }
+
+/* ── DXF を盤図ページとして取り込む ──
+   盤の外形図・配置図の DXF は数万要素になる。1 本ずつ配線 (作図線) に
+   すると描画と接続計算で固まるので、Panel Studio の盤図と同じ「panel
+   ページ」の図形 (実寸 mm・Y 上向き) に変換して 1 枚の図として持つ。
+   縮尺 (1:n) は用紙に収まるよう自動で選ぶ */
+const DXF_DRAW_MAX = 3000;      // これより多い DXF は作図線としては置かない
+function dxfToPanelSheet(ents) {
+  const bb = dxfEntsBounds(ents);
+  if (!bb) return null;
+  const r2 = v => Math.round(v * 1000) / 1000;
+  const X = x => r2(x - bb.x0), Y = y => r2(y - bb.y0);
+  const out = [];
+  const ok = (...v) => v.every(n => isFinite(n));
+  const line = (x1, y1, x2, y2, layer) => {
+    if (ok(x1, y1, x2, y2) && (x1 !== x2 || y1 !== y2))
+      out.push({ t: "line", x1: X(x1), y1: Y(y1), x2: X(x2), y2: Y(y2), layer });
+  };
+  ents.forEach(e => {
+    const layer = e.layer || "0";
+    if (e.type === "LINE" || e.type === "SOLID") line(e.x1, e.y1, e.x2, e.y2, layer);
+    else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
+      const pts = (e.pts || []).filter(p => ok(p[0], p[1]));
+      for (let i = 0; i + 1 < pts.length; i++) line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer);
+      if ((e.flags & 1) && pts.length > 2) line(pts[pts.length - 1][0], pts[pts.length - 1][1], pts[0][0], pts[0][1], layer);
+    } else if (e.type === "CIRCLE") {
+      if (ok(e.x1, e.y1, e.r) && e.r > 0) out.push({ t: "circle", cx: X(e.x1), cy: Y(e.y1), r: r2(e.r), layer });
+    } else if (e.type === "ARC") {
+      if (ok(e.x1, e.y1, e.r) && e.r > 0)
+        out.push({ t: "arc", cx: X(e.x1), cy: Y(e.y1), r: r2(e.r), a0: e.a1 || 0, a1: isFinite(e.a2) ? e.a2 : 360, layer });
+    } else if (e.type === "TEXT" || e.type === "MTEXT") {
+      if (!ok(e.x1, e.y1) || !String(e.text || "").trim()) return;
+      // 盤図の文字は左寄せだけ — 中央・右寄せは字幅ぶん基準点を戻す (傾きも考える)
+      const h = e.size || 3.5, s = String(e.text);
+      const k = e.anchor === "end" ? 1 : e.anchor === "middle" ? 0.5 : 0;
+      const w = textWidthMM(s, h) * k, a = (e.angle || 0) * Math.PI / 180;
+      const t = { t: "text", x: X(e.x1 - w * Math.cos(a)), y: Y(e.y1 - w * Math.sin(a)), s, h: r2(h), layer };
+      if (e.angle) t.rot = e.angle;
+      out.push(t);
+    }
+  });
+  return { entities: out, extent: { w: Math.max(1, r2(bb.w)), h: Math.max(1, r2(bb.h)) } };
+}
+/** DXF の図形を盤図ページ 1 枚にして、表示中のページの直後へ差し込む。
+    返り値 { page, n } (図形が無ければ null) */
+function panelInsertDxfPage(ents, fileName) {
+  const sh = dxfToPanelSheet(ents);
+  if (!sh || !sh.entities.length) return null;
+  const keepPage = curPage();
+  applySheet({ paper: "A3", orient: "landscape", scale: "1:1" });
+  const n = panelPickScale(sh.extent, panelAreaRect());
+  applySheet(keepPage);
+  const title = String(fileName || "DXF").replace(/\.dxf$/i, "");
+  const dataKey = `dxf/${uid("d")}`;
+  App.project.panelData = App.project.panelData || {};
+  App.project.panelData[dataKey] = { entities: sh.entities, layers: {} };
+  panelSerTouch();
+  const page = {
+    id: uid("p"), no: 0, kind: "panel", name: title,
+    devices: [], wires: [], texts: [], zones: [],
+    paper: "A3", orient: "landscape", scale: "1:" + n,
+    panelText: true,            // DXF の文字はすべて描く (型式レイヤの隠しは Panel Studio 用)
+    panel: { jobNo: "", cabId: "", sheetId: "dxf", title, dataKey, dxf: String(fileName || ""),
+      extent: sh.extent, job: {}, model: "", outer: {}, note: "" },
+  };
+  const pages = App.project.pages;
+  pages.splice(Math.max(0, pages.indexOf(keepPage)) + 1, 0, page);
+  return { page, n: sh.entities.length };
+}
 
 /* ── ZIP の読み出し (store / deflate)。設計完了 ZIP のまま渡されたとき用 ── */
 async function zipEntries(buf) {

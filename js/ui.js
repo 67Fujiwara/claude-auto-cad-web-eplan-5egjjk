@@ -441,7 +441,7 @@ function bindPnDraw(pane) {
     const n0 = panelScaleN(pg2);
     const cand = [...new Set([...PANEL_FINE_SCALES, n0])].sort((a2, b2) => a2 - b2);
     pane.innerHTML = `
-      <div class="prop-head"><div class="prop-head-txt"><div class="t1">Panel Studio の図面</div><div class="t2">${escXML(pn.title)}</div></div></div>
+      <div class="prop-head"><div class="prop-head-txt"><div class="t1">${pn.dxf ? "DXF の盤図" : "Panel Studio の図面"}</div><div class="t2">${escXML(pn.dxf || pn.title)}</div></div></div>
       <div class="prop-row"><label>案件 / 型式</label><div class="rp-dim mono">${escXML(pn.jobNo || "—")} / ${escXML(pn.model || "—")}</div></div>
       <div class="prop-row"><label>実寸 (mm)</label><div class="rp-dim mono">${pn.extent.w} × ${pn.extent.h}</div></div>
       <div class="prop-row"><label>縮尺</label><select id="pPnScale">
@@ -1950,6 +1950,7 @@ UI.importPanelStudio = () => {
 /** 取り込みプレビューと配置方法の選択 */
 UI.dxfImportDialog = (ents, fileName) => {
   const b = dxfEntsBounds(ents);
+  const big = ents.length > DXF_DRAW_MAX;
   const counts = {};
   ents.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
   const unresolved = ents.filter(e => e.unresolved).length;
@@ -1960,13 +1961,13 @@ UI.dxfImportDialog = (ents, fileName) => {
       原寸 ${b ? `${b.w.toFixed(1)} × ${b.h.toFixed(1)} mm` : "—"}
       ${unresolved ? `<br><b style="color:var(--warn,#e5a03d)">⚠ 定義が見つからないブロックが ${unresolved} 個あります。元のCADで EXPLODE (分解) してから出力してください。</b>` : ""}
     </div>
-    <div class="prop-row"><label>拡大縮小</label>
+    <div class="prop-row" id="dxScaleRow"><label>拡大縮小</label>
       <select id="dxScale">
         <option value="1">原寸 (1:1)</option>
         <option value="fit20">高さ 20mm に合わせる (シンボル向き)</option>
         <option value="0.5">1/2</option><option value="2">2倍</option>
       </select></div>
-    <div class="prop-row"><label>線種 (作図線として配置する場合)</label>
+    <div class="prop-row" id="dxStyleRow"><label>線種 (作図線として配置する場合)</label>
       <select id="dxStyle">
         <option value="solid">実線 (配線として扱う)</option>
         <option value="dash" selected>破線 (作図線・非導通)</option>
@@ -1974,8 +1975,15 @@ UI.dxfImportDialog = (ents, fileName) => {
       </select></div>
     <div class="prop-row"><label>取り込み方法</label>
       <select id="dxMode">
-        <option value="draw">このページに作図線として配置する</option>
+        <option value="panel"${big ? " selected" : ""}>盤図ページとして取り込む (外形図・配置図など大きな図面向け)</option>
+        <option value="draw"${big ? " disabled" : " selected"}>このページに作図線として配置する${big ? ` (${DXF_DRAW_MAX} 要素まで)` : ""}</option>
       </select></div>
+    <div class="prop-note" id="dxPanelNote">
+      新しいページ (盤図) を作り、図形を実寸のまま 1 枚の図として置きます。
+      縮尺 (1:n) は A3 の用紙に収まるよう自動で選びます。
+      ページを開いてから「全部選択」→ ドラッグで図全体を動かせます。
+      ${big ? `<br><b>要素が ${ents.length} 個あるため、作図線としては置けません (1 本ずつの線になり、画面が固まります)。</b>` : ""}
+    </div>
     <div class="prop-note">
       シンボルとして登録する場合は「編集 &gt; シンボルを作成…」を開き、その中の
       「DXF を読み込む…」を使ってください (図形を編集して端子を置けます)。
@@ -2010,21 +2018,40 @@ UI.dxfImportDialog = (ents, fileName) => {
       : "（表示できる要素がありません）";
   };
   q("#dxScale").addEventListener("change", preview);
-  q("#dxMode").addEventListener("change", () => {
-    q("#dxSymOpts").style.display = q("#dxMode").value === "symbol" ? "" : "none";
-  });
+  const syncMode = () => {
+    const md = q("#dxMode").value;
+    q("#dxSymOpts").style.display = md === "symbol" ? "" : "none";
+    // 盤図ページは実寸で置き、縮尺は用紙に合わせて自動 — 拡大縮小・線種は使わない
+    q("#dxScaleRow").style.display = md === "panel" ? "none" : "";
+    q("#dxStyleRow").style.display = md === "panel" ? "none" : "";
+    q("#dxPanelNote").style.display = md === "panel" ? "" : "none";
+    if (md === "panel" && q("#dxScale").value !== "1") { q("#dxScale").value = "1"; preview(); }
+  };
+  q("#dxMode").addEventListener("change", syncMode);
   preview();
+  syncMode();
 
   const foot = h(`<div style="display:flex;gap:10px;justify-content:flex-end">
     <button class="btn-solid" id="dxCancel">キャンセル</button>
     <button class="btn-solid primary" id="dxOk">取り込む</button>
   </div>`);
-  const m = UI.openModal({ title: "DXF を取り込む", sub: "AutoCAD 図面を作図線として配置、またはシンボルに登録します", body, foot });
+  const m = UI.openModal({ title: "DXF を取り込む", sub: "AutoCAD 図面を盤図ページ・作図線として置きます", body, foot });
   foot.querySelector("#dxCancel").addEventListener("click", m.close);
   foot.querySelector("#dxOk").addEventListener("click", () => {
     const k = scaleOf();
     const mode = q("#dxMode").value;
+    if (mode === "draw" && big) return;          // 大きな DXF は作図線にしない (固まる)
     commit();
+    if (mode === "panel") {
+      const r = panelInsertDxfPage(ents, fileName);
+      m.close();
+      if (!r) { UI.setMsg("DXF に盤図として置ける図形がありませんでした"); return; }
+      UI.renumberPages();
+      App.pageIdx = App.project.pages.indexOf(r.page);
+      UI.refresh(); zoomFit();
+      UI.setMsg(`DXF を盤図ページ「${r.page.name}」として取り込みました (図形 ${r.n} 個・縮尺 ${r.page.scale})`);
+      return;
+    }
     if (mode === "symbol") {
       const name = q("#dxName").value.trim() || "取り込みシンボル";
       const letter = (q("#dxLetter").value.trim() || "E").toUpperCase();

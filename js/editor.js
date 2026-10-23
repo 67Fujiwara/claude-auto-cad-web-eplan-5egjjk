@@ -74,7 +74,12 @@ function renderAll() {
   const { tx, ty, s } = Editor.view;
   const world = svg.querySelector("#world");
   world.setAttribute("transform", `translate(${tx},${ty}) scale(${s})`);
-  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page) + tablesSVG(page) + kindSVG(page);
+  const isPanel = page.kind === "panel";
+  Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page) + tablesSVG(page) + (isPanel ? "" : kindSVG(page));
+  /* 盤図は数万要素になるので専用の層に置き、中身が変わったときだけ書き直す
+     (panelSVG は同じ描画条件なら同じ文字列を返す — パン・ズームで作り直さない) */
+  const pnl = isPanel ? panelSVG(page) : "";
+  if (pnl !== Editor.panelHTML) { Editor.layers.panel.innerHTML = pnl; Editor.panelHTML = pnl; }
   Editor.layers.wires.innerHTML = wiresSVG(page);
   Editor.layers.devices.innerHTML = devicesSVG(page);
   Editor.layers.texts.innerHTML = textsSVG(page);
@@ -1166,6 +1171,7 @@ function partsSVG(page) {
    座標系は mm・左下原点・Y 上向き → 画面へは y' = extent.h - y。
    円弧は a0→a1 反時計回り (見た目も反時計)。文字は左下基準・高さ h mm */
 const _panelSvgCache = new Map();
+const PANEL_BATCH_MIN = 2000;     // これより図形の多い盤図は線をまとめて描く
 function panelSVG(page) {
   /* この CAD は中身を常に実寸で描き、縮尺 1:n は図枠を n 倍に広げて表す。
      Panel Studio の座標 (実寸 mm) をそのまま置き、ページの scale が縮尺になる。
@@ -1189,10 +1195,30 @@ function panelSVG(page) {
   const sw = LINE_W.thin * f;            // 紙の上で 0.25mm になる線幅
   const swOf = e => (e.w ? e.w * f : sw);   // 書き足した図形はプロパティで太さを変えられる
   let out = `<g data-panel="1">`;
+  /* 大きな図 (DXF の盤図など) は、線・円弧を色と太さごとに 1 本の path に
+     まとめる — 1 要素 1 ノードだと数万ノードになり、描画が固まる。
+     円 (穴) は数が桁違いに少ないので 1 個ずつの circle のまま */
+  const ents = pd.entities || [];
+  const batch = ents.length > PANEL_BATCH_MIN ? new Map() : null;
+  const put = (e, c, d) => {
+    const k = c + "|" + swOf(e);
+    const a = batch.get(k);
+    if (a) a.push(d); else batch.set(k, [d]);
+  };
   // 右隣の文字までの「使える横幅」— はみ出す文字は縮めて重なりを防ぐ
   const rooms = panelTextRooms(pd.entities, e2 => panelTextShown(page, e2));
-  (pd.entities || []).forEach((e, ei) => {
+  ents.forEach((e, ei) => {
     const c = colOf(e);
+    if (batch && (e.t === "line" || e.t === "arc")) {
+      if (e.t === "line") put(e, c, `M${X(e.x1)},${Y(e.y1)}L${X(e.x2)},${Y(e.y2)}`);
+      else {
+        const da = ((e.a1 - e.a0) % 360 + 360) % 360;
+        const P = a2 => [X(e.cx + e.r * Math.cos(a2 * Math.PI / 180)), Y(e.cy + e.r * Math.sin(a2 * Math.PI / 180))];
+        const [x1, y1] = P(e.a0), [x2, y2] = P(e.a1);
+        put(e, c, `M${x1},${y1}A${e.r},${e.r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}`);
+      }
+      return;
+    }
     if (e.t === "line") {
       out += `<path d="M${X(e.x1)},${Y(e.y1)} L${X(e.x2)},${Y(e.y2)}" stroke="${c}" stroke-width="${swOf(e)}" fill="none"/>`;
     } else if (e.t === "arrow") {
@@ -1218,6 +1244,10 @@ function panelSVG(page) {
         ? ` textLength="${rm.toFixed(2)}" lengthAdjust="spacingAndGlyphs"` : "";
       out += `<text x="${X(e.x)}" y="${Y(e.y)}" font-size="${svgFontSizeFor(e.s, e.h, false, { noMin: true })}" fill="${c}" font-family="sans-serif"${rot}${fit}>${escXML(e.s)}</text>`;
     }
+  });
+  if (batch) batch.forEach((ds, k) => {
+    const [c, w] = k.split("|");
+    out += `<path d="${ds.join("")}" stroke="${c}" stroke-width="${w}" fill="none"/>`;
   });
   // 外形寸法と備考 (job.note) は図枠の左下へ (紙の上で 2.5mm の文字)
   {
@@ -1547,10 +1577,11 @@ function setupEditor() {
   const svg = document.getElementById("canvas");
   Editor.svg = svg;
   svg.innerHTML = `<g id="world">
-    <g id="lySheet"></g><g id="lyWires"></g><g id="lyDevices"></g><g id="lyTexts"></g><g id="lyOverlay"></g>
+    <g id="lySheet"></g><g id="lyPanel"></g><g id="lyWires"></g><g id="lyDevices"></g><g id="lyTexts"></g><g id="lyOverlay"></g>
   </g>`;
   Editor.layers = {
     sheet: svg.querySelector("#lySheet"),
+    panel: svg.querySelector("#lyPanel"),
     wires: svg.querySelector("#lyWires"),
     devices: svg.querySelector("#lyDevices"),
     texts: svg.querySelector("#lyTexts"),
