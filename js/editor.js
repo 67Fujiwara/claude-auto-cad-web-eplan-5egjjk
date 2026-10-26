@@ -1250,22 +1250,32 @@ function panelRasterDraw(page, job, X, Y) {
   const ux0 = job.x0 - ox - fe.dx, ux1 = job.x1 - ox - fe.dx;
   const uy0 = pn.extent.h - (job.y1 - oy) - fe.dy, uy1 = pn.extent.h - (job.y0 - oy) - fe.dy;
   const bx = panelFigBoxes(fig);
-  let cnt = 0;
-  ctx.beginPath();
-  fig.pl.forEach((p, i) => {
-    if (bx[4 * i + 2] < ux0 || bx[4 * i] > ux1 || bx[4 * i + 3] < uy0 || bx[4 * i + 1] > uy1) return;
-    ctx.moveTo(X(p[0]), Y(p[1]));
-    for (let j = 2; j < p.length; j += 2) ctx.lineTo(X(p[j]), Y(p[j + 1]));
-    cnt += p.length;
-    if (cnt > 200000) { ctx.stroke(); ctx.beginPath(); cnt = 0; }
-  });
-  fig.arcs.forEach(([cx, cy, r, a0, a1]) => {
-    const t0 = a0 * Math.PI / 180;
-    ctx.moveTo(X(cx + r * Math.cos(t0)), Y(cy + r * Math.sin(t0)));
-    ctx.arc(X(cx), Y(cy), r, -t0, -a1 * Math.PI / 180, true);
-  });
-  fig.circles.forEach(([cx, cy, r]) => { ctx.moveTo(X(cx) + r, Y(cy)); ctx.arc(X(cx), Y(cy), r, 0, Math.PI * 2); });
-  ctx.stroke();
+  const plD = fig.plD || [];
+  // 線種の組ごとに描く (0 = 実線、k = 破線のパターン fig.dashes[k-1])
+  for (let g = 0; g <= panelFigGroups(fig); g++) {
+    ctx.setLineDash(g ? fig.dashes[g - 1] : []);
+    let cnt = 0;
+    ctx.beginPath();
+    fig.pl.forEach((p, i) => {
+      if ((plD[i] || 0) !== g) return;
+      if (bx[4 * i + 2] < ux0 || bx[4 * i] > ux1 || bx[4 * i + 3] < uy0 || bx[4 * i + 1] > uy1) return;
+      ctx.moveTo(X(p[0]), Y(p[1]));
+      for (let j = 2; j < p.length; j += 2) ctx.lineTo(X(p[j]), Y(p[j + 1]));
+      cnt += p.length;
+      if (cnt > 200000) { ctx.stroke(); ctx.beginPath(); cnt = 0; }
+    });
+    fig.arcs.forEach(([cx, cy, r, a0, a1, ag]) => {
+      if ((ag || 0) !== g) return;
+      const t0 = a0 * Math.PI / 180;
+      ctx.moveTo(X(cx + r * Math.cos(t0)), Y(cy + r * Math.sin(t0)));
+      ctx.arc(X(cx), Y(cy), r, -t0, -a1 * Math.PI / 180, true);
+    });
+    fig.circles.forEach(([cx, cy, r, cg]) => {
+      if ((cg || 0) !== g) return;
+      ctx.moveTo(X(cx) + r, Y(cy)); ctx.arc(X(cx), Y(cy), r, 0, Math.PI * 2);
+    });
+    ctx.stroke();
+  }
   cv.toBlob(blob => {
     if (Editor.pnRasterWant !== job || !blob) return;
     const img = Editor.panelImg;
@@ -1321,8 +1331,15 @@ function panelSVG(page, opts = {}) {
   ents.forEach((e, ei) => {
     const c = colOf(e);
     if (e.t === "fig") {
-      if (pd.fig && !figRaster)
-        out += `<path d="${panelFigPathD(pd.fig, v => X(v + e.dx), v => Y(v + e.dy))}" stroke="${INK}" stroke-width="${sw}" fill="none"/>`;
+      if (pd.fig && !figRaster) {
+        const FX = v => X(v + e.dx), FY = v => Y(v + e.dy);
+        for (let g = 0; g <= panelFigGroups(pd.fig); g++) {
+          const d = panelFigPathD(pd.fig, FX, FY, g);
+          if (!d) continue;
+          const da = g ? ` stroke-dasharray="${pd.fig.dashes[g - 1].join(" ")}"` : "";
+          out += `<path d="${d}" stroke="${INK}" stroke-width="${sw}" fill="none"${da}/>`;
+        }
+      }
       return;
     }
     if (batch && (e.t === "line" || e.t === "arc")) {

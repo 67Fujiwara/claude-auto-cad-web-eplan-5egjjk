@@ -263,21 +263,25 @@ function dxfEntity(pairs) {
 }
 /** DXF 取り込みの図 (fig) → LINE / POLYLINE / ARC / CIRCLE (R12 の書式)。
     X/Y は書き出す座標の文字列化 */
-function panelFigDXF(fig, X, Y, layer) {
+function panelFigDXF(fig, X, Y, layer, solid) {
   const out = [];
-  fig.pl.forEach(p => {
+  // 破線の線種は使った寸法ごとに LTYPE を登録して付ける (加工用 DXF は solid = 実線のみ)
+  const ltOf = g => (!g || solid || !fig.dashes) ? [] : [[6, dxfLtypeUse(dxfLtypeFor(fig.dashes[g - 1].join(" ")))]];
+  const plD = fig.plD || [];
+  fig.pl.forEach((p, i) => {
+    const lt = ltOf(plD[i] || 0);
     if (p.length === 4) {
-      out.push(dxfEntity([[0, "LINE"], [8, layer], [10, X(p[0])], [20, Y(p[1])], [11, X(p[2])], [21, Y(p[3])]]));
+      out.push(dxfEntity([[0, "LINE"], [8, layer], ...lt, [10, X(p[0])], [20, Y(p[1])], [11, X(p[2])], [21, Y(p[3])]]));
       return;
     }
-    const pairs = [[0, "POLYLINE"], [8, layer], [66, 1], [10, "0.0"], [20, "0.0"], [30, "0.0"], [70, 0]];
+    const pairs = [[0, "POLYLINE"], [8, layer], ...lt, [66, 1], [10, "0.0"], [20, "0.0"], [30, "0.0"], [70, 0]];
     for (let i = 0; i < p.length; i += 2) pairs.push([0, "VERTEX"], [8, layer], [10, X(p[i])], [20, Y(p[i + 1])], [30, "0.0"]);
     pairs.push([0, "SEQEND"], [8, layer]);
     out.push(dxfEntity(pairs));
   });
-  fig.arcs.forEach(([cx, cy, r, a0, a1]) => out.push(dxfEntity([[0, "ARC"], [8, layer],
+  fig.arcs.forEach(([cx, cy, r, a0, a1, ag]) => out.push(dxfEntity([[0, "ARC"], [8, layer], ...ltOf(ag || 0),
     [10, X(cx)], [20, Y(cy)], [40, (+r).toFixed(3)], [50, (+a0).toFixed(3)], [51, (+a1).toFixed(3)]])));
-  fig.circles.forEach(([cx, cy, r]) => out.push(dxfEntity([[0, "CIRCLE"], [8, layer],
+  fig.circles.forEach(([cx, cy, r, cg]) => out.push(dxfEntity([[0, "CIRCLE"], [8, layer], ...ltOf(cg || 0),
     [10, X(cx)], [20, Y(cy)], [40, (+r).toFixed(3)]])));
   return out.join("");
 }
@@ -391,7 +395,7 @@ function panelToMachiningDXF(page) {
   (pd.entities || []).forEach(e => {
     if (e.add || e.t === "text") return;      // 注記・文字は加工データに入れない
     if (e.t === "fig") {
-      if (pd.fig) ents += panelFigDXF(pd.fig, v => n3(v + e.dx), v => n3(v + e.dy), "0");
+      if (pd.fig) ents += panelFigDXF(pd.fig, v => n3(v + e.dx), v => n3(v + e.dy), "0", true);
       return;
     }
     if (e.t === "line") {
@@ -1045,6 +1049,63 @@ function dxfSplineToPolyline(sp) {
 /** DXF 文字列 → エンティティ配列 (単位 mm)。
     LINE / LWPOLYLINE / POLYLINE / CIRCLE / ARC / TEXT / MTEXT / SOLID /
     SPLINE (折れ線へ展開) に対応し、BLOCKS と INSERT (挿入点・尺度・回転) も展開する。 */
+/** DXF の線種パターン (49 の並び) → [線, すき間, 線, すき間 …] (すべて正の長さ)。
+    点 (0) は短い線にし、同じ符号が続けばまとめる。実線なら [] */
+function dxfDashPattern(raw) {
+  const v = (raw || []).filter(isFinite);
+  if (!v.length || v.every(x => x >= 0)) return [];
+  const tot = v.reduce((a, x) => a + Math.abs(x), 0);
+  const dot = Math.max(tot * 0.02, 0.1);
+  const seq = [];
+  v.forEach(x => {
+    const on = x >= 0, len = x === 0 ? dot : Math.abs(x);
+    if (seq.length && seq[seq.length - 1].on === on) seq[seq.length - 1].len += len;
+    else seq.push({ on, len });
+  });
+  if (!seq[0].on) seq.push(seq.shift());             // 線から始める
+  const m = [];                                      // 回したあとで続いた同じ符号をまとめ直す
+  seq.forEach(q => { if (m.length && m[m.length - 1].on === q.on) m[m.length - 1].len += q.len; else m.push({ ...q }); });
+  if (m.length % 2) m.push({ on: false, len: dot });
+  return m.map(q => q.len);
+}
+/** ポリラインの膨らみ (bulge) を円弧の点に展開する。bul[i] は i → i+1 の辺の
+    膨らみ (tan(中心角/4)、正 = 反時計回り)。閉じた線は最後の辺 (→ 先頭) も */
+function dxfBulgePts(pts, bul, closed) {
+  if (!bul || !bul.some(v => v)) return pts;
+  const out = [], n = pts.length, segs = closed ? n : n - 1;
+  for (let i = 0; i < n; i++) {
+    out.push(pts[i]);
+    const bv = i < segs ? (bul[i] || 0) : 0;
+    if (!bv) continue;
+    const p = pts[i], q = pts[(i + 1) % n];
+    const dx = q[0] - p[0], dy = q[1] - p[1], c = Math.hypot(dx, dy);
+    if (!c || !isFinite(c)) continue;
+    const th = 4 * Math.atan(bv);
+    const h = (c / 2) / Math.tan(th / 2);           // 弦の中点から中心まで (左向きが正)
+    const cx = (p[0] + q[0]) / 2 - h * dy / c, cy = (p[1] + q[1]) / 2 + h * dx / c;
+    const R = Math.hypot(p[0] - cx, p[1] - cy), a0 = Math.atan2(p[1] - cy, p[0] - cx);
+    const k = Math.max(2, Math.ceil(Math.abs(th) / (Math.PI / 18)));   // 10° 刻み
+    for (let j = 1; j < k; j++) { const a = a0 + th * j / k; out.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]); }
+  }
+  return out;
+}
+/** 楕円 (ELLIPSE) を折れ線の点に。10/20 = 中心、11/21 = 長軸の端 (中心から)、
+    40 = 短軸/長軸、41/42 = 始点・終点のパラメータ (ラジアン)。押し出し -Z なら逆回り */
+function dxfEllipsePts(e) {
+  const cx = e.x1, cy = e.y1, mx = e.x2, my = e.y2, ratio = e.r;
+  if (![cx, cy, mx, my, ratio].every(isFinite)) return [];
+  const sg = e.nz < 0 ? -1 : 1;
+  const nx = -my * ratio * sg, ny = mx * ratio * sg;          // 短軸 = 押し出し方向 × 長軸
+  let p0 = isFinite(e.p0) ? e.p0 : 0, p1 = isFinite(e.p1) ? e.p1 : Math.PI * 2;
+  if (p1 <= p0) p1 += Math.PI * 2;
+  const k = Math.max(8, Math.ceil((p1 - p0) / (Math.PI * 2) * 72));
+  const pts = [];
+  for (let j = 0; j <= k; j++) {
+    const t = p0 + (p1 - p0) * j / k, c = Math.cos(t), s2 = Math.sin(t);
+    pts.push([cx + c * mx + s2 * nx, cy + c * my + s2 * ny]);
+  }
+  return pts;
+}
 function parseDXF(text) {
   const src = String(text).replace(/\r\n?/g, "\n").split("\n");
   const pairs = [];
@@ -1074,21 +1135,36 @@ function parseDXF(text) {
     let cur = null, curType = null, verts = null, inVertex = false, mtext = "";
     let mlLine = false;                 // 多重引出線の LEADER_LINE{ } の中か
     const isML = () => curType === "MULTILEADER" || curType === "MLEADER";
+    const reset = () => { cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false; };
     const push = () => {
       if (!cur || !curType) return;
-      if (curType === "POLYLINE") cur.pts = verts || [];
+      // 非表示の属性 (部品番号などの隠し文字) は描かない
+      if (curType === "ATTRIB" && (cur.flags & 1)) { reset(); return; }
+      if (curType === "POLYLINE") {
+        // ポリフェイス・メッシュ (3D の面) は図面の線ではないので読まない
+        if (cur.flags & (16 | 64)) { reset(); return; }
+        cur.pts = dxfBulgePts(verts || [], cur.vbul, cur.flags & 1);
+        if (cur.flags & 8) cur.wcs = true;           // 3D ポリラインは WCS の座標
+      }
+      if (curType === "LWPOLYLINE" && cur.bul) cur.pts = dxfBulgePts(cur.pts, cur.bul, cur.flags & 1);
+      if (curType === "ELLIPSE") {
+        const pts = dxfEllipsePts(cur);
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0, wcs: true,
+          pspace: cur.pspace, invis: cur.invis, lt: cur.lt, ltS: cur.ltS });
+        reset(); return;
+      }
       if (curType === "MTEXT" && mtext) cur.text = unesc(mtext);
       // 属性文字は TEXT と同じ内容なので TEXT として扱う
       if (curType === "ATTRIB") curType = "TEXT";
       // 引出線は折れ線として扱う (矢は描かない — 図の意味は線と文字にある)
       if (curType === "LEADER") {
         const pts = (cur.pts || []).filter(q => isFinite(q[0]) && isFinite(q[1]));
-        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0 });
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0, wcs: true, pspace: cur.pspace });
         cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false; return;
       }
       if (curType === "MULTILEADER" || curType === "MLEADER") {
         const pts = (cur.pts || []).filter(q => isFinite(q[0]) && isFinite(q[1]));
-        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0 });
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: 0, wcs: true, pspace: cur.pspace });
         if (cur.mlText && isFinite(cur.mlx)) {
           sink.push({ type: "MTEXT", layer: cur.layer, x1: cur.mlx, y1: cur.mly,
             text: cur.mlText, size: cur.size || 3.5, attach: cur.attach || 1 });
@@ -1097,13 +1173,15 @@ function parseDXF(text) {
       }
       // 寸法は無名ブロックの差し込みとして描く (ブロックの図形は図面座標のまま)
       if (curType === "DIMENSION") {
-        if (cur.blockName) sink.push({ type: "INSERT", layer: cur.layer, blockName: cur.blockName, x1: 0, y1: 0, sx: 1, sy: 1, rot: 0 });
+        if (cur.blockName) sink.push({ type: "INSERT", layer: cur.layer, blockName: cur.blockName, x1: 0, y1: 0, sx: 1, sy: 1, rot: 0,
+          nz: cur.nz, pspace: cur.pspace, invis: cur.invis, lt: cur.lt });
         cur = null; curType = null; verts = null; inVertex = false; mtext = ""; mlLine = false; return;
       }
       if (curType === "SPLINE") {
         // NURBS は折れ線へ展開し、以後は LWPOLYLINE として扱う (作図・シンボル化・寸法計算を共通化)
         const pts = dxfSplineToPolyline(cur);
-        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: (cur.flags & 1) ? 1 : 0, spl: true });
+        if (pts.length >= 2) sink.push({ type: "LWPOLYLINE", layer: cur.layer, pts, flags: (cur.flags & 1) ? 1 : 0, spl: true, wcs: true,
+          pspace: cur.pspace, invis: cur.invis, lt: cur.lt, ltS: cur.ltS });
       } else {
         sink.push({ type: curType, ...cur });
       }
@@ -1117,7 +1195,7 @@ function parseDXF(text) {
         if (v === "SEQEND") { inVertex = false; continue; }
         push();
         curType = ["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "TEXT", "MTEXT", "SOLID", "INSERT", "SPLINE",
-          "LEADER", "MULTILEADER", "MLEADER", "ATTRIB", "DIMENSION"].includes(v) ? v : null;
+          "LEADER", "MULTILEADER", "MLEADER", "ATTRIB", "DIMENSION", "ELLIPSE"].includes(v) ? v : null;
         cur = curType ? { layer: "0", pts: [] } : null;
         if (curType === "SPLINE") { cur.cps = []; cur.knots = []; cur.wts = []; cur.fit = []; }
         if (curType === "POLYLINE") verts = [];
@@ -1161,13 +1239,32 @@ function parseDXF(text) {
           else cur.y2 = num;
           break;
         case 40: if (curType === "SPLINE") cur.knots.push(num); else { cur.r = num; cur.size = num; } break;
-        // 41 は INSERT の倍率・スプラインの重み・多重引出線の文字高
+        // 41 は INSERT の倍率・スプラインの重み・多重引出線の文字高・楕円の開始パラメータ
         case 41:
           if (curType === "INSERT") cur.sx = num;
           else if (curType === "SPLINE") cur.wts.push(num);
+          else if (curType === "ELLIPSE") cur.p0 = num;
           else if (isML()) cur.size = num;
           break;
-        case 42: if (curType === "INSERT") cur.sy = num; break;
+        // 42 は INSERT の Y 倍率・ポリラインの膨らみ (bulge = 円弧の角)・楕円の終了パラメータ
+        case 42:
+          if (curType === "INSERT") cur.sy = num;
+          else if (curType === "ELLIPSE") cur.p1 = num;
+          else if (curType === "LWPOLYLINE" && cur.pts.length) (cur.bul = cur.bul || [])[cur.pts.length - 1] = num;
+          else if (curType === "POLYLINE" && inVertex && verts.length) (cur.vbul = cur.vbul || [])[verts.length - 1] = num;
+          break;
+        // 44/45 = 配列挿入 (MINSERT) の列・行の間隔
+        case 44: if (curType === "INSERT") cur.colSp = num; break;
+        case 45: if (curType === "INSERT") cur.rowSp = num; break;
+        // 6 = 線種名 (BYLAYER / BYBLOCK / HIDDEN など)・48 = 図形ごとの線種尺度
+        case 6: cur.lt = v; break;
+        case 48: cur.ltS = num; break;
+        // 67 = ペーパー空間 (レイアウト) の図形 / 60 = 非表示の図形
+        case 67: cur.pspace = num === 1; break;
+        case 60: cur.invis = num === 1; break;
+        // 押し出し方向の Z。-1 の 2D 図形は X が反転した座標系 (OCS) で書かれている
+        // (AutoCAD でミラーした部品)。そのまま読むと左右反対の場所に出る
+        case 230: cur.nz = num; break;
         // 50 は INSERT の回転・円弧の開始角・文字の傾き。混ざらないように分ける
         case 50:
           if (curType === "INSERT") cur.rot = num;
@@ -1175,8 +1272,12 @@ function parseDXF(text) {
           else cur.a1 = num;
           break;
         case 51: cur.a2 = num; break;
-        case 70: cur.flags = num; break;
-        case 71: if (curType === "SPLINE") cur.degree = num; else if (curType === "MTEXT") cur.attach = num; break;
+        case 70: if (!inVertex) cur.flags = num; break;      // 頂点の 70 でポリラインの「閉じ」を消さない
+        case 71:
+          if (curType === "SPLINE") cur.degree = num;
+          else if (curType === "MTEXT") cur.attach = num;
+          else if (curType === "INSERT") cur.rows = num;
+          break;
         case 72: cur.hAlign = num; break;
         case 73: cur.vAlign = num; break;
         default: break;
@@ -1219,30 +1320,125 @@ function parseDXF(text) {
   } else {
     readEnts(0, pairs.length, raw);
   }
-  /* 3) INSERT を展開 (1段のみ入れ子も展開する) */
+  /* 3) 画層の表示状態 (TABLES の LAYER)。AutoCAD で見えない・印刷されない
+     画層 (非表示 = 色が負 / フリーズ / 印刷しない / Defpoints) の図形は読まない */
+  const offLy = new Set(), frozenLy = new Set();
+  /* 線種: LTYPE 表のパターン (49: 正 = 線、負 = すき間、0 = 点)・画層の線種・
+     全体の線種尺度 ($LTSCALE)。破線 (かくれ線など) を実線にしない */
+  const ltPat = new Map(), layerLt = new Map();
+  let ltScale = 1;
+  {
+    const up = n => String(n || "").trim().toUpperCase();
+    for (let i = 0; i < pairs.length; i++) {
+      const [c0, v0] = pairs[i];
+      if (c0 === 9 && v0.trim() === "$LTSCALE") {
+        for (let j = i + 1; j < pairs.length && pairs[j][0] !== 9 && pairs[j][0] !== 0; j++)
+          if (pairs[j][0] === 40) { const v = parseFloat(pairs[j][1]); if (v > 0) ltScale = v; }
+        continue;
+      }
+      if (c0 !== 0) continue;
+      const kind = v0.trim();
+      if (kind === "LTYPE") {
+        let name = ""; const pat = [];
+        for (let j = i + 1; j < pairs.length && pairs[j][0] !== 0; j++) {
+          if (pairs[j][0] === 2) name = pairs[j][1]; else if (pairs[j][0] === 49) pat.push(parseFloat(pairs[j][1]));
+        }
+        if (name) ltPat.set(up(name), dxfDashPattern(pat));
+        continue;
+      }
+      if (kind !== "LAYER") continue;
+      let name = "", color = 7, flags = 0, plot = 1, lt = "";
+      for (let j = i + 1; j < pairs.length && pairs[j][0] !== 0; j++) {
+        const [c2, v2] = pairs[j];
+        if (c2 === 2) name = v2; else if (c2 === 62) color = parseInt(v2, 10);
+        else if (c2 === 70) flags = parseInt(v2, 10); else if (c2 === 290) plot = parseInt(v2, 10);
+        else if (c2 === 6) lt = v2;
+      }
+      if (!name) continue;
+      if (flags & 1) frozenLy.add(up(name));
+      if (color < 0 || (flags & 1) || plot === 0) offLy.add(up(name));
+      if (lt) layerLt.set(up(name), up(lt));
+    }
+    offLy.add("DEFPOINTS");                    // 寸法の定義点の画層 — 印刷されない
+  }
+  const lyKey = n => String(n || "0").trim().toUpperCase();
+  /* 4) INSERT を展開 (入れ子も 16 段まで)。座標変換は 2×3 の行列
+     [a,b,c,d,e,f] (x' = a x + c y + e, y' = b x + d y + f) で合成する —
+     ブロックの基点・回転・倍率・ミラー (押し出し -Z) をまとめて正しく効かせ、
+     円弧の角度・文字の向きも同じ行列で回す */
   const out = [];
-  const place = (ents, ox, oy, sx, sy, rot, depth) => {
-    const c = Math.cos(rot * Math.PI / 180), s2 = Math.sin(rot * Math.PI / 180);
-    const T = (x, y) => [ox + (x * sx) * c - (y * sy) * s2, oy + (x * sx) * s2 + (y * sy) * c];
+  const mul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1],
+    A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3],
+    A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
+  const Tm = (x, y) => [1, 0, 0, 1, x, y];
+  const Rm = deg => { const c = Math.cos(deg * Math.PI / 180), s2 = Math.sin(deg * Math.PI / 180); return [c, s2, -s2, c, 0, 0]; };
+  const MIR = [-1, 0, 0, 1, 0, 0];
+  // OCS (押し出し方向の座標系) で座標を持つ 2D 図形。LINE・MTEXT・楕円・スプラインは WCS
+  const OCS = new Set(["CIRCLE", "ARC", "LWPOLYLINE", "POLYLINE", "INSERT", "TEXT", "SOLID"]);
+  /* 図形の線種名を決める: BYLAYER = 画層の線種、BYBLOCK = 差し込んだブロックの線種 */
+  const ltName = (e, ly, parentLt) => {
+    const n = String(e.lt || "BYLAYER").trim().toUpperCase();
+    if (n === "BYLAYER") return layerLt.get(lyKey(ly)) || "CONTINUOUS";
+    if (n === "BYBLOCK") return parentLt || "CONTINUOUS";
+    return n;
+  };
+  const place = (ents, M, depth, parentLy, parentLt) => {
+    const P = (x, y) => [M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]];
     ents.forEach(e => {
+      if (e.invis || (depth === 0 && e.pspace)) return;
+      // 画層 0 の図形はブロックを差し込んだ画層を引き継ぐ (AutoCAD と同じ)
+      const ly = e.layer === "0" && parentLy ? parentLy : e.layer;
+      const L = e.nz < 0 && OCS.has(e.type) && !e.wcs ? mul(M, MIR) : M;
       if (e.type === "INSERT") {
+        if (frozenLy.has(lyKey(ly))) return;
         const b = blocks[e.blockName];
-        if (!b || depth > 3) { out.push({ ...e, unresolved: !b }); return; }
-        const [px, py] = T(e.x1 || 0, e.y1 || 0);
-        place(b.ents.map(x => ({ ...x })), px - (b.base[0] || 0), py - (b.base[1] || 0),
-          sx * (e.sx || 1), sy * (e.sy || 1), rot + (e.rot || 0), depth + 1);
+        if (!b || depth > 15) { out.push({ ...e, unresolved: !b }); return; }
+        const cols = e.flags > 1 ? e.flags : 1, rows = e.rows > 1 ? e.rows : 1;
+        const S = [e.sx || 1, 0, 0, e.sy || e.sx || 1, 0, 0];
+        const base = Tm(-(b.base[0] || 0), -(b.base[1] || 0));
+        const head = mul(mul(L, Tm(e.x1 || 0, e.y1 || 0)), Rm(e.rot || 0));
+        for (let ci = 0; ci < cols; ci++) for (let ri = 0; ri < rows; ri++) {
+          const Mc = mul(mul(mul(head, Tm(ci * (e.colSp || 0), ri * (e.rowSp || 0))), S), base);
+          place(b.ents, Mc, depth + 1, ly, ltName(e, ly, parentLt));
+        }
         return;
       }
-      const n = { ...e };
-      if (n.x1 !== undefined && n.y1 !== undefined) { const [a, b2] = T(n.x1, n.y1); n.x1 = a; n.y1 = b2; }
-      if (n.x2 !== undefined && n.y2 !== undefined) { const [a, b2] = T(n.x2, n.y2); n.x2 = a; n.y2 = b2; }
-      if (n.pts && n.pts.length) n.pts = n.pts.map(p => (isFinite(p[0]) && isFinite(p[1])) ? T(p[0], p[1]) : p);
-      if (n.r !== undefined) n.r = n.r * Math.abs(sx);
-      if (n.size !== undefined) n.size = n.size * Math.abs(sy);
+      if (offLy.has(lyKey(ly))) return;
+      const Q = (x, y) => [L[0] * x + L[2] * y + L[4], L[1] * x + L[3] * y + L[5]];
+      const det = L[0] * L[3] - L[1] * L[2];
+      const dirDeg = a => { const r = a * Math.PI / 180, c = Math.cos(r), s2 = Math.sin(r);
+        return ((Math.atan2(L[1] * c + L[3] * s2, L[0] * c + L[2] * s2) * 180 / Math.PI) % 360 + 360) % 360; };
+      const n = { ...e, layer: ly };
+      delete n.nz; delete n.pspace; delete n.invis; delete n.wcs; delete n.lt; delete n.ltS;
+      if (n.type === "LINE" || n.type === "LWPOLYLINE" || n.type === "POLYLINE" || n.type === "ARC" || n.type === "CIRCLE") {
+        const pat = ltPat.get(ltName(e, ly, parentLt));
+        if (pat && pat.length >= 2) n.dash = pat.map(v => +(v * ltScale * (e.ltS > 0 ? e.ltS : 1)).toFixed(4));
+      }
+      if (n.type === "MTEXT") {
+        // MTEXT の向きは 11/21 (X 方向ベクトル) か 50 (角度)
+        const a0 = (isFinite(n.x2) && isFinite(n.y2) && (n.x2 || n.y2)) ? Math.atan2(n.y2, n.x2) * 180 / Math.PI : (n.a1 || 0);
+        delete n.x2; delete n.y2; delete n.a1;
+        const ang = dirDeg(a0);
+        if (Math.abs(ang) > 1e-6 && Math.abs(ang - 360) > 1e-6) n.angle = ang;
+      }
+      if (n.x1 !== undefined && n.y1 !== undefined) { const [a, b2] = Q(n.x1, n.y1); n.x1 = a; n.y1 = b2; }
+      if (n.x2 !== undefined && n.y2 !== undefined) { const [a, b2] = Q(n.x2, n.y2); n.x2 = a; n.y2 = b2; }
+      if (n.pts && n.pts.length) n.pts = n.pts.map(p => (isFinite(p[0]) && isFinite(p[1])) ? Q(p[0], p[1]) : p);
+      if (n.type === "CIRCLE" || n.type === "ARC") n.r = n.r * Math.sqrt(Math.abs(det));
+      if (n.type === "ARC") {
+        const s0 = dirDeg(n.a1 || 0), s1 = dirDeg(isFinite(n.a2) ? n.a2 : 360);
+        // ミラー (行列の向きが反転) では円弧の回る向きが逆になるので始点・終点を入れ替える
+        if (det < 0) { n.a1 = s1; n.a2 = s0; } else { n.a1 = s0; n.a2 = s1; }
+      }
+      if (n.type === "TEXT") {
+        const ang = dirDeg(n.angle || 0);
+        if (n.angle || Math.abs(ang) > 1e-6 && Math.abs(ang - 360) > 1e-6) n.angle = ang;
+      }
+      if ((n.type === "TEXT" || n.type === "MTEXT") && n.size !== undefined) n.size = n.size * Math.hypot(L[2], L[3]);
       out.push(n);
     });
   };
-  place(raw, 0, 0, 1, 1, 0, 0);
+  place(raw, [1, 0, 0, 1, 0, 0], 0, null, null);
   /* 4) 文字の位置を正規化する。
      DXF は「どこに」と「どう寄せるか」を分けて持つので、そのまま左下から
      書くと寄せの指定ぶんだけずれる (元図と別の場所に文字が出る)。

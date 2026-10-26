@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 231;
+const APP_VERSION = 232;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5687,22 +5687,24 @@ function dxfToPanelSheet(ents) {
   const X = x => r2(x - bb.x0), Y = y => r2(y - bb.y0);
   const out = [];
   const ok = (...v) => v.every(n => isFinite(n));
-  const line = (x1, y1, x2, y2, layer) => {
+  const line = (x1, y1, x2, y2, layer, dash) => {
     if (ok(x1, y1, x2, y2) && (x1 !== x2 || y1 !== y2))
-      out.push({ t: "line", x1: X(x1), y1: Y(y1), x2: X(x2), y2: Y(y2), layer });
+      out.push({ t: "line", x1: X(x1), y1: Y(y1), x2: X(x2), y2: Y(y2), layer, ...(dash ? { dash } : {}) });
   };
   ents.forEach(e => {
     const layer = e.layer || "0";
-    if (e.type === "LINE" || e.type === "SOLID") line(e.x1, e.y1, e.x2, e.y2, layer);
+    const dash = e.dash && e.dash.length >= 2 ? e.dash : null;     // DXF の線種 (破線など)
+    if (e.type === "LINE" || e.type === "SOLID") line(e.x1, e.y1, e.x2, e.y2, layer, dash);
     else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
       const pts = (e.pts || []).filter(p => ok(p[0], p[1]));
-      for (let i = 0; i + 1 < pts.length; i++) line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer);
-      if ((e.flags & 1) && pts.length > 2) line(pts[pts.length - 1][0], pts[pts.length - 1][1], pts[0][0], pts[0][1], layer);
+      for (let i = 0; i + 1 < pts.length; i++) line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], layer, dash);
+      if ((e.flags & 1) && pts.length > 2) line(pts[pts.length - 1][0], pts[pts.length - 1][1], pts[0][0], pts[0][1], layer, dash);
     } else if (e.type === "CIRCLE") {
-      if (ok(e.x1, e.y1, e.r) && e.r > 0) out.push({ t: "circle", cx: X(e.x1), cy: Y(e.y1), r: r2(e.r), layer });
+      if (ok(e.x1, e.y1, e.r) && e.r > 0) out.push({ t: "circle", cx: X(e.x1), cy: Y(e.y1), r: r2(e.r), layer, ...(dash ? { dash } : {}) });
     } else if (e.type === "ARC") {
       if (ok(e.x1, e.y1, e.r) && e.r > 0)
-        out.push({ t: "arc", cx: X(e.x1), cy: Y(e.y1), r: r2(e.r), a0: e.a1 || 0, a1: isFinite(e.a2) ? e.a2 : 360, layer });
+        out.push({ t: "arc", cx: X(e.x1), cy: Y(e.y1), r: r2(e.r), a0: e.a1 || 0, a1: isFinite(e.a2) ? e.a2 : 360, layer,
+          ...(dash ? { dash } : {}) });
     } else if (e.type === "TEXT" || e.type === "MTEXT") {
       if (!ok(e.x1, e.y1) || !String(e.text || "").trim()) return;
       // 盤図の文字は左寄せだけ — 中央・右寄せは字幅ぶん基準点を戻す (傾きも考える)
@@ -5782,18 +5784,27 @@ function panelFigSimplify(p, tol) {
     返り値 { entities: [fig の代表, ...残り], fig } (まとめる図形が無ければ fig = null) */
 function panelFigCompact(entities, tol) {
   const r2 = v => Math.round(v * 100) / 100;
-  const pl = [], arcs = [], circles = [], rest = [];
-  let cur = null;
+  const pl = [], plD = [], arcs = [], circles = [], rest = [];
+  // 線種 (破線のパターン) ごとの番号。0 = 実線、k = dashes[k-1]
+  const dashes = [], dashKey = new Map();
+  const grp = e => {
+    if (!e.dash || e.dash.length < 2) return 0;
+    const k = e.dash.join(",");
+    if (!dashKey.has(k)) { dashes.push(e.dash.slice()); dashKey.set(k, dashes.length); }
+    return dashKey.get(k);
+  };
+  let cur = null, curG = 0;
   const near = (a, b) => Math.abs(a - b) < 1e-6;
   (entities || []).forEach(e => {
     if (e.add || !(e.t === "line" || e.t === "arc" || e.t === "circle")) { rest.push(e); return; }
+    const g = grp(e);
     if (e.t === "line") {
-      if (cur && near(cur[cur.length - 2], e.x1) && near(cur[cur.length - 1], e.y1)) cur.push(e.x2, e.y2);
-      else { if (cur) pl.push(cur); cur = [e.x1, e.y1, e.x2, e.y2]; }
-    } else if (e.t === "arc") arcs.push([r2(e.cx), r2(e.cy), r2(e.r), e.a0, e.a1]);
-    else circles.push([r2(e.cx), r2(e.cy), r2(e.r)]);
+      if (cur && g === curG && near(cur[cur.length - 2], e.x1) && near(cur[cur.length - 1], e.y1)) cur.push(e.x2, e.y2);
+      else { if (cur) { pl.push(cur); plD.push(curG); } cur = [e.x1, e.y1, e.x2, e.y2]; curG = g; }
+    } else if (e.t === "arc") arcs.push(g ? [r2(e.cx), r2(e.cy), r2(e.r), e.a0, e.a1, g] : [r2(e.cx), r2(e.cy), r2(e.r), e.a0, e.a1]);
+    else circles.push(g ? [r2(e.cx), r2(e.cy), r2(e.r), g] : [r2(e.cx), r2(e.cy), r2(e.r)]);
   });
-  if (cur) pl.push(cur);
+  if (cur) { pl.push(cur); plD.push(curG); }
   if (!pl.length && !arcs.length && !circles.length) return { entities: rest, fig: null };
   let nv = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const add = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
@@ -5805,6 +5816,7 @@ function panelFigCompact(entities, tol) {
   });
   arcs.concat(circles).forEach(a => { add(a[0] - a[2], a[1] - a[2]); add(a[0] + a[2], a[1] + a[2]); nv += 8; });
   const fig = { pl: pls, arcs, circles, nv };
+  if (dashes.length) { fig.dashes = dashes; fig.plD = plD; }
   const rep = { t: "fig", bx: r2(x0), by: r2(y0), bw: r2(x1 - x0), bh: r2(y1 - y0), dx: 0, dy: 0 };
   return { entities: [rep, ...rest], fig };
 }
@@ -5846,22 +5858,29 @@ function panelFigDist(fig, x, y, tol) {
   });
   return best <= tol ? best : Infinity;
 }
-/** fig の SVG path (d)。X/Y は fig 座標 → 紙の座標 */
-function panelFigPathD(fig, X, Y) {
+/** fig の線種の組の数 (0 = 実線だけ) */
+function panelFigGroups(fig) { return fig.dashes ? fig.dashes.length : 0; }
+/** fig の SVG path (d)。X/Y は fig 座標 → 紙の座標。g = 線種の組 (0 = 実線) */
+function panelFigPathD(fig, X, Y, g = 0) {
   const parts = [];
-  fig.pl.forEach(p => {
+  const plD = fig.plD || [];
+  fig.pl.forEach((p, i) => {
+    if ((plD[i] || 0) !== g) return;
     let d = `M${X(p[0])},${Y(p[1])}`;
     for (let i = 2; i < p.length; i += 2) d += `L${X(p[i])},${Y(p[i + 1])}`;
     parts.push(d);
   });
-  fig.arcs.forEach(([cx, cy, r, a0, a1]) => {
+  fig.arcs.forEach(([cx, cy, r, a0, a1, ag]) => {
+    if ((ag || 0) !== g) return;
     const da = ((a1 - a0) % 360 + 360) % 360;
     const P = a2 => [X(cx + r * Math.cos(a2 * Math.PI / 180)), Y(cy + r * Math.sin(a2 * Math.PI / 180))];
     const [x1, y1] = P(a0), [x2, y2] = P(a1);
     parts.push(`M${x1},${y1}A${r},${r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}`);
   });
-  fig.circles.forEach(([cx, cy, r]) =>
-    parts.push(`M${X(cx) - r},${Y(cy)}a${r},${r} 0 1 0 ${2 * r},0a${r},${r} 0 1 0 ${-2 * r},0`));
+  fig.circles.forEach(([cx, cy, r, cg]) => {
+    if ((cg || 0) !== g) return;
+    parts.push(`M${X(cx) - r},${Y(cy)}a${r},${r} 0 1 0 ${2 * r},0a${r},${r} 0 1 0 ${-2 * r},0`);
+  });
   return parts.join("");
 }
 /** V230 で 1 本ずつの entity として取り込んだ DXF の盤図を fig へ移す */
