@@ -1489,6 +1489,17 @@ function parseDXF(text) {
   return merged;
 }
 
+/** 円弧 (中心・半径・反時計回りに a0→a1 度) の外接箱を決める点: 両端と、
+    範囲に入る 0/90/180/270° の点 */
+function arcExtentPts(cx, cy, r, a0, a1) {
+  const P = a => [cx + r * Math.cos(a * Math.PI / 180), cy + r * Math.sin(a * Math.PI / 180)];
+  const s = ((a0 % 360) + 360) % 360;
+  let sw = ((a1 - a0) % 360 + 360) % 360;
+  if (sw === 0) sw = 360;
+  const out = [P(s), P(s + sw)];
+  for (let q = 0; q < 720; q += 90) if (q > s && q < s + sw) out.push(P(q));
+  return out;
+}
 /** 取り込んだエンティティ群の外接矩形 (DXF 座標系) */
 function dxfEntsBounds(ents) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -1496,7 +1507,9 @@ function dxfEntsBounds(ents) {
   ents.forEach(e => {
     if (e.type === "INSERT") return;                    // 定義が無いブロックは寸法に含めない
     if (e.type === "LINE") { add(e.x1, e.y1); add(e.x2, e.y2); }
-    else if (e.type === "CIRCLE" || e.type === "ARC") { add(e.x1 - e.r, e.y1 - e.r); add(e.x1 + e.r, e.y1 + e.r); }
+    else if (e.type === "CIRCLE") { add(e.x1 - e.r, e.y1 - e.r); add(e.x1 + e.r, e.y1 + e.r); }
+    // 円弧は実際に描く範囲だけ (円全体の箱にすると、半径の大きい浅い円弧で寸法が何倍にもふくらむ)
+    else if (e.type === "ARC") arcExtentPts(e.x1, e.y1, e.r, e.a1 || 0, isFinite(e.a2) ? e.a2 : 360).forEach(q => add(q[0], q[1]));
     else if (e.type === "TEXT" || e.type === "MTEXT") {
       // 寄せによって文字が伸びる向きが変わる (中央寄せなら左右へ半分ずつ)
       const w0 = textWidthMM(e.text || "", e.size || 3.5);

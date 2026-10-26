@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 232;
+const APP_VERSION = 233;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5814,7 +5814,8 @@ function panelFigCompact(entities, tol) {
     nv += q.length / 2;
     return q;
   });
-  arcs.concat(circles).forEach(a => { add(a[0] - a[2], a[1] - a[2]); add(a[0] + a[2], a[1] + a[2]); nv += 8; });
+  circles.forEach(a => { add(a[0] - a[2], a[1] - a[2]); add(a[0] + a[2], a[1] + a[2]); nv += 8; });
+  arcs.forEach(a => { arcExtentPts(a[0], a[1], a[2], a[3], a[4]).forEach(q => add(q[0], q[1])); nv += 8; });
   const fig = { pl: pls, arcs, circles, nv };
   if (dashes.length) { fig.dashes = dashes; fig.plD = plD; }
   const rep = { t: "fig", bx: r2(x0), by: r2(y0), bw: r2(x1 - x0), bh: r2(y1 - y0), dx: 0, dy: 0 };

@@ -16,6 +16,8 @@
               「閉じ」が消えない
    ・ellipse : 楕円 (ELLIPSE) を折れ線で読む。Z=-1 は逆回り
    ・misc    : MTEXT の向き (11/21) を角度にする。ポリフェイス (3D 面) は読まない
+   ・arcBox  : 円弧の外接箱は実際に描く範囲 (0° をまたぐ円弧も)。半径の大きい
+              浅い円弧で図の寸法がふくらまない (盤図の縮尺が小さくなりすぎない)
    ・ltype   : 線種 (かくれ線などの破線) を読む。BYLAYER = 画層の線種、BYBLOCK =
               差し込んだブロックの線種、$LTSCALE と図形ごとの尺度 (48) を掛ける。
               すき間から始まるパターンは線から始まるように回す
@@ -181,6 +183,15 @@ const R = await p.evaluate(() => {
     ltDef: /\n\s*LTYPE\s*\n\s*2\s*\nDASH_12-700_6-350\n/.test(dxf), ltRef: /\n\s*6\s*\nDASH_12-700_6-350\n/.test(dxf),
     machSolid: !/DASH_/.test(mach),
     split: joined.length === 2 && joined[0].g !== joined[1].g };
+  // 円弧の外接箱は実際の範囲だけ (円全体ではない)
+  const B1 = dxfEntsBounds([{ type: "ARC", x1: 0, y1: 0, r: 100, a1: 350, a2: 10 }]);
+  const B2 = dxfEntsBounds([{ type: "ARC", x1: 0, y1: 0, r: 720, a1: 80, a2: 100 }]);
+  const pgA = panelInsertDxfPage([{ type: "ARC", x1: 0, y1: 0, r: 720, a1: 80, a2: 100, layer: "0" },
+    { type: "LINE", x1: -125, y1: 709, x2: 125, y2: 709, layer: "0" }], "浅い円弧.dxf").page;
+  const r3 = v => Math.round(v * 100) / 100;
+  out.arcBox = { wrap: [B1.x0, B1.x1, B1.y0, B1.y1].map(r3).join(","), shallow: [B2.w, B2.h].map(r3).join(","),
+    ext: [pgA.panel.extent.w, pgA.panel.extent.h].map(r3).join(","), fig: (() => { const fe = panelDataOf(pgA).entities[0];
+      return [fe.bw, fe.bh].map(v => Math.round(v)).join(","); })() };
   const up = E.find(e => e.text === "UP-TXT");
   out.misc = { mtextAng: up && Math.round(up.angle || 0), polyface: !E.some(e => e.pts && e.pts.some(q => near(q[1], 990))) };
   return out;
@@ -199,6 +210,8 @@ const checks = {
   closed: R.closed === 1,
   ellipse: JSON.stringify(R.ellipse.up) === "[0,5]" && JSON.stringify(R.ellipse.down) === "[-5,0]",
   misc: R.misc.mtextAng === 90 && R.misc.polyface === true,
+  arcBox: R.arcBox.wrap === "98.48,100,-17.36,17.36" && R.arcBox.shallow === "250.05,10.94" &&
+    R.arcBox.ext === "250.05,11" && R.arcBox.fig === "250,11",
   ltype: R.ltype.bylayer === "12.7,6.35" && R.ltype.scaled === "6.35,3.175" && R.ltype.gapFirst === "8,4" &&
     R.ltype.solid === "solid" && R.ltype.byblock === "12.7,6.35" && R.ltype.byblockSolid === "solid",
   ltOut: R.ltOut.svgDash === true && R.ltOut.ltDef === true && R.ltOut.ltRef === true && R.ltOut.machSolid === true &&
