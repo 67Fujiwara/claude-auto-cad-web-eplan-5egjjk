@@ -66,6 +66,9 @@
   const selectedRet = new Set();   // 返却対象として選択中の tool_id
   const toolsById = {};            // 最新の一覧（id → tool）
 
+  const INITIAL = <?!= toJson_(data.tools || null) ?>;
+  const INITIAL_TODAY = <?!= toJson_(data.today || '') ?>;
+
   async function loadList() {
     try {
       const r = await call('apiListTools', deviceId());
@@ -74,6 +77,16 @@
     } catch (e) {
       showMsg('msg', e.message || String(e), 'err');
     }
+  }
+  // 初回表示: サーバーへ問い合わせず、埋め込みデータから描く。
+  // 「返却できるか」は端末IDのハッシュを手元で比べて決める（返却時はサーバーが改めて検証する）
+  async function firstRender() {
+    if (!INITIAL) return loadList();
+    const key = await deviceKey();
+    if (key === null) return loadList();
+    INITIAL.forEach(t => { t.canReturn = t.inUse && (!t.deviceKey || t.deviceKey === key); });
+    TODAY = INITIAL_TODAY;
+    renderList(INITIAL);
   }
 
   function renderList(tools) {
@@ -225,6 +238,7 @@
     if (retName) storeSet('local', 'tr_name', retName);
     try {
       const r = await call('apiReturnMany', ids, deviceId(), retName);
+      borrowedRemove(r.ok.map(t => t.id));
       let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
       showMsg('msg', text, r.failed.length ? 'err' : 'ok');
@@ -249,6 +263,7 @@
     storeSet('local', 'tr_name', name);
     try {
       const r = await call('apiRequestMany', Array.from(selected), name, due, comment, deviceId());
+      borrowedAdd(r.ok.map(t => t.id));
       const okNames = r.ok.map(t => t.name).join('、');
       let text = r.ok.length ? okNames + ' を ' + fmtMd(due) + ' まで借りました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '借りられなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
@@ -308,7 +323,7 @@
   }
 
   document.getElementById('reload').addEventListener('click', () => { showMsg('msg', ''); loadList(); });
-  loadList();
+  firstRender();
 </script>
 </body>
 </html>

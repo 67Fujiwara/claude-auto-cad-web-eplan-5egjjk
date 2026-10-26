@@ -147,9 +147,13 @@
   }
 
   async function loadMine() {
+    // この端末で借りた控えが無ければ、サーバーに聞かずに申請フォームをすぐ出す（1 往復を省く）
+    if (!borrowedGet().length) { mineTools = []; document.getElementById('loading').hidden = true; showScanned(); return; }
     try {
       const r = await call('apiMyTools', deviceId());
       mineTools = r.tools;
+      // 控えとサーバーの実態を合わせる（他端末や管理者が返却した分を落とす）
+      storeSet('local', 'tr_borrowed', JSON.stringify(mineTools.map(t => t.id)));
     } catch (e) {
       mineTools = [];
     }
@@ -195,6 +199,7 @@
     btn.disabled = true;
     try {
       const r = await call('apiReturnMany', ids, deviceId());
+      borrowedRemove(r.ok.map(t => t.id));
       let text = r.ok.length ? r.ok.map(t => t.name).join('、') + ' を返却しました。' + returnToSummary(r.ok) : '';
       if (r.failed.length) text += (text ? '。' : '') + '返却できなかった工具: ' + r.failed.map(f => f.name + '（' + f.message + '）').join(' / ');
       showMsg('msg', text, r.failed.length ? 'err' : 'ok');
@@ -232,6 +237,7 @@
       try {
         const r = await call('apiReturnMany', [TOOL_ID], deviceId(), name);
         if (r.failed.length) throw new Error(r.failed[0].message);
+        borrowedRemove([TOOL_ID]);
         form.hidden = true;
         document.getElementById('retDoneText').textContent = r.ok[0].name + ' を返却しました。' + returnToSummary(r.ok);
         document.getElementById('retDone').hidden = false;
@@ -259,6 +265,7 @@
       storeSet('local', 'tr_name', nameEl.value.trim());
       try {
         const t = await call('apiRequest', TOOL_ID, nameEl.value, '', dueEl.value, commentEl.value, deviceId());
+        borrowedAdd([t.id]);
         form.hidden = true;
         document.getElementById('doneText').textContent = t.name + ' を ' + fmtMd(t.due) + ' まで借りました。返却時は ' + (t.returnTo || '管理者') + ' に返却してください。';
         document.getElementById('done').hidden = false;

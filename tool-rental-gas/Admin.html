@@ -292,12 +292,18 @@
     }
   }
 
+  // QR の描画は重いので、画面に入ったカードから順に描く（工具が多くても最初の表示が止まらない）
+  const qrObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(entries => {
+    entries.forEach(en => { if (en.isIntersecting) { drawOne(en.target); qrObserver.unobserve(en.target); } });
+  }, { rootMargin: '200px' }) : null;
+  function drawOne(el) {
+    if (typeof QRCode === 'undefined' || el.dataset.drawn) return; // CDN が読めない環境は URL 表示のみ
+    el.dataset.drawn = '1';
+    el.innerHTML = '';
+    try { new QRCode(el, { text: el.dataset.url, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.M }); } catch (e) {}
+  }
   function drawQr(root) {
-    if (typeof QRCode === 'undefined') return; // CDN が読めない環境は URL 表示のみ
-    root.querySelectorAll('.qr').forEach(el => {
-      el.innerHTML = '';
-      try { new QRCode(el, { text: el.dataset.url, width: 96, height: 96, correctLevel: QRCode.CorrectLevel.M }); } catch (e) {}
-    });
+    root.querySelectorAll('.qr').forEach(el => { if (qrObserver) qrObserver.observe(el); else drawOne(el); });
   }
 
   document.getElementById('tools').addEventListener('click', async function (ev) {

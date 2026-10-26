@@ -166,6 +166,17 @@
   function storeGet(kind, key) { try { return window[kind + 'Storage'].getItem(key); } catch (e) { return null; } }
   function storeSet(kind, key, val) { try { window[kind + 'Storage'].setItem(key, val); } catch (e) {} }
   function storeDel(kind, key) { try { window[kind + 'Storage'].removeItem(key); } catch (e) {} }
+  // 端末IDの照合用ハッシュ（SHA-256 の先頭 12 桁）。サーバーの deviceKey_() と同じ計算。使えない環境は null
+  async function deviceKey() {
+    try {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(deviceId()));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+    } catch (e) { return null; }
+  }
+  // この端末で借りている工具IDの控え（サーバーへの問い合わせを省くための目安。無くても動く）
+  function borrowedGet() { try { return JSON.parse(storeGet('local', 'tr_borrowed') || '[]'); } catch (e) { return []; } }
+  function borrowedAdd(ids) { const s = new Set(borrowedGet()); ids.forEach(id => s.add(id)); storeSet('local', 'tr_borrowed', JSON.stringify(Array.from(s))); }
+  function borrowedRemove(ids) { const s = new Set(borrowedGet()); ids.forEach(id => s.delete(id)); storeSet('local', 'tr_borrowed', JSON.stringify(Array.from(s))); }
   // 端末の擬似ID。初回に乱数で作って localStorage に保存し、以後の申請・返却に付ける。
   // localStorage が使えない環境ではページを開くたびに変わる（その場合の返却は管理画面から）
   let __deviceId = null;

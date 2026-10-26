@@ -185,7 +185,8 @@ function doGet(e) {
         defaultDue: today, // 返却日の初期値は借りた日（当日返却が基本）
       }, '貸出申請');
     }
-    return render_('List', {}, '工具一覧');
+    // 初回表示用のデータを埋め込み、画面側の 1 往復を省く。端末IDの照合は画面側でハッシュ比較する
+    return render_('List', { today: today_(), tools: readTools_().map(t => publicTool_(t)) }, '工具一覧');
   } catch (err) {
     return render_('Result', { ok: false, title: 'エラー', message: err.message }, 'エラー');
   }
@@ -276,15 +277,23 @@ function apiReturnMany(toolIds, deviceId, userName) {
   if (!ids.length) throw new Error('工具を選択してください');
   const ok = [], failed = [];
   let user = { name: '', email: '' };
-  ids.forEach(id => {
+  withLock_(() => {
+    beginBatch_();
     try {
-      const before = findTool_(id);
-      const t = returnTool_(id, '申請画面', { deviceId: deviceId, userName: userName, skipNotify: true });
-      if (before) user = { name: before.user, email: before.email };
-      ok.push(t);
-    } catch (err) {
-      const t = findTool_(id);
-      failed.push({ id: id, name: t ? t.name : id, message: err.message });
+      ids.forEach(id => {
+        try {
+          const before = findTool_(id);
+          const who = before ? { name: before.user, email: before.email } : null; // 返却で消える前に控える
+          const t = returnTool_(id, '申請画面', { deviceId: deviceId, userName: userName, skipNotify: true, noLock: true });
+          if (who) user = who;
+          ok.push(t);
+        } catch (err) {
+          const t = findTool_(id);
+          failed.push({ id: id, name: t ? t.name : id, message: err.message });
+        }
+      });
+    } finally {
+      flushBatch_();
     }
   });
   groupByBox_(ok).forEach(grp => {
@@ -359,6 +368,7 @@ function adminAddTool(pin, name, boxId) {
   return withLock_(() => {
     const id = nextToolId_(boxId);
     getSheet_(SHEET_TOOLS).appendRow([id, name, STATUS_FREE, '', '', '', '', '', boxId]);
+    delete CACHE_.tools; delete CACHE_.toolIndex;
     return fullTool_({ id: id, name: name, status: STATUS_FREE, user: '', email: '', due: '', comment: '', device: '', box: boxId });
   });
 }
@@ -382,6 +392,7 @@ function adminUpdateTool(pin, toolId, name, boxId) {
       oldId = t.id;
       t.box = boxId;
       t.id = nextToolId_(boxId);
+      delete CACHE_.toolIndex; // ID が変わったので索引を作り直す
       renameToolIdsInLog_({ [oldId]: t.id });
     }
     writeTool_(t);
@@ -448,6 +459,7 @@ function adminDeleteTool(pin, toolId) {
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     if (t.status === STATUS_USED) throw new Error('使用中の工具は削除できません（先に返却してください）');
     getSheet_(SHEET_TOOLS).deleteRow(t.row);
+    delete CACHE_.tools; delete CACHE_.toolIndex;
     return true;
   });
 }
@@ -513,12 +525,19 @@ function apiRequestMany(toolIds, userName, due, comment, deviceId) {
   if (dueYmd < today_()) throw new Error('返却日は今日以降を選んでください');
 
   const ok = [], failed = [];
-  ids.forEach(id => {
+  withLock_(() => {
+    beginBatch_();
     try {
-      ok.push(rentTool_(id, userName, '', dueYmd, '一覧画面', comment, deviceId, { skipNotify: true }));
-    } catch (err) {
-      const t = findTool_(id);
-      failed.push({ id: id, name: t ? t.name : id, message: err.message });
+      ids.forEach(id => {
+        try {
+          ok.push(rentTool_(id, userName, '', dueYmd, '一覧画面', comment, deviceId, { skipNotify: true, noLock: true }));
+        } catch (err) {
+          const t = findTool_(id);
+          failed.push({ id: id, name: t ? t.name : id, message: err.message });
+        }
+      });
+    } finally {
+      flushBatch_();
     }
   });
   // 工具箱ごとに 1 通ずつ通知（管理者が異なるため）
@@ -563,7 +582,7 @@ function rentTool_(toolId, userName, userEmail, due, note, comment, deviceId, op
   const today = today_();
   if (dueYmd < today) throw new Error('返却日は今日以降を選んでください');
 
-  const result = withLock_(() => {
+  const result = maybeLock_(opt, () => {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     if (t.status === STATUS_USED) {
@@ -608,7 +627,7 @@ function returnTool_(toolId, note, opt) {
   const userName = String(opt.userName || '').trim();
   let ev = null;
   let byName = false;
-  const result = withLock_(() => {
+  const result = maybeLock_(opt, () => {
     const t = findTool_(toolId);
     if (!t) throw new Error('工具が見つかりません: ' + toolId);
     if (t.status !== STATUS_USED) throw new Error(t.name + ' はすでに返却済みです');
@@ -687,6 +706,11 @@ function extendTool_(toolId, opt, note) {
   return publicTool_(result);
 }
 
+/** opt.noLock のときはロックせずに実行（まとめ処理の内側用。外側で withLock_ 済み） */
+function maybeLock_(opt, fn) {
+  return (opt && opt.noLock) ? fn() : withLock_(fn);
+}
+
 /** 同時アクセスによる二重貸出を防ぐ */
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
@@ -762,13 +786,21 @@ function buildLinks_(toolId) {
 // ---------------------------------------------------------------------------
 
 function getSheet_(name) {
+  CACHE_.sheets = CACHE_.sheets || {};
+  if (CACHE_.sheets[name]) return CACHE_.sheets[name];
   const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
   if (!sh) throw new Error('シート「' + name + '」がありません。setup() を実行してください');
+  CACHE_.sheets[name] = sh;
   return sh;
 }
 
-/** 工具シートを全件読む。{row, id, name, status, user, email, due} の配列 */
+/**
+ * 工具シートを全件読む。{row, id, name, status, user, email, due, comment, device, box} の配列。
+ * 1 回の実行では 1 度だけ読み、以後は同じ配列を返す（writeTool_ は同じオブジェクトを書き戻すので整合する）。
+ * 行の追加・削除をしたら cacheClear_() で捨てる。
+ */
 function readTools_() {
+  if (CACHE_.tools) return CACHE_.tools;
   const values = getSheet_(SHEET_TOOLS).getDataRange().getValues();
   const out = [];
   for (let i = 1; i < values.length; i++) {
@@ -788,18 +820,51 @@ function readTools_() {
       box: String(r[8] || '').trim(),
     });
   }
+  CACHE_.tools = out;
   return out;
 }
 
 function findTool_(toolId) {
   toolId = String(toolId || '').trim();
   if (!toolId) return null;
-  return readTools_().find(t => t.id === toolId) || null;
+  const tools = readTools_();
+  if (!CACHE_.toolIndex) { CACHE_.toolIndex = {}; tools.forEach(t => { CACHE_.toolIndex[t.id] = t; }); }
+  return CACHE_.toolIndex[toolId] || null;
+}
+
+function toolRow_(t) {
+  return [t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '', t.device || '', t.box || ''];
 }
 
 function writeTool_(t) {
-  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 9)
-    .setValues([[t.id, t.name, t.status, t.user, t.email, t.due, t.comment || '', t.device || '', t.box || '']]);
+  if (CACHE_.batch) { CACHE_.batch.toolsDirty = true; return; } // まとめ処理中は最後に 1 回で書く
+  getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 9).setValues([toolRow_(t)]);
+}
+
+/**
+ * まとめ処理用: 開始〜終了の間の工具の書き込みとログ追記をためておき、終了時にそれぞれ 1 回の書き込みにまとめる。
+ * （Apps Script はシートへの呼び出し 1 回ごとに時間がかかるため、5 点なら 10 回 → 2 回になる）
+ */
+function beginBatch_() {
+  CACHE_.batch = { toolsDirty: false, logRows: [] };
+}
+function flushBatch_() {
+  const b = CACHE_.batch;
+  if (!b) return;
+  delete CACHE_.batch;
+  if (b.toolsDirty) {
+    const tools = readTools_();
+    const contiguous = tools.length && tools.every((t, i) => t.row === i + 2);
+    if (contiguous) {
+      getSheet_(SHEET_TOOLS).getRange(2, 1, tools.length, 9).setValues(tools.map(toolRow_));
+    } else {
+      tools.forEach(t => getSheet_(SHEET_TOOLS).getRange(t.row, 1, 1, 9).setValues([toolRow_(t)]));
+    }
+  }
+  if (b.logRows.length) {
+    const sh = getSheet_(SHEET_LOG);
+    sh.getRange(sh.getLastRow() + 1, 1, b.logRows.length, LOG_HEADERS.length).setValues(b.logRows);
+  }
 }
 
 // ---- 工具箱 ----
@@ -845,7 +910,9 @@ function ensureBoxSheet_() {
 function findBox_(boxId) {
   boxId = String(boxId || '').trim();
   if (!boxId) return null;
-  return readBoxes_().find(b => b.id === boxId) || null;
+  const boxes = readBoxes_();
+  if (!CACHE_.boxIndex) { CACHE_.boxIndex = {}; boxes.forEach(b => { CACHE_.boxIndex[b.id] = b; }); }
+  return CACHE_.boxIndex[boxId] || null;
 }
 
 function writeBox_(b) {
@@ -959,6 +1026,7 @@ function migrateToolIds() {
         writeTool_(t);
       });
     });
+    delete CACHE_.toolIndex;
     if (Object.keys(mapping).length) renameToolIdsInLog_(mapping);
   });
   const n = Object.keys(mapping).length;
@@ -968,9 +1036,9 @@ function migrateToolIds() {
 
 function appendLog_(t, op, opt) {
   opt = opt || {};
-  getSheet_(SHEET_LOG).appendRow([
-    new Date(), t.id, t.name, t.user, t.email, opt.start || '', opt.due || '', op, opt.note || '', opt.device !== undefined ? opt.device : (t.device || ''),
-  ]);
+  const row = [new Date(), t.id, t.name, t.user, t.email, opt.start || '', opt.due || '', op, opt.note || '', opt.device !== undefined ? opt.device : (t.device || '')];
+  if (CACHE_.batch) { CACHE_.batch.logRows.push(row); return; }
+  getSheet_(SHEET_LOG).appendRow(row);
 }
 
 /** 直近 n 件のログ（新しい順） */
@@ -1057,6 +1125,8 @@ function publicTool_(t, deviceId) {
     comment: inUse ? (t.comment || '') : '',
     // 端末IDが未記録（管理者代理・旧データ）なら誰でも返却可。記録があれば一致した端末のみ
     canReturn: inUse && (!t.device || t.device === dev),
+    // 端末IDの照合用ハッシュ（一覧ページの初回表示で画面側が自分の端末と比べる。元の端末IDは復元できない）
+    deviceKey: inUse && t.device ? deviceKey_(t.device) : '',
     // 超過日数（超過していなければ 0）
     overdueDays: (inUse && !!t.due && t.due < today) ? diffDays_(today, t.due) : 0,
     // 工具箱と返却先（管理者名。工具箱未設定なら空）
@@ -1079,7 +1149,8 @@ function fullTool_(t) {
 // ---------------------------------------------------------------------------
 
 function today_() {
-  return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  if (!CACHE_.today) CACHE_.today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  return CACHE_.today;
 }
 
 /** 'yyyy-MM-dd' / 'yyyy/M/d' / Date を正規化して 'yyyy-MM-dd' にする。無効なら null */
@@ -1113,6 +1184,12 @@ function fmtMd_(ymd) {
   const n = normYmd_(ymd);
   if (!n) return String(ymd || '');
   return Utilities.formatDate(new Date(ymdToUtc_(n)), 'UTC', 'M/d');
+}
+
+/** 端末IDの照合用ハッシュ（SHA-256 の先頭 12 桁）。画面側の deviceKey() と同じ計算 */
+function deviceKey_(dev) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(dev), Utilities.Charset.UTF_8);
+  return bytes.map(b => ('0' + (b & 0xff).toString(16)).slice(-2)).join('').slice(0, 12);
 }
 
 /** 端末IDを正規化（英数字のみ・最大 64 文字）。不正な値は空にする */
