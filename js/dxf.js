@@ -261,6 +261,26 @@ function dxfSymPrimitives(sym) {
 function dxfEntity(pairs) {
   return pairs.map(([c, v]) => `${c}\n${v}`).join("\n") + "\n";
 }
+/** DXF 取り込みの図 (fig) → LINE / POLYLINE / ARC / CIRCLE (R12 の書式)。
+    X/Y は書き出す座標の文字列化 */
+function panelFigDXF(fig, X, Y, layer) {
+  const out = [];
+  fig.pl.forEach(p => {
+    if (p.length === 4) {
+      out.push(dxfEntity([[0, "LINE"], [8, layer], [10, X(p[0])], [20, Y(p[1])], [11, X(p[2])], [21, Y(p[3])]]));
+      return;
+    }
+    const pairs = [[0, "POLYLINE"], [8, layer], [66, 1], [10, "0.0"], [20, "0.0"], [30, "0.0"], [70, 0]];
+    for (let i = 0; i < p.length; i += 2) pairs.push([0, "VERTEX"], [8, layer], [10, X(p[i])], [20, Y(p[i + 1])], [30, "0.0"]);
+    pairs.push([0, "SEQEND"], [8, layer]);
+    out.push(dxfEntity(pairs));
+  });
+  fig.arcs.forEach(([cx, cy, r, a0, a1]) => out.push(dxfEntity([[0, "ARC"], [8, layer],
+    [10, X(cx)], [20, Y(cy)], [40, (+r).toFixed(3)], [50, (+a0).toFixed(3)], [51, (+a1).toFixed(3)]])));
+  fig.circles.forEach(([cx, cy, r]) => out.push(dxfEntity([[0, "CIRCLE"], [8, layer],
+    [10, X(cx)], [20, Y(cy)], [40, (+r).toFixed(3)]])));
+  return out.join("");
+}
 function dxfY(y) { return (SHEET.h - y).toFixed(3); }
 function dxfLine(x1, y1, x2, y2, layer, ltype, lw) {
   const pairs = [[0, "LINE"], [8, layer]];
@@ -370,6 +390,10 @@ function panelToMachiningDXF(page) {
   let ents = "";
   (pd.entities || []).forEach(e => {
     if (e.add || e.t === "text") return;      // 注記・文字は加工データに入れない
+    if (e.t === "fig") {
+      if (pd.fig) ents += panelFigDXF(pd.fig, v => n3(v + e.dx), v => n3(v + e.dy), "0");
+      return;
+    }
     if (e.t === "line") {
       ents += dxfEntity([[0, "LINE"], [8, "0"],
         [10, n3(e.x1)], [20, n3(e.y1)], [11, n3(e.x2)], [21, n3(e.y2)]]);
@@ -690,6 +714,10 @@ function pageToDXF(page) {
     (pd.entities || []).forEach((e, ei) => {
       const col = aciOf(e) || [];
       const lwp = e.w ? [[370, Math.round(e.w * 100)]] : [];   // 書き足した図形の太さ
+      if (e.t === "fig") {
+        if (pd.fig) ents += panelFigDXF(pd.fig, v => X(v + e.dx), v => Yd(v + e.dy), "PANEL");
+        return;
+      }
       if (e.t === "line") {
         ents += dxfEntity([[0, "LINE"], [8, "PANEL"], ...col, ...lwp,
           [10, X(e.x1)], [20, Yd(e.y1)], [11, X(e.x2)], [21, Yd(e.y2)]]);

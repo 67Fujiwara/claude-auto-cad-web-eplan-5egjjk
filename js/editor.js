@@ -78,8 +78,9 @@ function renderAll() {
   Editor.layers.sheet.innerHTML = sheetSVG(page) + zonesSVG(page) + tablesSVG(page) + (isPanel ? "" : kindSVG(page));
   /* 盤図は数万要素になるので専用の層に置き、中身が変わったときだけ書き直す
      (panelSVG は同じ描画条件なら同じ文字列を返す — パン・ズームで作り直さない) */
-  const pnl = isPanel ? panelSVG(page) : "";
+  const pnl = isPanel ? panelSVG(page, { screen: true }) : "";
   if (pnl !== Editor.panelHTML) { Editor.layers.panel.innerHTML = pnl; Editor.panelHTML = pnl; }
+  panelRasterSync(isPanel ? page : null);
   Editor.layers.wires.innerHTML = wiresSVG(page);
   Editor.layers.devices.innerHTML = devicesSVG(page);
   Editor.layers.texts.innerHTML = textsSVG(page);
@@ -1172,15 +1173,125 @@ function partsSVG(page) {
    円弧は a0→a1 反時計回り (見た目も反時計)。文字は左下基準・高さ h mm */
 const _panelSvgCache = new Map();
 const PANEL_BATCH_MIN = 2000;     // これより図形の多い盤図は線をまとめて描く
-function panelSVG(page) {
+/** 画面では画像で描くほど頂点の多い図 (fig) を持っているか */
+function panelFigHeavy(pd) {
+  return !!(pd && pd.fig && pd.fig.nv > PANEL_FIG_RASTER && (pd.entities || []).some(e => e.t === "fig"));
+}
+/* 重い図 (fig) の画面表示: 見えている範囲 (+ 周りの余白) だけを、今の拡大率で
+   canvas に描いて <image> として置く。パン・ズーム中は前の画像がそのまま
+   一緒に動き (軽い)、止まってから少し待って描き直す。印刷には使わない */
+function panelRasterSync(page) {
+  const img = Editor.panelImg;
+  if (!img) return;
+  const hide = () => {
+    clearTimeout(Editor.pnRasterTimer);
+    Editor.pnRasterWant = null;
+    if (img.style.display !== "none") img.style.display = "none";
+  };
+  const pd = page && page.kind === "panel" ? panelDataOf(page) : null;
+  if (!panelFigHeavy(pd)) { Editor.pnRaster = null; hide(); return; }
+  const fe = pd.entities.find(e => e.t === "fig");
+  const pn = page.panel;
+  const { ox, oy } = panelOrigin(page);
+  // 図を動かすと rev が上がる (panelEditData) ので、位置の変化も鍵に含まれる
+  const key = `${page.id}|${pn.dataKey}|r${pd.rev || 0}|${page.scale}|${page.paper}/${page.orient}`;
+  const X = v => ox + v + fe.dx, Y = v => oy + (pn.extent.h - v - fe.dy);
+  const fx0 = X(fe.bx), fx1 = X(fe.bx + fe.bw), fy0 = Y(fe.by + fe.bh), fy1 = Y(fe.by);
+  const r = Editor.svg.getBoundingClientRect();
+  const { tx, ty, s } = Editor.view;
+  const vx0 = -tx / s, vy0 = -ty / s, vw = Math.max(1, r.width) / s, vh = Math.max(1, r.height) / s;
+  const vis = { x0: Math.max(fx0, vx0), y0: Math.max(fy0, vy0), x1: Math.min(fx1, vx0 + vw), y1: Math.min(fy1, vy0 + vh) };
+  const cur = Editor.pnRaster;
+  if (cur && cur.key.split("|")[0] !== page.id) { Editor.pnRaster = null; img.style.display = "none"; }
+  const dpr = window.devicePixelRatio || 1;
+  const want = s * dpr;                            // 欲しい密度 (px / 紙の mm)
+  if (vis.x1 <= vis.x0 || vis.y1 <= vis.y0) { clearTimeout(Editor.pnRasterTimer); Editor.pnRasterWant = null; return; }
+  // 描き直すならこの範囲: 見えている所の周り 40% 増し (図の外は描かない)
+  const mx = vw * 0.4, my = vh * 0.4;
+  const R = { x0: Math.max(fx0, vx0 - mx), y0: Math.max(fy0, vy0 - my),
+    x1: Math.min(fx1, vx0 + vw + mx), y1: Math.min(fy1, vy0 + vh + my) };
+  const area = Math.max(1e-6, (R.x1 - R.x0) * (R.y1 - R.y0));
+  const densCap = Math.min(Math.sqrt(16e6 / area), 8192 / (R.x1 - R.x0), 8192 / (R.y1 - R.y0));
+  const dens = Math.min(want, densCap);
+  // 今の画像が見えている所を覆い、細かさも足りていれば描き直さない
+  const c = Editor.pnRaster;
+  if (c && c.key === key && c.x0 <= vis.x0 + 1e-6 && c.y0 <= vis.y0 + 1e-6 &&
+      c.x1 >= vis.x1 - 1e-6 && c.y1 >= vis.y1 - 1e-6 && c.dens >= dens * 0.75 && c.dens <= want * 2.5) {
+    clearTimeout(Editor.pnRasterTimer); Editor.pnRasterWant = null;
+    if (img.style.display === "none") img.style.display = "";
+    return;
+  }
+  const job = { key, ...R, dens };
+  const pend = Editor.pnRasterWant;
+  if (pend && pend.key === key && pend.x0 === job.x0 && pend.y0 === job.y0 && pend.dens === job.dens) return;
+  Editor.pnRasterWant = job;
+  clearTimeout(Editor.pnRasterTimer);
+  // 最初の 1 枚はすぐ、以後はパン・ズームが止まってから描く
+  Editor.pnRasterTimer = setTimeout(() => panelRasterDraw(page, job, X, Y), cur && cur.key === key ? 140 : 0);
+}
+function panelRasterDraw(page, job, X, Y) {
+  if (Editor.pnRasterWant !== job) return;
+  const pd = panelDataOf(page);
+  const fig = pd && pd.fig;
+  if (!fig) return;
+  const cw = Math.max(1, Math.ceil((job.x1 - job.x0) * job.dens));
+  const ch = Math.max(1, Math.ceil((job.y1 - job.y0) * job.dens));
+  const cv = document.createElement("canvas");
+  cv.width = cw; cv.height = ch;
+  const ctx = cv.getContext("2d");
+  const k = job.dens;
+  ctx.setTransform(k, 0, 0, k, -job.x0 * k, -job.y0 * k);
+  ctx.lineWidth = Math.max(LINE_W.thin * sheetScale(), 0.8 / k);   // 引いて見ても線が消えない
+  ctx.strokeStyle = INK; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  // 描く範囲 (fig 座標) に掛からない線は飛ばす
+  const fe = pd.entities.find(e => e.t === "fig");
+  const pn = page.panel;
+  const { ox, oy } = panelOrigin(page);
+  const ux0 = job.x0 - ox - fe.dx, ux1 = job.x1 - ox - fe.dx;
+  const uy0 = pn.extent.h - (job.y1 - oy) - fe.dy, uy1 = pn.extent.h - (job.y0 - oy) - fe.dy;
+  const bx = panelFigBoxes(fig);
+  let cnt = 0;
+  ctx.beginPath();
+  fig.pl.forEach((p, i) => {
+    if (bx[4 * i + 2] < ux0 || bx[4 * i] > ux1 || bx[4 * i + 3] < uy0 || bx[4 * i + 1] > uy1) return;
+    ctx.moveTo(X(p[0]), Y(p[1]));
+    for (let j = 2; j < p.length; j += 2) ctx.lineTo(X(p[j]), Y(p[j + 1]));
+    cnt += p.length;
+    if (cnt > 200000) { ctx.stroke(); ctx.beginPath(); cnt = 0; }
+  });
+  fig.arcs.forEach(([cx, cy, r, a0, a1]) => {
+    const t0 = a0 * Math.PI / 180;
+    ctx.moveTo(X(cx + r * Math.cos(t0)), Y(cy + r * Math.sin(t0)));
+    ctx.arc(X(cx), Y(cy), r, -t0, -a1 * Math.PI / 180, true);
+  });
+  fig.circles.forEach(([cx, cy, r]) => { ctx.moveTo(X(cx) + r, Y(cy)); ctx.arc(X(cx), Y(cy), r, 0, Math.PI * 2); });
+  ctx.stroke();
+  cv.toBlob(blob => {
+    if (Editor.pnRasterWant !== job || !blob) return;
+    const img = Editor.panelImg;
+    const url = URL.createObjectURL(blob);
+    img.setAttribute("href", url);
+    img.setAttribute("x", job.x0); img.setAttribute("y", job.y0);
+    img.setAttribute("width", job.x1 - job.x0); img.setAttribute("height", job.y1 - job.y0);
+    img.style.display = "";
+    if (Editor.pnRasterUrl) URL.revokeObjectURL(Editor.pnRasterUrl);
+    Editor.pnRasterUrl = url;
+    Editor.pnRaster = job;
+    Editor.pnRasterWant = null;
+  }, "image/png");
+}
+function panelSVG(page, opts = {}) {
   /* この CAD は中身を常に実寸で描き、縮尺 1:n は図枠を n 倍に広げて表す。
      Panel Studio の座標 (実寸 mm) をそのまま置き、ページの scale が縮尺になる。
      entities は不変・数万要素になり得るので、描画条件が同じ間は SVG を使い回す */
   const pn = page.panel;
   if (!pn) return "";
   const pd = panelDataOf(page);
+  /* 頂点の多い DXF の図 (fig) は、画面 (screen) では画像で描くので SVG に入れない
+     (panelRasterSync)。印刷・PDF・書き出しは常にベクトルで全部描く */
+  const figRaster = !!(opts.screen && panelFigHeavy(pd));
   // frameStyle も鍵に入れる — 出力時シンプル図枠では案件行の位置が変わる
-  const ck = `${pn.dataKey || page.id}|r${pd.rev || 0}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}|${frameStyle()}`;
+  const ck = `${pn.dataKey || page.id}|r${pd.rev || 0}|${page.scale}|${page.paper}/${page.orient}|${page.panelMono ? 1 : 0}${page.panelText ? 1 : 0}|${frameStyle()}${figRaster ? "|scr" : ""}`;
   const hit = _panelSvgCache.get(ck);
   if (hit !== undefined) return hit;
   const f = sheetScale();
@@ -1209,6 +1320,11 @@ function panelSVG(page) {
   const rooms = panelTextRooms(pd.entities, e2 => panelTextShown(page, e2));
   ents.forEach((e, ei) => {
     const c = colOf(e);
+    if (e.t === "fig") {
+      if (pd.fig && !figRaster)
+        out += `<path d="${panelFigPathD(pd.fig, v => X(v + e.dx), v => Y(v + e.dy))}" stroke="${INK}" stroke-width="${sw}" fill="none"/>`;
+      return;
+    }
     if (batch && (e.t === "line" || e.t === "arc")) {
       if (e.t === "line") put(e, c, `M${X(e.x1)},${Y(e.y1)}L${X(e.x2)},${Y(e.y2)}`);
       else {
@@ -1375,6 +1491,7 @@ function overlaySVG(page) {
       if (e2.t === "line" || e2.t === "arrow") out += `<path d="M${X(e2.x1)},${Y(e2.y1)} L${X(e2.x2)},${Y(e2.y2)}"/>`;
       else if (e2.t === "circle") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}"/>`;
       else if (e2.t === "arc") out += `<circle cx="${X(e2.cx)}" cy="${Y(e2.cy)}" r="${e2.r}" stroke-dasharray="1 1"/>`;
+      else if (e2.t === "fig") { const b2 = panelEntBox(e2); out += `<rect x="${X(b2.x)}" y="${Y(b2.y + b2.h)}" width="${b2.w}" height="${b2.h}" stroke-dasharray="${2 * f2} ${1 * f2}"/>`; }
       else if (e2.t === "text") { const b2 = panelEntBox(e2); out += `<rect x="${X(b2.x)}" y="${Y(b2.y + b2.h)}" width="${b2.w}" height="${b2.h}"/>`; }
     });
     out += `</g>`;
@@ -1577,8 +1694,9 @@ function setupEditor() {
   const svg = document.getElementById("canvas");
   Editor.svg = svg;
   svg.innerHTML = `<g id="world">
-    <g id="lySheet"></g><g id="lyPanel"></g><g id="lyWires"></g><g id="lyDevices"></g><g id="lyTexts"></g><g id="lyOverlay"></g>
+    <g id="lySheet"></g><g id="lyPanelImg"><image id="pnRaster" preserveAspectRatio="none" style="display:none;pointer-events:none"/></g><g id="lyPanel"></g><g id="lyWires"></g><g id="lyDevices"></g><g id="lyTexts"></g><g id="lyOverlay"></g>
   </g>`;
+  Editor.panelImg = svg.querySelector("#pnRaster");
   Editor.layers = {
     sheet: svg.querySelector("#lySheet"),
     panel: svg.querySelector("#lyPanel"),
@@ -2597,9 +2715,14 @@ function rotateSelection() {
   const pIdxs = panelSelIdxs();
   if (!App.selection.size && pIdxs) {
     // パネル図の図形: まとまりの中心まわりに +90°
-    commit();
     const pgR = curPage();
     const pdR = panelDataOf(pgR);
+    // DXF の図 (fig) は回せない — 文字だけ回って図とずれるのを防ぐ
+    if ([...pIdxs].some(i => pdR.entities[i] && pdR.entities[i].t === "fig")) {
+      UI.setMsg("DXF から取り込んだ図は回転できません (元の CAD で回してから取り込み直してください)");
+      return;
+    }
+    commit();
     let b0 = null;
     pIdxs.forEach(i => {
       const b = panelEntBox(pdR.entities[i]);

@@ -2010,6 +2010,33 @@ UI.dxfImportDialog = (ents, fileName) => {
     return parseFloat(v) || 1;
   };
   const preview = () => {
+    // 大きな DXF は SVG (要素ごとのノード) で見せると重いので、canvas に描いた絵で見せる
+    if (big && b) {
+      const cw = 820, chh = 220, k = Math.min(cw / Math.max(1e-6, b.w), chh / Math.max(1e-6, b.h));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.ceil(b.w * k)); cv.height = Math.max(1, Math.ceil(b.h * k));
+      cv.style.cssText = "max-width:100%;max-height:220px";
+      const ctx = cv.getContext("2d");
+      const X = x => (x - b.x0) * k, Y = y => (b.y1 - y) * k;
+      ctx.strokeStyle = "#1b2334"; ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ents.forEach(e => {
+        if (e.type === "LINE" || e.type === "SOLID") {
+          if (isFinite(e.x1) && isFinite(e.x2)) { ctx.moveTo(X(e.x1), Y(e.y1)); ctx.lineTo(X(e.x2), Y(e.y2)); }
+        } else if (e.type === "LWPOLYLINE" || e.type === "POLYLINE") {
+          (e.pts || []).forEach((p2, i) => { if (isFinite(p2[0]) && isFinite(p2[1])) ctx[i ? "lineTo" : "moveTo"](X(p2[0]), Y(p2[1])); });
+        } else if ((e.type === "CIRCLE" || e.type === "ARC") && isFinite(e.x1) && e.r > 0) {
+          const a0 = e.type === "ARC" ? (e.a1 || 0) * Math.PI / 180 : 0;
+          const a1 = e.type === "ARC" ? (isFinite(e.a2) ? e.a2 : 360) * Math.PI / 180 : Math.PI * 2;
+          ctx.moveTo(X(e.x1 + e.r * Math.cos(a0)), Y(e.y1 + e.r * Math.sin(a0)));
+          ctx.arc(X(e.x1), Y(e.y1), e.r * k, -a0, -a1, true);
+        }
+      });
+      ctx.stroke();
+      q("#dxPrev").innerHTML = "";
+      q("#dxPrev").appendChild(cv);
+      return;
+    }
     const r = dxfEntsToSVG(ents, { scale: scaleOf() });
     const pad = 4;
     q("#dxPrev").innerHTML = r.w > 0
@@ -2049,7 +2076,7 @@ UI.dxfImportDialog = (ents, fileName) => {
       UI.renumberPages();
       App.pageIdx = App.project.pages.indexOf(r.page);
       UI.refresh(); zoomFit();
-      UI.setMsg(`DXF を盤図ページ「${r.page.name}」として取り込みました (図形 ${r.n} 個・縮尺 ${r.page.scale})`);
+      UI.setMsg(`DXF を盤図ページ「${r.page.name}」として取り込みました (DXF の要素 ${r.n} 個・縮尺 ${r.page.scale})`);
       return;
     }
     if (mode === "symbol") {

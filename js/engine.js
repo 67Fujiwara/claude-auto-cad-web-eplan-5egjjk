@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 230;
+const APP_VERSION = 231;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -5317,6 +5317,7 @@ function panelTextRooms(ents, shown) {
 /** 旧形式 (ページ内直書き) を panelData へ移し、参照されないデータを捨てる */
 function panelNormalize(project) {
   if (!project || !Array.isArray(project.pages)) return;
+  panelFigMigrate(project);
   const used = new Set();
   project.pages.forEach(pg => {
     const pn = pg.panel;
@@ -5366,6 +5367,7 @@ function panelEntBox(e) {
   }
   if (e.t === "circle" || e.t === "arc")
     return { x: e.cx - e.r, y: e.cy - e.r, w: e.r * 2, h: e.r * 2 };
+  if (e.t === "fig") return { x: e.bx + e.dx, y: e.by + e.dy, w: e.bw, h: e.bh };
   if (e.t === "text") {
     const h = e.h || 3;
     return { x: e.x, y: e.y, w: Math.max(1, String(e.s || "").length * h * 0.7), h };
@@ -5453,6 +5455,8 @@ function panelHitIdx(page, px, py, tol) {
           d = Math.min(Math.hypot(px - ex0, py - ey0), Math.hypot(px - ex1, py - ey1));
         }
       }
+    } else if (e.t === "fig") {
+      d = panelFigDist(pd.fig, px - e.dx, py - e.dy, bd);
     } else if (e.t === "text") {
       const b = panelEntBox(e);
       d = (px >= b.x - tol && px <= b.x + b.w + tol && py >= b.y - tol && py <= b.y + b.h + tol) ? 0 : Infinity;
@@ -5480,6 +5484,7 @@ function panelEditData(page) {
   const cur = pds[pn.dataKey] || { entities: [], layers: {} };
   const copy = { entities: (cur.entities || []).map(e => ({ ...e })),
     layers: cur.layers || {}, rev: (cur.rev || 0) + 1 };
+  if (cur.fig) copy.fig = cur.fig;          // 図 (fig) は不変 — 動かしても代表の dx/dy だけ変わる
   App.project.panelData = { ...pds, [pn.dataKey]: copy };
   panelSerTouch();
   App.labelRev++;
@@ -5493,6 +5498,7 @@ function panelMoveEnts(page, idxs, dxp, dyp) {
     if (!e) return;
     if (e.t === "line" || e.t === "arrow") { e.x1 += dxp; e.y1 += dyp; e.x2 += dxp; e.y2 += dyp; }
     else if (e.t === "circle" || e.t === "arc") { e.cx += dxp; e.cy += dyp; }
+    else if (e.t === "fig") { e.dx = Math.round((e.dx + dxp) * 100) / 100; e.dy = Math.round((e.dy + dyp) * 100) / 100; }
     else if (e.t === "text") { e.x += dxp; e.y += dyp; }
   });
 }
@@ -5562,6 +5568,7 @@ function panelDeleteEnts(page, idxs) {
   const pd = panelEditData(page);
   const del = new Set(idxs);
   pd.entities = pd.entities.filter((_, i) => !del.has(i));
+  if (pd.fig && !pd.entities.some(e => e.t === "fig")) delete pd.fig;
 }
 /** entities の座標が 0〜extent に収まっているか (はみ出しの数を返す) */
 function panelBoundsCheck(sheet) {
@@ -5720,8 +5727,9 @@ function panelInsertDxfPage(ents, fileName) {
   applySheet(keepPage);
   const title = String(fileName || "DXF").replace(/\.dxf$/i, "");
   const dataKey = `dxf/${uid("d")}`;
+  const cf = panelFigCompact(sh.entities, PANEL_FIG_TOL * n);
   App.project.panelData = App.project.panelData || {};
-  App.project.panelData[dataKey] = { entities: sh.entities, layers: {} };
+  App.project.panelData[dataKey] = { entities: cf.entities, layers: {}, fig: cf.fig };
   panelSerTouch();
   const page = {
     id: uid("p"), no: 0, kind: "panel", name: title,
@@ -5733,7 +5741,140 @@ function panelInsertDxfPage(ents, fileName) {
   };
   const pages = App.project.pages;
   pages.splice(Math.max(0, pages.indexOf(keepPage)) + 1, 0, page);
-  return { page, n: sh.entities.length };
+  return { page, n: ents.length };          // 取り込み画面と同じ「DXF の要素数」
+}
+
+/* ── DXF の図 (fig) ──
+   取り込んだ DXF の線・円・円弧は、編集しない「1 枚の図」として数値の配列
+   だけで持つ。1 本ずつの entity (数十万個) にすると、保存・選択・描画の
+   どれもが重くなり、実物の 30MB 級の DXF で画面が固まった。
+     pd.fig = { pl: [[x0,y0,x1,y1,...], ...]   折れ線 (つながる LINE はまとめる)
+                arcs: [[cx,cy,r,a0,a1], ...]  circles: [[cx,cy,r], ...]  nv: 頂点数 }
+   entities には代表の 1 要素 { t:"fig", bx,by,bw,bh, dx,dy } を先頭に置き、
+   選択・移動・削除はこの 1 要素で扱う (dx/dy = 動かした量 mm)。文字は従来の
+   text entity のまま */
+const PANEL_FIG_TOL = 0.01;       // 間引きの許容 (紙の上の mm)。縮尺 1:n で実寸 0.01×n mm
+const PANEL_FIG_RASTER = 40000;   // 頂点がこれより多い図は、画面では画像にして描く
+/** 折れ線の点を間引く (Douglas–Peucker)。p は [x0,y0,x1,y1,...] */
+function panelFigSimplify(p, tol) {
+  const n = p.length / 2;
+  if (n <= 2 || !(tol > 0)) return p;
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const st = [0, n - 1];
+  while (st.length) {
+    const b = st.pop(), a = st.pop();
+    const ax = p[2 * a], ay = p[2 * a + 1], dx = p[2 * b] - ax, dy = p[2 * b + 1] - ay;
+    const L = Math.hypot(dx, dy);
+    let md = -1, mi = -1;
+    for (let i = a + 1; i < b; i++) {
+      const qx = p[2 * i] - ax, qy = p[2 * i + 1] - ay;
+      const d = L ? Math.abs(qx * dy - qy * dx) / L : Math.hypot(qx, qy);
+      if (d > md) { md = d; mi = i; }
+    }
+    if (md > tol) { keep[mi] = 1; st.push(a, mi, mi, b); }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(p[2 * i], p[2 * i + 1]);
+  return out;
+}
+/** 線・円・円弧の entity (書き足し以外) を fig にまとめる。
+    返り値 { entities: [fig の代表, ...残り], fig } (まとめる図形が無ければ fig = null) */
+function panelFigCompact(entities, tol) {
+  const r2 = v => Math.round(v * 100) / 100;
+  const pl = [], arcs = [], circles = [], rest = [];
+  let cur = null;
+  const near = (a, b) => Math.abs(a - b) < 1e-6;
+  (entities || []).forEach(e => {
+    if (e.add || !(e.t === "line" || e.t === "arc" || e.t === "circle")) { rest.push(e); return; }
+    if (e.t === "line") {
+      if (cur && near(cur[cur.length - 2], e.x1) && near(cur[cur.length - 1], e.y1)) cur.push(e.x2, e.y2);
+      else { if (cur) pl.push(cur); cur = [e.x1, e.y1, e.x2, e.y2]; }
+    } else if (e.t === "arc") arcs.push([r2(e.cx), r2(e.cy), r2(e.r), e.a0, e.a1]);
+    else circles.push([r2(e.cx), r2(e.cy), r2(e.r)]);
+  });
+  if (cur) pl.push(cur);
+  if (!pl.length && !arcs.length && !circles.length) return { entities: rest, fig: null };
+  let nv = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+  const pls = pl.map(p => {
+    const q = panelFigSimplify(p, tol).map(r2);
+    for (let i = 0; i < q.length; i += 2) add(q[i], q[i + 1]);
+    nv += q.length / 2;
+    return q;
+  });
+  arcs.concat(circles).forEach(a => { add(a[0] - a[2], a[1] - a[2]); add(a[0] + a[2], a[1] + a[2]); nv += 8; });
+  const fig = { pl: pls, arcs, circles, nv };
+  const rep = { t: "fig", bx: r2(x0), by: r2(y0), bw: r2(x1 - x0), bh: r2(y1 - y0), dx: 0, dy: 0 };
+  return { entities: [rep, ...rest], fig };
+}
+/** fig の中の 1 本ずつの外接箱 (当たり判定・画像化の間引き用。図ごとに 1 回作る) */
+const _figBoxes = new WeakMap();
+function panelFigBoxes(fig) {
+  let bx = _figBoxes.get(fig);
+  if (bx) return bx;
+  bx = new Float64Array(fig.pl.length * 4);
+  fig.pl.forEach((p, k) => {
+    let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+    for (let i = 0; i < p.length; i += 2) {
+      if (p[i] < a) a = p[i]; if (p[i] > c) c = p[i];
+      if (p[i + 1] < b) b = p[i + 1]; if (p[i + 1] > d) d = p[i + 1];
+    }
+    bx[4 * k] = a; bx[4 * k + 1] = b; bx[4 * k + 2] = c; bx[4 * k + 3] = d;
+  });
+  _figBoxes.set(fig, bx);
+  return bx;
+}
+/** (x,y) から fig の線までの最短距離 (fig の座標・tol より遠ければ Infinity) */
+function panelFigDist(fig, x, y, tol) {
+  if (!fig) return Infinity;
+  const bx = panelFigBoxes(fig);
+  let best = Infinity;
+  fig.pl.forEach((p, k) => {
+    if (x < bx[4 * k] - tol || x > bx[4 * k + 2] + tol || y < bx[4 * k + 1] - tol || y > bx[4 * k + 3] + tol) return;
+    for (let i = 0; i + 3 < p.length; i += 2) {
+      const ax = p[i], ay = p[i + 1], dx = p[i + 2] - ax, dy = p[i + 3] - ay;
+      const L2 = dx * dx + dy * dy;
+      const t = L2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)) : 0;
+      const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+      if (d < best) best = d;
+    }
+  });
+  fig.arcs.concat(fig.circles).forEach(a => {
+    const d = Math.abs(Math.hypot(x - a[0], y - a[1]) - a[2]);
+    if (d < best) best = d;
+  });
+  return best <= tol ? best : Infinity;
+}
+/** fig の SVG path (d)。X/Y は fig 座標 → 紙の座標 */
+function panelFigPathD(fig, X, Y) {
+  const parts = [];
+  fig.pl.forEach(p => {
+    let d = `M${X(p[0])},${Y(p[1])}`;
+    for (let i = 2; i < p.length; i += 2) d += `L${X(p[i])},${Y(p[i + 1])}`;
+    parts.push(d);
+  });
+  fig.arcs.forEach(([cx, cy, r, a0, a1]) => {
+    const da = ((a1 - a0) % 360 + 360) % 360;
+    const P = a2 => [X(cx + r * Math.cos(a2 * Math.PI / 180)), Y(cy + r * Math.sin(a2 * Math.PI / 180))];
+    const [x1, y1] = P(a0), [x2, y2] = P(a1);
+    parts.push(`M${x1},${y1}A${r},${r} 0 ${da > 180 ? 1 : 0} 0 ${x2},${y2}`);
+  });
+  fig.circles.forEach(([cx, cy, r]) =>
+    parts.push(`M${X(cx) - r},${Y(cy)}a${r},${r} 0 1 0 ${2 * r},0a${r},${r} 0 1 0 ${-2 * r},0`));
+  return parts.join("");
+}
+/** V230 で 1 本ずつの entity として取り込んだ DXF の盤図を fig へ移す */
+function panelFigMigrate(project) {
+  (project.pages || []).forEach(pg => {
+    const pn = pg.panel;
+    if (!pn || !pn.dxf || !pn.dataKey) return;
+    const pd = project.panelData && project.panelData[pn.dataKey];
+    if (!pd || pd.fig || !(pd.entities || []).some(e => !e.add && (e.t === "line" || e.t === "arc" || e.t === "circle"))) return;
+    const cf = panelFigCompact(pd.entities, PANEL_FIG_TOL * panelScaleN(pg));
+    project.panelData[pn.dataKey] = { ...pd, entities: cf.entities, fig: cf.fig, rev: (pd.rev || 0) + 1 };
+    panelSerTouch();
+  });
 }
 
 /* ── ZIP の読み出し (store / deflate)。設計完了 ZIP のまま渡されたとき用 ── */

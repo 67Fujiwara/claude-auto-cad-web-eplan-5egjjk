@@ -5,16 +5,19 @@
 
    ・dialog : 3000 要素を超える DXF は「盤図ページ」が既定。作図線の
              選択肢は使えない。拡大縮小・線種の欄は盤図では隠す。
+             プレビューは canvas の絵 (数万の SVG ノードを作らない)。
              小さな DXF は従来どおり作図線が既定
    ・page   : 取り込むと表示中ページの直後に盤図ページ (kind panel) が
              1 枚増え、そこを表示する。配線は 1 本も増えない。縮尺は
              A3 に収まる 1:n
-   ・geom   : 図形は実寸のまま原点合わせ (左下 = 0,0)。閉じたポリライン
-             は辺ごとの線、円・円弧・文字も残る。中央寄せの文字は字幅の
-             半分だけ基準点を戻す
+   ・geom   : 図形は実寸のまま原点合わせ (左下 = 0,0)。線・円・円弧は
+             「図 (fig)」1 つにまとめ (entities の先頭に代表 1 要素)、
+             つながる LINE は 1 本の折れ線に、閉じたポリラインは始点へ
+             戻る折れ線になる。文字は entity のまま。中央寄せの文字は
+             字幅の半分だけ基準点を戻す
    ・fast   : 画面の SVG ノードは線をまとめて数十個に収まる。パン (再描画)
              では盤図の層を作り直さない
-   ・out    : 印刷 SVG・DXF 出力に図形が出る
+   ・out    : 印刷 SVG・DXF 出力 (R12: LINE / POLYLINE) に図形が出る
    ・undo   : 元に戻すで取り込み前に戻る
    ・others : DXF の盤図があっても、Panel Studio の盤のページ名に
              「[ID]」が付かない (別の盤としては数えない) */
@@ -64,7 +67,8 @@ const R = await p.evaluate(async () => {
   const optDraw = md.querySelector('option[value="draw"]');
   out.dialog = { mode: md.value, drawDisabled: optDraw.disabled,
     scaleHidden: document.querySelector("#dxScaleRow").style.display === "none",
-    styleHidden: document.querySelector("#dxStyleRow").style.display === "none" };
+    styleHidden: document.querySelector("#dxStyleRow").style.display === "none",
+    canvasPrev: !!document.querySelector("#dxPrev canvas") && !document.querySelector("#dxPrev svg") };
   document.querySelector("#dxOk").click();
   await raf();
 
@@ -74,17 +78,22 @@ const R = await p.evaluate(async () => {
   out.page = { kind: pg.kind, after: App.project.pages.indexOf(pg) === App.project.pages.indexOf(pg0) + 1,
     added: App.project.pages.length - nPages, wires: App.project.pages.reduce((n, p2) => n + p2.wires.length, 0) - nWires,
     scale: pg.scale, dxf: pg.panel.dxf, name: pg.name, ext: pg.panel.extent,
-    head: document.body.textContent.includes("DXF の盤図") };
+    head: document.body.textContent.includes("DXF の盤図"),
+    msg: document.body.textContent.includes(`DXF の要素 ${ents.length} 個`) };
 
   // ── geom ──
   const E = pd.entities;
   const near = (a, b2) => Math.abs(a - b2) < 0.01;
+  const F = pd.fig || { pl: [], arcs: [], circles: [] };
+  const same = (p2, q) => p2.length === q.length && p2.every((v, i) => near(v, q[i]));
   out.geom = {
-    lines: E.filter(e => e.t === "line").length,
-    origin: E.some(e => e.t === "line" && near(e.x1, 0) && near(e.y1, 0) && near(e.x2, 2000) && near(e.y2, 0)),
-    closed: E.some(e => e.t === "line" && near(e.x1, 1400) && near(e.y1, 510) && near(e.x2, 1400) && near(e.y2, 450)),
-    circle: E.some(e => e.t === "circle" && near(e.cx, 1700) && near(e.cy, 250) && near(e.r, 6)),
-    arc: E.some(e => e.t === "arc" && near(e.cx, 1800) && near(e.cy, 850) && e.a0 === 0 && e.a1 === 90),
+    rep: E[0] && E[0].t === "fig" && E.filter(e => e.t === "fig").length === 1 &&
+      !E.some(e => e.t === "line" || e.t === "arc" || e.t === "circle"),
+    pl: F.pl.length,
+    origin: F.pl.some(p2 => same(p2, [0, 0, 2000, 0, 2000, 1000])),
+    closed: F.pl.some(p2 => same(p2, [1400, 450, 1500, 450, 1500, 510, 1400, 510, 1400, 450])),
+    circle: F.circles.some(c => same(c, [1700, 250, 6])),
+    arc: F.arcs.some(a => same(a, [1800, 850, 20, 0, 90])),
     text: (() => { const t = E.find(e => e.t === "text" && e.s === "CENTER-TXT");
       return t ? +(900 - t.x - textWidthMM("CENTER-TXT", 20) / 2).toFixed(2) : null; })(),
   };
@@ -105,7 +114,9 @@ const R = await p.evaluate(async () => {
   applySheet(curPage());
   out.out = { svg: svg.includes("CENTER-TXT"),
     svgSegs: (svg.match(/M-?[\d.]+,-?[\d.]+L-?[\d.]+,-?[\d.]+/g) || []).length,
-    dxfLines: (dxf.match(/\n\s*LINE\s*\n/g) || []).length };
+    dxfLines: (dxf.match(/\n\s*LINE\s*\n/g) || []).length,
+    dxfPoly: (dxf.match(/\n\s*POLYLINE\s*\n/g) || []).length,
+    dxfNoLw: !dxf.includes("LWPOLYLINE") };
 
   // ── others: Panel Studio の盤を後から取り込んでも [ID] が付かない ──
   const r2 = panelInsertPages({ format: "panel-studio/electracad-sheets", version: 1,
@@ -136,14 +147,15 @@ const checks = {
   noPageErrors: errs.length === 0,
   guard: R.guard.wires === 0 && R.guard.pages === 0,
   dialog: R.dialog.mode === "panel" && R.dialog.drawDisabled === true &&
-    R.dialog.scaleHidden === true && R.dialog.styleHidden === true,
+    R.dialog.scaleHidden === true && R.dialog.styleHidden === true && R.dialog.canvasPrev === true,
   page: R.page.kind === "panel" && R.page.after === true && R.page.added === 1 && R.page.wires === 0 &&
     R.page.scale === "1:10" && R.page.dxf === "盤.dxf" && R.page.name === "盤" &&
-    R.page.ext.w === 2000 && R.page.ext.h === 1000 && R.page.head === true,
-  geom: R.geom.lines === 4006 && R.geom.origin && R.geom.closed && R.geom.circle && R.geom.arc &&
+    R.page.ext.w === 2000 && R.page.ext.h === 1000 && R.page.head === true && R.page.msg === true,
+  geom: R.geom.rep === true && R.geom.pl === 4002 && R.geom.origin && R.geom.closed && R.geom.circle && R.geom.arc &&
     R.geom.text !== null && Math.abs(R.geom.text) < 0.05,
   fast: R.fast.nodes < 50 && R.fast.hasText === true && R.fast.model === true && R.fast.kept === true && R.fast.sheetClean === true,
-  out: R.out.svg === true && R.out.svgSegs >= 4006 && R.out.dxfLines >= 4006,
+  out: R.out.svg === true && R.out.svgSegs >= 4002 && R.out.dxfLines >= 4000 && R.out.dxfPoly >= 2 &&
+    R.out.dxfNoLw === true,
   others: R.others.n === 0 && !/\[/.test(R.others.names),
   undo: R.undo.back === true,
   small: R.small.mode === "draw" && R.small.hasPanel === true && R.small.drawEnabled === true,
