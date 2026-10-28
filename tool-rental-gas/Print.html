@@ -1,7 +1,7 @@
 <!--
   Print.html — QR 一括印刷ページ（?view=print&pin=1234）
   全工具の QR を A4 に敷き詰める。工具に貼るラベル用途なので、QR サイズ（12〜30mm）と
-  文字の有無を画面上で選べる。管理画面の「QRを一括印刷」から開く。
+  工具名・工具箱名の印字の有無を画面上で選べる。管理画面の「QRを一括印刷」から開く。
   QR 描画は CDN の qrcode.js。読み込めない環境では URL 文字列のみ表示される。
 -->
 <!DOCTYPE html>
@@ -28,6 +28,7 @@
     .id { font-size: 5pt; color: #333; line-height: 1.1; }
     .url { display: none; font-size: 4pt; color: #666; word-break: break-all; }
     body.no-text .name { display: none; }
+    body.no-box .boxname { display: none; }
     body.no-qr .url { display: block; }
     .note { color: #c00; }
     @page { size: A4; margin: 8mm; }
@@ -50,6 +51,7 @@
     </select>
   </label>
   <label><input type="checkbox" id="showName" checked> 工具名を印字</label>
+  <label><input type="checkbox" id="showBox" checked> 工具箱名を印字</label>
   <span><?= data.tools.length ?> 件</span>
   <span class="note" id="note" hidden>QR ライブラリを読み込めませんでした。URL のみ表示しています。</span>
 </div>
@@ -59,7 +61,7 @@
     <div class="item">
       <div class="qr" data-url="<?= t.qrUrl ?>"></div>
       <div class="name"><?= t.name ?></div>
-      <div class="id"><?= t.id ?><?= t.box ? '・' + t.box.name : '' ?></div>
+      <div class="id"><?= t.id ?><? if (t.box) { ?><span class="boxname">・<?= t.box.name ?></span><? } ?></div>
       <div class="url"><?= t.qrUrl ?></div>
     </div>
   <? }); ?>
@@ -69,12 +71,15 @@
   (function () {
     const sizeEl = document.getElementById('size');
     const nameEl = document.getElementById('showName');
+    const boxEl = document.getElementById('showBox');
     function apply() {
       document.documentElement.style.setProperty('--qr', sizeEl.value + 'mm');
       document.body.classList.toggle('no-text', !nameEl.checked);
+      document.body.classList.toggle('no-box', !boxEl.checked);
     }
     sizeEl.addEventListener('change', apply);
     nameEl.addEventListener('change', apply);
+    boxEl.addEventListener('change', apply);
     apply();
 
     if (typeof QRCode === 'undefined') {
