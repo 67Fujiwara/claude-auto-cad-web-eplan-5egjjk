@@ -638,6 +638,9 @@ function bindPnDraw(pane) {
             <span class="rp-dim" style="font-size:10.5px">mm (記号内の y)</span>
           </div></div>`;
       })()}
+      ${(dev.xrefAt || (dev.tagAt && dev.tagAt.user)) ? `<div class="prop-row"><label>明示の位置 <span class="rp-dim">(${[dev.tagAt && dev.tagAt.user ? "タグ" : "", dev.xrefAt ? "相互参照" : ""].filter(Boolean).join("・")}を手で動かしています)</span></label>
+        <button class="btn-solid" id="pLblAuto" style="padding:3px 10px;font-size:11px">明示の位置を自動に戻す</button></div>`
+        : (dev.tag || dev.linkTo) ? `<div class="prop-note" style="margin-top:4px">タグ・相互参照 (明示) は、この機器を選んだまま文字をドラッグすると動かせます。</div>` : ""}
       ${sym.ioSheet && devFnDx(dev) ? `<div class="prop-row"><label>コメント欄の位置 <span class="rp-dim">(下線をドラッグで移動できます。現在 ${devFnDx(dev) >= 0 ? "+" : ""}${devFnDx(dev)}mm)</span></label>
         <button class="btn-solid" id="pFnPos" style="padding:3px 10px;font-size:11px">既定に戻す</button></div>` : ""}
       ${sym.ioSheet ? `<div class="prop-row"><label>結線図の下地 <span class="rp-dim">(レールと各行の分岐を実線で引きます)</span></label>
@@ -775,6 +778,15 @@ function bindPnDraw(pane) {
     /* 規格外の図記号は、その図面 (または添付文書) 上で説明するのが
        JIS C 0617-1 / IEC 60617-1 の決まり。プロパティの説明文だけでは
        出図した紙にも DXF にも出ないので、注記として貼れるようにする */
+    const la = pane.querySelector("#pLblAuto");
+    if (la) la.addEventListener("click", () => {
+      commit();
+      delete dev.xrefAt;
+      if (dev.tagAt && dev.tagAt.user) delete dev.tagAt;
+      App.labelRev++;
+      UI.refresh(); UI.showProps();
+      UI.toast("明示 (タグ・相互参照) を自動の位置に戻しました", 2600);
+    });
     const fp = pane.querySelector("#pFnPos");
     if (fp) fp.addEventListener("click", () => {
       commit();

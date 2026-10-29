@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 233;
+const APP_VERSION = 234;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -1580,15 +1580,21 @@ function labelObstacles(page) {
       });
     }
   });
-  (page.texts || []).forEach(t => {
-    const h = (t.size || TEXT_H.normal) * f;
-    out.push({ owner: null, x: t.x, y: t.y - h, w: textWidthMM(t.text || "", h), h });
-  });
+  /* 注記は実際の外接箱で避ける (中央・右寄せ、改行、回転を含む)。以前は
+     「基点から右へ全文 1 行分」の箱にしていたため、中央寄せの 2 行注記
+     (外部I/F入力02 / (DC24V) など) が右へ長い見えない障害物になり、同じ行に
+     来ただけで離れた機器のタグが反対側へ逃げていた */
+  (page.texts || []).forEach(t => out.push({ owner: null, ...textBounds(t) }));
   /* 破線枠のコメントは動かさない (枠の名前は枠に付いていないと意味が変わる) ので、
      機器のタグ・機能テキスト側が避ける障害物として置く */
   pageZones(page).forEach(z => {
     const b = zoneLabelBox(z);
     if (b) out.push({ owner: null, ...b });
+  });
+  // 手で動かした相互参照も動かない文字なので、ほかの機器のタグが避ける
+  page.devices.forEach(d2 => {
+    const xr = deviceXrefUser(d2);
+    if (xr) out.push({ owner: d2.id, ...xr.box });
   });
   return out;
 }
@@ -1634,13 +1640,19 @@ function placeDeviceLabels(page, dev, obstacles) {
      レールが 25mm 間隔で 2 本並ぶ図では、まわりを探して置く規則だと
      電位名が「相手のレールのほうが近い」位置に落ちて、+24V と 0V が
      入れ替わって読める。自分のレールの真上/真下に中心合わせで留める */
+  /* 手で動かしたタグ (tagAt.user) もここを通る。機能テキストはドラッグ前と
+     同じ間隔 (descDy) でタグに付いて動く。タグが無い機器は機能テキスト自体が基点 */
   if (dev.tagAt) {
     const out = [];
     const x = dev.x + (dev.tagAt.dx || 0), y = dev.y + (dev.tagAt.dy || 0);
     const anc = dev.tagAt.anchor || "middle";
     if (tag) out.push(mk(tag, x, y, anc, true));
-    if (desc) out.push(mk(desc, x, y + (dev.tagAt.dy < 0 ? -4 : 4) * f, anc));
-    return wrap(out, "top");
+    if (desc) {
+      const dd = !tag && dev.tagAt.user ? 0
+        : dev.tagAt.descDy !== undefined ? dev.tagAt.descDy : (dev.tagAt.dy < 0 ? -4 : 4) * f;
+      out.push(mk(desc, x, y + dd, anc));
+    }
+    return wrap(out, dev.tagAt.user ? "user" : "top");
   }
   if (sym.tagAnchor) {
     const a = pinAbs(dev, sym.tagAnchor), anc = sym.tagAnchor.anchor || "end";
@@ -1721,7 +1733,9 @@ function computePageLabels(page) {
   const base = labelObstacles(page);
   const placed = [];
   const map = new Map();
+  // 位置が決まっている (手で動かした・下地が決めた) タグを先に置き、自動のタグがそれを避ける
   const order = [...page.devices].sort((a, b) =>
+    ((b.tagAt ? 1 : 0) - (a.tagAt ? 1 : 0)) ||
     (a.x - b.x) || (a.y - b.y) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   order.forEach(dev => {
     const boxes = placeDeviceLabels(page, dev, base.concat(placed));
@@ -1851,6 +1865,19 @@ function deviceRowTexts(page, dev) {
   return out;
 }
 
+/** 手で動かした相互参照 (機器からの相対位置 xrefAt)。機器を動かせば一緒に
+    付いてくる。ほかの文字の配置に依存しないので、障害物集め (labelObstacles)
+    からも安全に呼べる。動かしていなければ null */
+function deviceXrefUser(dev) {
+  if (!dev.xrefAt || !dev.linkTo) return null;
+  const f = findDevice(dev.linkTo);
+  if (!f) return null;
+  const s = contentScale();
+  const text = "/" + devLocation(f.dev);
+  const h = TEXT_H.small * s * devScale(dev), w = textWidthMM(text, h, false, true);
+  const x = dev.x + (dev.xrefAt.dx || 0), y = dev.y + (dev.xrefAt.dy || 0);
+  return { x, y, text, box: { x, y: y - h, w, h }, size: h, user: true };
+}
 function deviceXrefBox(page, dev) {
   const sym0 = symOf(dev.sym);
   if (sym0 && sym0.gotoRef) {
@@ -1893,6 +1920,8 @@ function deviceXrefBox(page, dev) {
   const b = devBounds(dev);
   const text = "/" + devLocation(f.dev);
   const h = TEXT_H.small * s * devScale(dev), w = textWidthMM(text, h, false, true);
+  const user = deviceXrefUser(dev);
+  if (user) return user;
   const obst = pinLabelBoxes(page);
   page.devices.forEach(d2 => {
     deviceObstacleBoxes(d2, OBST_INSET.label * s).forEach(b => obst.push(b));

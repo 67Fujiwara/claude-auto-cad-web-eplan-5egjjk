@@ -346,6 +346,41 @@ function zoneLabelAt(page, wx, wy) {
   }
   return null;
 }
+/** 選択中の機器の「明示」(タグ + 機能テキスト / 接点の相互参照) のつかみ枠。
+    破線枠のコメントと同じく、選んだ機器の文字だけをつかんで動かせる。
+    返り値 [{ kind: "tag"|"xref", box, ax, ay, anchor, descDy }] */
+function devLabelGrips(page, dev) {
+  const out = [];
+  const sym = symOf(dev.sym);
+  if (!sym) return out;
+  const boxes = deviceLabelBoxes(page, dev).filter(o => !o.isTag || tagShownFor(dev, false));
+  if (boxes.length && !sym.tagAnchor) {
+    const x0 = Math.min(...boxes.map(o => o.box.x)), y0 = Math.min(...boxes.map(o => o.box.y));
+    const x1 = Math.max(...boxes.map(o => o.box.x + o.box.w)), y1 = Math.max(...boxes.map(o => o.box.y + o.box.h));
+    const tg = boxes.find(o => o.isTag), ds = boxes.find(o => !o.isTag);
+    const base = tg || ds;
+    out.push({ kind: "tag", box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, ax: base.x, ay: base.y, anchor: base.anchor,
+      descDy: tg && ds ? ds.y - tg.y : undefined });
+  }
+  if (!sym.gotoRef) {
+    const xr = deviceXrefBox(page, dev);
+    if (xr) out.push({ kind: "xref", box: xr.box, ax: xr.x, ay: xr.y });
+  }
+  return out;
+}
+/** (wx,wy) の下にある、選択中の機器の明示。無ければ null */
+function devLabelAt(page, wx, wy) {
+  for (const dev of page.devices) {
+    if (!App.selection.has(dev.id)) continue;
+    // 相互参照はタグのすぐ横にあることが多いので先に見る
+    const gs = devLabelGrips(page, dev).sort((a, b) => (a.kind === "xref" ? -1 : 0) - (b.kind === "xref" ? -1 : 0));
+    for (const g of gs) {
+      const b = g.box;
+      if (wx > b.x - 0.8 && wx < b.x + b.w + 0.8 && wy > b.y - 0.8 && wy < b.y + b.h + 0.8) return { dev, ...g };
+    }
+  }
+  return null;
+}
 /** 選択中の破線枠のつまみが (wx,wy) の近くにあれば返す */
 function zoneHandleAt(page, wx, wy) {
   for (const z of pageZones(page)) {
@@ -1513,6 +1548,14 @@ function overlaySVG(page) {
     });
     out += `</g>`;
   }
+  // 選んだ機器の明示は動かせる — つかめる所を薄い破線の枠で見せる
+  page.devices.forEach(dev => {
+    if (!App.selection.has(dev.id)) return;
+    devLabelGrips(page, dev).forEach(g => {
+      const b = g.box;
+      out += `<rect x="${b.x - 0.5}" y="${b.y - 0.5}" width="${b.w + 1}" height="${b.h + 1}" fill="none" stroke="${SEL}" stroke-width="0.2" stroke-dasharray="0.8 0.6" opacity="0.8" class="lbl-grip"/>`;
+    });
+  });
   if (Editor.drag && Editor.drag.type === "rubber") {
     const { x0, y0, x1, y1 } = Editor.drag;
     const crossing = x1 < x0;
@@ -1983,6 +2026,14 @@ function onMouseDown(e) {
     requestRender();
     return;
   }
+  // 選択中の機器の明示 (タグ・相互参照) をつかんだ → 文字だけを動かす
+  const dl = devLabelAt(curPage(), w.x, w.y);
+  if (dl) {
+    Editor.drag = { type: "devLabel", dev: dl.dev, kind: dl.kind, ox0: dl.ax - dl.dev.x, oy0: dl.ay - dl.dev.y,
+      anchor: dl.anchor, descDy: dl.descDy, wx0: w.x, wy0: w.y, moved: false, snapshot: snapshotProject() };
+    requestRender();
+    return;
+  }
   const tg = tableGripAt(curPage(), w.x, w.y);
   if (tg) {
     // 表の仕切りつまみ: 列の幅 / 行の高さを変える
@@ -2242,6 +2293,22 @@ function onMouseMove(e) {
     d.moved = true;
     applyMove(d.attach, dx, dy);
     requestRender();
+  }
+  if (d.type === "devLabel") {
+    // 動かす量を 0.5mm 刻みにする (つかんだ瞬間に跳ねない)。位置は機器からの
+    // 相対で持つ (機器を動かせば付いてくる)
+    const q = v => Math.round(v * 2) / 2;
+    const nx = +(d.ox0 + q(w.x - d.wx0)).toFixed(3), ny = +(d.oy0 + q(w.y - d.wy0)).toFixed(3);
+    const cur = d.kind === "xref" ? d.dev.xrefAt : d.dev.tagAt;
+    if (!d.moved && Math.abs(w.x - d.wx0) < 0.25 && Math.abs(w.y - d.wy0) < 0.25) return;
+    if (!cur || cur.dx !== nx || cur.dy !== ny) {
+      if (d.kind === "xref") d.dev.xrefAt = { dx: nx, dy: ny };
+      else d.dev.tagAt = { dx: nx, dy: ny, anchor: d.anchor || "start", user: true,
+        ...(d.descDy !== undefined ? { descDy: d.descDy } : {}) };
+      d.moved = true;
+      App.labelRev++;
+      requestRender();
+    }
   }
   if (d.type === "zoneLabel") {
     // コメントは 0.5mm 刻みで動かす (文字なので 5mm 格子だと粗すぎる)
@@ -2533,6 +2600,20 @@ function onMouseUp(e) {
       }
       UI.showProps();
     }
+    requestRender();
+    return;
+  }
+  if (d.type === "devLabel") {
+    if (d.moved) {
+      App.labelRev++;
+      App.undoStack.push(d.snapshot);
+      if (App.undoStack.length > 100) App.undoStack.shift();
+      App.redoStack.length = 0;
+      saveLocal();
+      UI.setMsg(`${d.kind === "xref" ? "相互参照" : "タグ"}の位置を動かしました (プロパティの「明示の位置を自動に戻す」で元へ)`);
+      UI.showProps();
+    }
+    Editor.drag = null;
     requestRender();
     return;
   }
