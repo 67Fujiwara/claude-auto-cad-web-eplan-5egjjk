@@ -540,6 +540,19 @@ function devicesSVG(page, opts = {}) {
       extra = st.extra || "";
     }
     const dk = devScale(dev);          // 貼り付け先の尺度に合わせた機器ごとの倍率
+    /* 破断記号 (1 本) をまたぐ多芯ケーブルの囲み・シールドは、選んだ側を
+       切り抜いて描く (図面座標の clipPath を、変換の外側の g に掛ける) */
+    const clips = breakClipsFor(page, dev);
+    if (clips.length) {
+      const cid = `brkclip_${dev.id}`;
+      const quads = clips.map(c => {
+        const r = c.rect;
+        const q = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => pinAbs(c.brk, { x, y }));
+        return `M${q.map(p2 => `${+p2.x.toFixed(3)},${+p2.y.toFixed(3)}`).join(" L")} Z`;
+      }).join(" ");
+      out += `<defs><clipPath id="${cid}" clipPathUnits="userSpaceOnUse"><path d="M-10000,-10000 H20000 V20000 H-10000 Z ${quads}" clip-rule="evenodd"/></clipPath></defs>` +
+        `<g clip-path="url(#${cid})">`;
+    }
     out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})${dk !== 1 ? ` scale(${dk})` : ""}" data-id="${dev.id}" class="device" style="color:${color}">`;
     if (selected || hovered) {
       const [bx, by, bw, bh] = sym.bounds;
@@ -557,6 +570,7 @@ function devicesSVG(page, opts = {}) {
       out += `<path d="${dfn}" stroke="currentColor" stroke-width="0.25" fill="none"/>`;
     }
     out += `</g>`;
+    if (clips.length) out += `</g>`;
     // 端子番号 (13/14, A1/A2, X1/X2 …) — EPLAN同様ピン脇に表示。
     // 連動接点は同一コイル内の順位で 13/14 → 23/24 と自動採番。
     // 隣接ワイヤの線番と同名 (主回路の U1 等) なら二重表示を抑制。

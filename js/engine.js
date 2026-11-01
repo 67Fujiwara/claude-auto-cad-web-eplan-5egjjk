@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 239;
+const APP_VERSION = 240;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -1454,6 +1454,48 @@ function pageWireMasks(page) {
       const [bx, , bw] = sym.bounds;
       out.push({ kind: "rect", dev, x: bx, y: dev.props.cutY, w: bw, h: 1000 });
     }
+    // 破断記号 (1 本): 波線をまたぐ配線だけ、選んだ側 (下/上) を隠す
+    const br = breakSingleRect(dev);
+    if (br) out.push({ kind: "rect", dev, ...br, crossOnly: true });
+  });
+  return out;
+}
+/** 破断記号 (1 本) の隠す範囲 (機器ローカル)。1 本の破断でなければ null。
+    side: dev.props.brkSide = "above" なら波線の上、既定は下 */
+function breakSingleRect(dev) {
+  const sym = symOf(dev.sym);
+  if (!sym || !sym.brkSingle) return null;
+  const L = sym.brkLen || (sym.breakBand && sym.breakBand.lenDef) || 20;
+  const above = !!(dev.props && dev.props.brkSide === "above");
+  return { x: -L / 2, y: above ? -1000 : 0.01, w: L, h: 999.99, L, above };
+}
+/** 折れ線 pts が、破断記号 (1 本) の波線 (機器ローカル y=0、-L/2〜L/2) をまたぐか */
+function polyCrossesBreak(pts, m) {
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [lx1, ly1] = devLocalPt(m.dev, pts[i][0], pts[i][1]);
+    const [lx2, ly2] = devLocalPt(m.dev, pts[i + 1][0], pts[i + 1][1]);
+    if (ly1 === ly2 || Math.min(ly1, ly2) > 1e-9 || Math.max(ly1, ly2) < -1e-9) continue;
+    const t = (0 - ly1) / (ly2 - ly1), lx = lx1 + t * (lx2 - lx1);
+    if (Math.abs(lx) <= m.L / 2 + 1e-9) return true;
+  }
+  return false;
+}
+/** 破断記号 (1 本) が切る多芯ケーブルの囲み・シールド。
+    返り値: [{ dev (ケーブル), brk (破断記号), rect }] — 画面・印刷でその側を切り抜く */
+function breakClipsFor(page, dev) {
+  const sym = symOf(dev.sym);
+  if (!sym || !sym.enclosure) return [];
+  const b = devBounds(dev);
+  const cs = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]];
+  const out = [];
+  (page.devices || []).forEach(br => {
+    const r = breakSingleRect(br);
+    if (!r) return;
+    const loc = cs.map(([x, y]) => devLocalPt(br, x, y));
+    const ys = loc.map(q => q[1]), xs = loc.map(q => q[0]);
+    // 囲みが波線をまたいでいて (上下に広がる)、横の範囲が波線に掛かるもの
+    if (Math.min(...ys) < 0 && Math.max(...ys) > 0 && Math.min(...xs) < r.L / 2 && Math.max(...xs) > -r.L / 2)
+      out.push({ dev, brk: br, rect: r });
   });
   return out;
 }
@@ -1510,6 +1552,8 @@ function segOutsideCircles(x1, y1, x2, y2, circles) {
 }
 /** 折れ線から円の内側を抜いた小片の一覧 (描画・DXF 出力で共通に使う) */
 function trimPolyByCircles(pts, circles) {
+  // 破断記号 (1 本) は、その波線をまたぐ線にだけ効かせる
+  if (circles.some(c => c.crossOnly)) circles = circles.filter(c => !c.crossOnly || polyCrossesBreak(pts, c));
   if (!circles.length) return [pts];
   const out = [];
   let cur = null;
@@ -2788,11 +2832,20 @@ const SYM_VARIANT_RE = /^(.+)@(\d+(?:\.\d+)?)$/;
 const SYM_BREAK_RE = /^(.+)@(\d+)x(\d+)$/;
 function breakVariant(base, len, gap) {
   const L = Math.max(10, Math.min(300, Math.round((parseFloat(len) || base.breakBand.lenDef) / 5) * 5));
-  const G = Math.max(5, Math.min(400, Math.round((parseFloat(gap) || base.breakBand.gapDef) / 5) * 5));
+  const single = !!base.breakBand.single;
+  const G = single ? 0 : Math.max(5, Math.min(400, Math.round((parseFloat(gap) || base.breakBand.gapDef) / 5) * 5));
   const id = `${base.id}@${L}x${G}`;
   if (SYMBOLS_BY_ID[id]) return SYMBOLS_BY_ID[id];
   const wave = y => `M${-L / 2},${y} C${-L * 0.35},${y - 3} ${-L * 0.15},${y + 3} 0,${y} ` +
     `C${L * 0.15},${y - 3} ${L * 0.35},${y + 3} ${L / 2},${y}`;
+  if (single) {
+    // 1 本: 隠す範囲は置いた機器の「隠す側」で決まる (pageWireMasks / breakClipFor)
+    const v1 = { ...base, id, breakOf: base.id, brkLen: L, brkGap: 0,
+      bounds: [-L / 2, -3, L, 6], body: `<path d="${wave(0)}" fill="none"/>` };
+    delete v1.breakBand;
+    SYMBOLS_BY_ID[id] = v1;
+    return v1;
+  }
   const v = { ...base, id, breakOf: base.id, brkLen: L, brkGap: G,
     bounds: [-L / 2, -3, L, G + 6],
     body: `<path d="${wave(0)} ${wave(G)}" fill="none"/>`,

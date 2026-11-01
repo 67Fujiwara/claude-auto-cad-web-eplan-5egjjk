@@ -466,6 +466,18 @@ const SYMBOLS = [
     body: `<path d="M-10,0 C-7,-3 -3,3 0,0 C3,-3 7,3 10,0 M-10,15 C-7,12 -3,18 0,15 C3,12 7,18 10,15" fill="none"/>`,
   },
   {
+    /* 破断記号 (1 本): 波線 1 本。波線をまたぐ配線と、多芯ケーブルの囲み・
+       シールドを、波線の下 (または上) 側だけ隠す。隠す側はプロパティで選ぶ。
+       波線をまたがない線・機器は隠さない (離れた回路まで消えないように) */
+    id: "break_mark1", nonstd: true, cat: "misc", letter: "",     // 図面の省略記号 — タグは付けない
+    name: "破断記号 1本 (配線の省略)", nameEn: "Break mark (single)",
+    desc: "波線 1 本をまたぐ配線と、多芯ケーブルの囲み・シールドを、波線の下 (または上) 側だけ隠して省略表示にする。" +
+      "隠す側と波線の長さはプロパティで選ぶ。つながりは変わらない (検図・接続リストはそのまま)。回転すると向きも一緒に回る",
+    pins: [], sim: "none", noDrc: true, bounds: [-10, -3, 20, 6],
+    breakBand: { lenDef: 20, gapDef: 0, single: true }, brkSingle: true,
+    body: `<path d="M-10,0 C-7,-3 -3,3 0,0 C3,-3 7,3 10,0" fill="none"/>`,
+  },
+  {
     id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
     desc: "ページ間の電位接続点 (タグ一致で接続)", pins: [{x:0,y:0,n:""}],
     sim: "link", bounds: [-9,-2, 18, 12],

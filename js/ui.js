@@ -579,8 +579,18 @@ function bindPnDraw(pane) {
       ${(sym.breakBand || sym.breakOf) ? (() => {
         const L = sym.brkLen || (sym.breakBand && sym.breakBand.lenDef) || 20;
         const G = sym.brkGap || (sym.breakBand && sym.breakBand.gapDef) || 15;
-        return `<div class="prop-row"><label>波線の長さ <span class="rp-dim">(10〜300mm・5mm 刻み)</span></label>
-            <input id="pBrkLen" class="mono" type="number" step="5" min="10" max="300" value="${L}"/></div>
+        const lenRow = `<div class="prop-row"><label>波線の長さ <span class="rp-dim">(10〜300mm・5mm 刻み)</span></label>
+            <input id="pBrkLen" class="mono" type="number" step="5" min="10" max="300" value="${L}"/></div>`;
+        if (sym.brkSingle) {
+          const above = dev.props && dev.props.brkSide === "above";
+          // 回した波線でも、選択肢は画面で見た向き (下/上/左/右) で書く
+          const p0 = pinAbs(dev, { x: 0, y: 0 }), p1 = pinAbs(dev, { x: 0, y: 1 });
+          const dx = p1.x - p0.x, dy = p1.y - p0.y;
+          const dirOf = (ax, ay) => Math.abs(ax) > Math.abs(ay) ? (ax > 0 ? "右" : "左") : (ay > 0 ? "下" : "上");
+          return lenRow + `<div class="prop-row"><label>隠す側 <span class="rp-dim">(波線をまたぐ配線・多芯ケーブル・シールドのこちら側を隠す)</span></label>
+            <select id="pBrkSide"><option value="below"${above ? "" : " selected"}>波線の${dirOf(dx, dy)}を隠す</option><option value="above"${above ? " selected" : ""}>波線の${dirOf(-dx, -dy)}を隠す</option></select></div>`;
+        }
+        return lenRow + `
           <div class="prop-row"><label>2 本の間隔 <span class="rp-dim">(この間の配線・機器を隠す)</span></label>
             <input id="pBrkGap" class="mono" type="number" step="5" min="5" max="400" value="${G}"/></div>`;
       })() : ""}
@@ -614,7 +624,7 @@ function bindPnDraw(pane) {
             `<option value="${s2.id}"${s2.id === curId ? " selected" : ""}>${escAttr(s2.name || s2.typ)}</option>`).join("")}</select></div>`;
       })() : ""}
       ${(() => {
-        if (sym.pageRef) return "";       // 文字だけの記号 — 配線を隠す用途は無い
+        if (sym.pageRef || sym.brkSingle) return "";   // 文字だけの記号・破断記号 (1 本) — 配線を隠す欄は不要
         /* 配線の破断: この記号に重なった配線を、指定した線から下だけ隠す。
            波線 (破断記号) を持つ自作記号などで、記号の下へ抜ける線を省略した
            見た目にする。外接矩形 (青枠) でなく「破断線の位置」で切るので、
@@ -858,6 +868,11 @@ function bindPnDraw(pane) {
     };
     bind("#pBrkLen", brkApply);
     bind("#pBrkGap", brkApply);
+    bind("#pBrkSide", v => {
+      dev.props = dev.props || {};
+      if (v === "above") dev.props.brkSide = "above"; else delete dev.props.brkSide;
+      App.labelRev++;
+    });
     bind("#pSpanMM", v => {
       const base = symStretchBase(symOf(dev.sym));
       if (!base) return;
