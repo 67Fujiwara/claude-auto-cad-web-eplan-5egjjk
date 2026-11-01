@@ -1075,7 +1075,8 @@ const checks = {
      紙にも DXF にも出ないので、注記として貼る入口があること */
   props: U.hasSwap === true && U.hasScaffoldBtn === true && U.hasFnBox === true &&
     U.hasStdNoteBtn === true &&
-    U.options === "kv_n14ar_in,kv_n14at_in,kv_n24at_in,kv_n40at_in1,kv_n40at_in2",
+    // 拡張入力ユニット (KV-NC16EXE) も入力どうしの入替先に並ぶ (出力の N8ET/N16ET と同じ扱い)
+    U.options === "kv_n14ar_in,kv_n14at_in,kv_n24at_in,kv_n40at_in1,kv_n40at_in2,kv_nc16exe_in",
   swapModel: hasSwap === true && canPick === true && U2.swapped === "kv_n40at_in1" && U2.keptTag === true &&
     U2.pins === 17 &&
     // 想定と違う用紙は検図に出て、「この用紙にする」で消える
