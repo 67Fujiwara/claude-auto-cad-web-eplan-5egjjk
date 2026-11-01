@@ -614,17 +614,6 @@ function bindPnDraw(pane) {
             `<option value="${s2.id}"${s2.id === curId ? " selected" : ""}>${escAttr(s2.name || s2.typ)}</option>`).join("")}</select></div>`;
       })() : ""}
       ${(() => {
-        /* 拡張ユニットの台数 (先頭チャネル)。リレー番号は接続順で決まるので、
-           1〜3台目を選ぶと端子名 (600〜/700〜/800〜) と図中の注記が差し替わる。
-           端子の位置は同一なので配線・タグ・機能欄はそのまま残る */
-        const base = symStretchBase(sym) || sym;
-        if (!base.expAlts) return "";
-        const chs = Object.keys(base.expAlts).map(Number).sort((a2, b2) => a2 - b2);
-        return `<div class="prop-row"><label>拡張ユニットの台数 <span class="rp-dim">(接続順でリレー番号が変わります)</span></label>
-          <select id="pKvCh">${chs.map((c2, i2) =>
-            `<option value="${c2}"${c2 === base.expCh ? " selected" : ""}>拡張${i2 + 1}台目 (R${c2}00〜)</option>`).join("")}</select></div>`;
-      })()}
-      ${(() => {
         if (sym.pageRef) return "";       // 文字だけの記号 — 配線を隠す用途は無い
         /* 配線の破断: この記号に重なった配線を、指定した線から下だけ隠す。
            波線 (破断記号) を持つ自作記号などで、記号の下へ抜ける線を省略した
@@ -705,24 +694,12 @@ function bindPnDraw(pane) {
     // 「この用紙にする」— ページの用紙を記号に合わせ、図枠の中へ入れ直す
     // 機種の差し替え。位置・タグ・機能テキストは残し、つないである配線は
     // 端子が動いたぶんだけ知らせる (検図の未接続で拾える)
-    bind("#pKvCh", v => {
-      const cur = symOf(dev.sym);
-      const base = symStretchBase(cur) || cur;
-      const id = base.expAlts && base.expAlts[v];
-      if (!id || id === base.id) return;
-      // 行ピッチの寸法違いはそのまま持ち越す (図形は同一・端子名だけ変わる)
-      if (cur.span) { symStretchVariant(SYMBOLS_BY_ID[id], cur.span); dev.sym = `${id}@${cur.span}`; }
-      else dev.sym = id;
-      const chs = Object.keys(base.expAlts).map(Number).sort((a2, b2) => a2 - b2);
-      App.labelRev++;
-      UI.toast(`拡張${chs.indexOf(+v) + 1}台目 (R${v}00〜) の割付にしました — 端子名と図中の注記が変わります`, 3600);
-    });
     bind("#pSwap", v => {
       if (!v) return;
       const before = symOf(dev.sym), n0 = devPins(dev).length;
       const curB = symStretchBase(before) || before;
-      /* 拡張ユニットの台数 (何台目 = 先頭チャネル) は機種を差し替えても保つ —
-         2台目の N16ET を N8ET にしたら 2台目 (R700〜) の N8ET に着地する。
+      /* 旧版で 2/3台目 (R700〜/R800〜) の記号にした図面は、機種を差し替えても
+         その台数のまま — 2台目の N16ET を N8ET にしたら 2台目の N8ET に着地する。
          黙って1台目へ戻すと、紙の注記だけが頼りの静かな誤りになる */
       const tgt = SYMBOLS_BY_ID[v];
       const want = (curB.expCh && tgt && tgt.expAlts && tgt.expAlts[curB.expCh]) ? tgt.expAlts[curB.expCh] : v;

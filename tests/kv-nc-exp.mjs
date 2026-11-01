@@ -13,7 +13,8 @@
                DC30V 0.2A)・入力の DC24V/DC5V 切換を書く
    ・scaffold : 置いて「結線図の下地を作る」でレールとコモンの結線が引ける。
                入力の COM は P24V 側、出力の COM は N24V 側へつながる
-   ・chProp   : 「拡張ユニットの台数」の差し替え先 (2台目) が用意されている
+   ・chProp   : 旧版の図面と同じ作りで 2/3台目の記号もある (プルダウンは廃止。
+               説明は「端子番号」での読み替えを案内する)
    ・migrate  : 旧版 (ピン留め ver9) の利用者にも 2 機種が追い足される
    ・oldSame  : 既存の KV-N8ET / KV-N16ET の記号は変わらない (説明は KV Nano のまま) */
 import { chromium } from "playwright-core";
@@ -46,7 +47,8 @@ const R = await p.evaluate(() => {
       ex.body.includes("コモンは +24V"), et: et.body.includes("拡張出力 16点") && et.body.includes("※拡張1台目の割付 (R600〜)") };
   out.spec = { ex: /COM は 16 端子あり内部で短絡/.test(ex.desc) && /ヨーロピアン端子台/.test(ex.desc) && /DC24V\/DC5V/.test(ex.desc),
     et: /COM は 16 端子あり内部で短絡/.test(et.desc) && /DC30V 0\.2A/.test(et.desc) && /ヨーロピアン端子台/.test(et.desc) };
-  out.chProp = ex.expAlts && ex.expAlts[7] === "kv_nc16exe_in_c7" && et.expAlts && et.expAlts[8] === "kv_nc16ete_out_c8";
+  out.chProp = ex.expAlts && ex.expAlts[7] === "kv_nc16exe_in_c7" && et.expAlts && et.expAlts[8] === "kv_nc16ete_out_c8" &&
+    /「端子番号」で端子名を読み替え/.test(ex.desc) && !/拡張ユニットの台数/.test(ex.desc + ex.stdNote);
   // ── 置いて下地 ──
   const sc = (symId) => {
     App.project = newProject("拡張"); UI.renumberPages();

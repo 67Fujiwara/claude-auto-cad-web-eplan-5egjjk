@@ -14,10 +14,10 @@
    ・onSheet    : 見出しが「拡張出力 ◯点」、図中に「※拡張◯台目の割付」注記が
                   焼き込まれる (割付の前提が紙に残る — IEC 61082-1 の一義性)
    ・stdNote    : 端子表示がデバイス番号であり実機の刻印ではない旨を凡例に明記
-   ・chProp     : プロパティ「拡張ユニットの台数」で 2台目へ差し替えると
-                  端子名が 700〜 になり、配線・位置はそのまま
+   ・noChProp   : プロパティに「拡張ユニットの台数」のプルダウンは出さない (廃止)
+   ・oldC7      : 旧版で 2台目 (R700〜) にした図面は、そのまま 700〜 で描ける
    ・swapClean  : 機種入替のリストに台数違い (_c7/_c8) は混ざらない
-   ・swapShow   : 2台目に設定した記号でプロパティを開いても、機種欄は親機種が選択表示される
+   ・swapShow   : 旧版の 2台目の記号でプロパティを開いても、機種欄は親機種が選択表示される
    ・swapKeepCh : 2台目のまま機種を N8ET へ差し替えると 2台目の N8ET (700〜) に着地する
    ・boundsNote : 図中注記のぶん外接矩形が下へ伸びる (注記 7mm は用紙判定にも入る)
    ・legend     : 規格外図記号の凡例 (stdNote) を pasteStdNote で図面に貼れる
@@ -89,22 +89,18 @@ const R = await p.evaluate(async () => {
   };
   out.stdNote = /デバイス番号/.test(s8.stdNote) && /刻印ではない/.test(s8.stdNote) && /接続順/.test(s8.stdNote);
 
-  // ── プロパティで 2台目へ差し替え (実 UI) ──
+  // ── 「拡張ユニットの台数」のプルダウンは出さない (廃止) ──
   App.selection.clear(); App.selection.add(d.id);
   UI.refresh();
   await new Promise(r => setTimeout(r, 150));
-  const sel = document.querySelector("#pKvCh");
-  out.chProp = { shown: !!sel, opts: sel && sel.options.length };
-  if (sel) {
-    const wireBefore = JSON.stringify(pg.wires.map(w => w.pts));
-    sel.value = "7";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-    await new Promise(r => setTimeout(r, 100));
-    out.chProp.sym = d.sym;
-    out.chProp.pins = devPins(d).map(pn => pn.name).slice(0, 2).join(",") + "…" + devPins(d)[devPins(d).length - 1].name;
-    out.chProp.posKept = d.x === 200 && d.y === 40;
-    out.chProp.wiresKept = JSON.stringify(pg.wires.map(w => w.pts)) === wireBefore;
-  }
+  out.noChProp = !document.querySelector("#pKvCh") && !document.body.textContent.includes("拡張ユニットの台数");
+  // 旧版で 2台目 (R700〜) にした図面を開いた想定: 記号は残っていて描ける
+  const wireBefore = JSON.stringify(pg.wires.map(w => w.pts));
+  d.sym = "kv_n16et_out_c7"; App.labelRev++;
+  UI.refresh(); UI.showProps();
+  await new Promise(r => setTimeout(r, 100));
+  out.oldC7 = { pins: devPins(d).map(pn => pn.name).slice(0, 2).join(",") + "…" + devPins(d)[devPins(d).length - 1].name,
+    wiresKept: JSON.stringify(pg.wires.map(w => w.pts)) === wireBefore };
   const swapSel = document.querySelector("#pSwap");
   out.swapClean = { shown: !!swapSel,
     noAlt: swapSel && ![...swapSel.options].some(o2 => /_c[78]/.test(o2.value)),
@@ -148,8 +144,8 @@ const checks = {
     && R.alts.pins7 === [...seq(0, 7).map(v => String(+v + 100)), "COM"].join(","),
   onSheet: R.onSheet.header && R.onSheet.note1 && R.onSheet.note2,
   stdNote: R.stdNote === true,
-  chProp: R.chProp.shown && R.chProp.opts === 3 && R.chProp.sym === "kv_n16et_out_c7"
-    && R.chProp.pins === "700,701…COM" && R.chProp.posKept && R.chProp.wiresKept,
+  noChProp: R.noChProp === true,
+  oldC7: R.oldC7.pins === "700,701…COM" && R.oldC7.wiresKept === true,
   swapClean: R.swapClean.shown && R.swapClean.noAlt && R.swapClean.hasBase,
   swapShow: R.swapShow === true,
   swapKeepCh: R.swapKeepCh.sym === "kv_n8et_out_c7" && R.swapKeepCh.pin0 === "700" && R.swapKeepCh.posKept,
