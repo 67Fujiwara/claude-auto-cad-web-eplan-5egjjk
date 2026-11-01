@@ -2160,10 +2160,26 @@ function buildMoveAttachment() {
       });
     });
   });
+  /* 両端とも動かす機器の端子に乗っている配線 (選んだ端子どうしをつなぐ線) は、
+     端点を 1 つずつ追従させると 2 回目の追従が 1 回目を上書きして片端が元の
+     場所に残り、折れ曲がった線と線番が機器にくっついて見える。こういう線は
+     選択した配線と同じく丸ごと平行移動する */
+  const ends = new Map();
+  map.forEach(ep => {
+    const wr = page.wires.find(w => w.id === ep.wireId);
+    if (!wr) return;
+    const e = ends.get(wr.id) || { wr, first: false, last: false };
+    if (ep.ptIdx === 0) e.first = true;
+    if (ep.ptIdx === wr.pts.length - 1) e.last = true;
+    ends.set(wr.id, e);
+  });
+  const rigid = [...ends.values()].filter(e => e.first && e.last).map(e => e.wr);
+  const rigidIds = new Set(rigid.map(w => w.id));
+  const mvWires = selWires.concat(rigid);
   return {
     devIds: selDevs.map(d => ({ id: d.id, x0: d.x, y0: d.y })),
-    wireIds: selWires.map(w => ({ id: w.id, pts0: deepCopy(w.pts), numAt0: w.numAt ? [...w.numAt] : null })),
-    endpoints: map,
+    wireIds: mvWires.map(w => ({ id: w.id, pts0: deepCopy(w.pts), numAt0: w.numAt ? [...w.numAt] : null })),
+    endpoints: map.filter(ep => !rigidIds.has(ep.wireId)),
     textIds: page.texts.filter(t => App.selection.has(t.id)).map(t => ({ id: t.id, x0: t.x, y0: t.y })),
     zoneIds: pageZones(page).filter(z => App.selection.has(z.id)).map(z => ({ id: z.id, x0: z.x, y0: z.y })),
     tableIds: pageTables(page).filter(t2 => App.selection.has(t2.id)).map(t2 => ({ id: t2.id, x0: t2.x, y0: t2.y })),
@@ -2875,9 +2891,12 @@ function rotateSelection() {
   if (devs.length === 1 && selWires.length === 0 && selTexts.length === 0) {
     const dev = devs[0];
     const attached = collectAttachedEndpoints(page, [dev]);
+    // 同じ機器の端子どうしをつなぐ線 (渡り線) は機器と一緒に回す
+    const both = wiresBetween(attached);
     commit();
     dev.rot = ((dev.rot || 0) + 90) % 360;
-    reattachAfterTransform(page, [dev], attached);
+    both.forEach(w => { w.pts = w.pts.map(p => [dev.x - (p[1] - dev.y), dev.y + (p[0] - dev.x)]); });
+    reattachAfterTransform(page, [dev], attached.filter(a => !both.has(a.wire)));
     if (!rotateGuard(snapshot, issuesBefore)) return;
     UI.setMsg("回転しました (接続配線を追従)");
     requestRender();
@@ -2914,6 +2933,9 @@ function rotateSelection() {
       d.rot = ((d.rot || 0) + 90) % 360;
     });
     selWires.forEach(w => { w.pts = w.pts.map(p => rot(p[0], p[1])); });
+    // 選んだ機器どうしをつなぐ (選択外の) 配線も、選択の一部として一緒に回す
+    const both = wiresBetween(attached);
+    both.forEach(w => { w.pts = w.pts.map(p => rot(p[0], p[1])); });
     // ブロック回転では、文字も位置と一緒に向きを回す (絵と文字がずれない)
     selTexts.forEach(t => {
       [t.x, t.y] = rot(t.x, t.y);
@@ -2921,7 +2943,7 @@ function rotateSelection() {
       if (!t.rot) delete t.rot;
     });
     // 選択外の接続ワイヤ端点を新しいピン位置へ追従
-    reattachAfterTransform(page, devs, attached);
+    reattachAfterTransform(page, devs, attached.filter(a => !both.has(a.wire)));
     // 選択配線の固定側端点を元のピンへ戻す
     anchors.forEach(a => moveWireEndpoint(a.w, a.isStart ? 0 : a.w.pts.length - 1, [a.x, a.y]));
     if (!rotateGuard(snapshot, issuesBefore)) return;
@@ -2970,6 +2992,16 @@ function reattachAfterTransform(page, devs, attached) {
     const after = devPins(dev);
     if (after[pi]) moveWireEndpoint(wire, i, [after[pi].x, after[pi].y]);
   });
+}
+/** 両端とも devs の端子に乗っている (選択外の) 配線。回転では丸ごと回す */
+function wiresBetween(attached) {
+  const m = new Map();
+  attached.forEach(({ wire, i }) => {
+    const e = m.get(wire) || { first: false, last: false };
+    if (i === 0) e.first = true; else e.last = true;
+    m.set(wire, e);
+  });
+  return new Set([...m.entries()].filter(([, e]) => e.first && e.last).map(([w]) => w));
 }
 
 /** ワイヤ端点を np へ移し、隣接点をずらして直交を維持する */
