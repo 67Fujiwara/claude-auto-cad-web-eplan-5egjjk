@@ -15,6 +15,8 @@ const DB_DEFAULT_PINNED = [
   "kv_n14at_in", "kv_n14at_out", "kv_n24at_in1", "kv_n24at_in2", "kv_n24at_out1", "kv_n24at_out2",
   "kv_n40at_in1", "kv_n40at_in2", "kv_n40at_in3", "kv_n40at_out1", "kv_n40at_out2",
   "kv_n14ar_in", "kv_n14ar_out",
+  // 拡張ユニット (ヨーロピアン端子台)
+  "kv_nc16exe_in", "kv_nc16ete_out",
   // 受動部品・半導体 (プルアップ抵抗ほか — 値はプロパティの「値・定格」に手入力)
   "resistor", "var_resistor", "resistor_pullup", "resistor_pulldown",
   "resistor_z", "resistor_pullup_z", "resistor_pulldown_z",
@@ -481,6 +483,15 @@ const KV_UNITS = [
        出力コモンからの類推で COM のまま (実機未確認) */
   ["KV-N8ET", { nOut: 8, ch0: 6, exp: true }],
   ["KV-N16ET", { nOut: 16, ch0: 6, exp: true }],
+  /* ヨーロピアン端子台の拡張ユニット (キーエンス公式の型式ページより):
+     ・KV-NC16EXE … 入力 16点。DC24V/DC5V モード切換。COM は 16 端子あるが内部で共通
+     ・KV-NC16ETE … トランジスタ (シンク, MOSFET) 出力 16点。DC30V 0.2A。
+       16点/1コモン (COM 16 端子・内部で短絡)。過電流保護つき
+     割付 (R600〜 を拡張1台目) は KV-N8ET/N16ET と同じ前提 (実機未確認) */
+  ["KV-NC16EXE", { nIn: 16, ch0: 6, exp: true, comTerms: 16, term: "ヨーロピアン端子台", series: "KV",
+    inNote: "DC24V/DC5V のモード切換あり (この図は DC24V の想定)。" }],
+  ["KV-NC16ETE", { nOut: 16, ch0: 6, exp: true, comTerms: 16, term: "ヨーロピアン端子台", series: "KV",
+    outNote: "定格 DC30V 0.2A/点 (MOSFET・過電流保護つき)。" }],
 ];
 
 /** KV Nano 基本ユニットの結線図記号。1 枚 = A3 横に収まる高さまで */
@@ -550,36 +561,50 @@ function mkKvUnit(model, cfg) {
      1台目だけ — 2/3台目は「拡張ユニットの台数」プロパティで差し替える
      (端子の位置・図形は同一なので、配線・タグ・機能欄はそのまま残る) */
   if (cfg.exp) {
+    // 入力の拡張ユニット (nIn) も同じ作り。現場側・レールの電位・入替グループだけ入力向きにする
+    const isIn = !!cfg.nIn;
+    const kind = isIn ? "入力" : "出力", kindId = isIn ? "in" : "out";
     const chs = [cfg.ch0, cfg.ch0 + 1, cfg.ch0 + 2];
-    const idOf = ch => `${model.toLowerCase().replace(/-/g, "_")}_out${ch === cfg.ch0 ? "" : `_c${ch}`}`;
+    const idOf = ch => `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${ch === cfg.ch0 ? "" : `_c${ch}`}`;
     const altIds = {};
     chs.forEach(ch => { altIds[ch] = idOf(ch); });
+    /* COM 端子が点ごとに並ぶ機種 (ヨーロピアン端子台の KV-NC16EXE/ETE: COM 16 端子・
+       内部で短絡) も、電気的には 1 つのコモンなので図では 1 行にまとめる */
+    const comNote = cfg.comTerms ? `COM は ${cfg.comTerms} 端子あり内部で短絡している — 図では 1 行にまとめて描く (どの COM 端子に結線してもよい)。` : "";
+    const termNote = cfg.term ? `外部接続は${cfg.term}。` : "";
     chs.forEach((ch, ci) => {
       const n = ci + 1;
-      const sheets = autoSheets(ch, cfg.nOut, "COM", "出力");
-      // 螺子端子の拡張出力は最大 16 点 = 1 枚に収まる (収まらない機種を
+      const sheets = autoSheets(ch, isIn ? cfg.nIn : cfg.nOut, "COM", kind);
+      // 拡張ユニットは最大 16 点 = 1 枚に収まる (収まらない機種を
       // 足すときは基本ユニットと同じ枚割り・id 連番に戻すこと)
       sheets.forEach(gs => {
         const seq = mkSeq(gs, false);
         const pts = gs.flatMap(g => g.pts);
         out.push(mkKvSheet({
           id: altIds[ch], model,
-          title: `拡張出力 ${pts.length}点`,
+          title: `拡張${kind} ${pts.length}点`,
           seq, allSeqs: sheets.map(g2 => mkSeq(g2, false)),
-          railTags: { branch: "P24V", supply: "N24V" },
-          fieldSide: "right",
-          swapGroup: "kv_nano_out",
+          // 入力はコモンを P24V へ・機器の帰りは N24V (基本ユニットの入力と同じ)
+          railTags: isIn ? { branch: "N24V", supply: "P24V" } : { branch: "P24V", supply: "N24V" },
+          fieldSide: isIn ? "left" : "right",
+          swapGroup: `kv_nano_${kindId}`,
           expCh: ch, expAlts: altIds, ...(ch !== cfg.ch0 ? { altOf: altIds[cfg.ch0] } : {}),
-          expNote: `※拡張${n}台目の割付 (R${ch}00〜)`,
-          name: `${model} 出力結線図${ch === cfg.ch0 ? "" : ` (拡張${n}台目 R${ch}00〜)`}`,
-          nameEn: `${model} output wiring${ch === cfg.ch0 ? "" : ` (unit ${n})`}`,
+          expNote: `※拡張${n}台目の割付 (R${ch}00〜)` + (isIn ? "。コモンは +24V (NPN 機器向け)" : ""),
+          name: `${model} ${kind}結線図${ch === cfg.ch0 ? "" : ` (拡張${n}台目 R${ch}00〜)`}`,
+          nameEn: `${model} ${isIn ? "input" : "output"} wiring${ch === cfg.ch0 ? "" : ` (unit ${n})`}`,
           stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示。端子の図記号番号は規格原本との照合が必要)。" +
             `ただし端子位置の表示は KV のデバイス番号 (R を除いた数字) — 実機の端子台の刻印ではない (${model} の刻印は未確認)。` +
             "リレー番号は接続順で決まるため、図中の『※拡張◯台目の割付』注記とプロパティ「拡張ユニットの台数」を実機の接続順に合わせること。" +
-            "コモンの刻印 COM は N14AR からの類推 (実機未確認)。ユニットの電源と接地は別紙の電源回路図に描きます",
-          desc: `キーエンス KV Nano 拡張ユニット ${model} の出力結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点・拡張${n}台目 R${ch}00〜)。` +
+            (cfg.comTerms ? `COM は ${cfg.comTerms} 端子 (内部で短絡) を 1 行にまとめて表示。` : "コモンの刻印 COM は N14AR からの類推 (実機未確認)。") +
+            "ユニットの電源と接地は別紙の電源回路図に描きます",
+          desc: `キーエンス ${cfg.series || "KV Nano"} 拡張ユニット ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点・拡張${n}台目 R${ch}00〜)。` +
+            termNote +
             `プロパティ「拡張ユニットの台数」で 1〜3台目 (R${cfg.ch0}00〜 / R${cfg.ch0 + 1}00〜 / R${cfg.ch0 + 2}00〜) を切り替えられます — 端子の位置は同じなので配線・タグ・機能欄はそのまま。` +
-            `コモンは 1 つ (${pts.length}点/1コモン) — コモン線には全点の合計電流が乗るのでサイズ選定に注意。` +
+            (isIn
+              ? `コモンは 1 つ (${pts.length}点/1コモン)。${comNote}コモンを +24V にした NPN 機器向けの割付 (PNP 機器ならレールの電位名を描き替え)。` +
+                (cfg.inNote || "")
+              : `コモンは 1 つ (${pts.length}点/1コモン) — コモン線には全点の合計電流が乗るのでサイズ選定に注意。${comNote}` +
+                (cfg.outNote || "")) +
             `サービス電源 (0V/24V) の端子は無い (拡張バスから給電)。` +
             `置くと P24V/N24V のレールとコモンの結線が実線で引かれます — 端子までの配線は自分で引きます。機能欄の文言はプロパティでまとめて入れられます。`,
         }));
@@ -1182,7 +1207,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 9;
+const DB_PINNED_VER = 10;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");
