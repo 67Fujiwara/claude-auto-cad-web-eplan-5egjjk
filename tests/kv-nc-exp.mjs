@@ -3,7 +3,7 @@
    ・made     : kv_nc16exe_in (入力 16点) / kv_nc16ete_out (出力 16点) がパレット
                (DB_SYMBOLS) に載り、既定のピン留めにも入る。2/3台目 (_c7/_c8) は
                SYMBOLS_BY_ID にだけ居てパレットには出ない
-   ・pins     : 端子は 600〜615 + COM (拡張1台目の割付)。2台目は 700〜715
+   ・pins     : 端子は 000〜015 + COM。旧版の 2台目の記号も同じ 000〜 (ユニットごとに 000 から)
    ・side     : 入力は現場側が左 (基本ユニットの入力と同じ向き)、出力は現場側が右
                (KV-N16ET と同じ向き)
    ・swap     : 入力は kv_nano_in、出力は kv_nano_out の機種入替グループ
@@ -16,7 +16,7 @@
    ・chProp   : 旧版の図面と同じ作りで 2/3台目の記号もある (プルダウンは廃止。
                説明は「端子番号」での読み替えを案内する)
    ・migrate  : 旧版 (ピン留め ver9) の利用者にも 2 機種が追い足される
-   ・oldSame  : 既存の KV-N8ET / KV-N16ET の記号は変わらない (説明は KV Nano のまま) */
+   ・oldSame  : 既存の KV-N8ET / KV-N16ET も同じく 000〜 で、説明は KV Nano のまま */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -37,18 +37,18 @@ const R = await p.evaluate(() => {
   if (!ex || !et) return out;
   const names = s => s.pins.map(q => q.n).join(",");
   const exp16 = ch => Array.from({ length: 16 }, (_, i) => `${ch}${String(i).padStart(2, "0")}`).join(",") + ",COM";
-  out.pins = { ex: names(ex) === exp16(6), et: names(et) === exp16(6),
-    ex2: names(SYMBOLS_BY_ID.kv_nc16exe_in_c7) === exp16(7) };
+  out.pins = { ex: names(ex) === exp16(0), et: names(et) === exp16(0),
+    ex2: names(SYMBOLS_BY_ID.kv_nc16exe_in_c7) === exp16(0) };
   const flip = s => s.thumbBox[0] < 0;
   out.side = { exLeft: !flip(ex) && flip(ex) === flip(SYMBOLS_BY_ID.kv_n14at_in),
     etRight: flip(et) && flip(et) === flip(SYMBOLS_BY_ID.kv_n16et_out) };
   out.swap = ex.swapGroup === "kv_nano_in" && et.swapGroup === "kv_nano_out";
-  out.onSheet = { ex: ex.body.includes("拡張入力 16点") && ex.body.includes("※拡張1台目の割付 (R600〜)") &&
-      ex.body.includes("コモンは +24V"), et: et.body.includes("拡張出力 16点") && et.body.includes("※拡張1台目の割付 (R600〜)") };
+  out.onSheet = { ex: ex.body.includes("拡張入力 16点") && ex.body.includes("※端子番号はユニットごとに 000〜") &&
+      ex.body.includes("コモンは +24V"), et: et.body.includes("拡張出力 16点") && et.body.includes("※端子番号はユニットごとに 000〜") };
   out.spec = { ex: /COM は 16 端子あり内部で短絡/.test(ex.desc) && /ヨーロピアン端子台/.test(ex.desc) && /DC24V\/DC5V/.test(ex.desc),
     et: /COM は 16 端子あり内部で短絡/.test(et.desc) && /DC30V 0\.2A/.test(et.desc) && /ヨーロピアン端子台/.test(et.desc) };
   out.chProp = ex.expAlts && ex.expAlts[7] === "kv_nc16exe_in_c7" && et.expAlts && et.expAlts[8] === "kv_nc16ete_out_c8" &&
-    /「端子番号」で端子名を読み替え/.test(ex.desc) && !/拡張ユニットの台数/.test(ex.desc + ex.stdNote);
+    /ユニットごとに 000 から/.test(ex.desc) && !/拡張ユニットの台数/.test(ex.desc + ex.stdNote);
   // ── 置いて下地 ──
   const sc = (symId) => {
     App.project = newProject("拡張"); UI.renumberPages();
@@ -71,7 +71,7 @@ const R = await p.evaluate(() => {
   const merged = dbPinnedList();
   out.migrate = merged.includes("kv_nc16exe_in") && merged.includes("kv_nc16ete_out") && merged.includes("cable_core");
   out.oldSame = /KV Nano 拡張ユニット KV-N16ET/.test(SYMBOLS_BY_ID.kv_n16et_out.desc) &&
-    names(SYMBOLS_BY_ID.kv_n16et_out) === exp16(6);
+    names(SYMBOLS_BY_ID.kv_n16et_out) === exp16(0);
   return out;
 });
 

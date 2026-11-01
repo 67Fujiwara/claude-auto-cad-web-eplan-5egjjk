@@ -2,23 +2,23 @@
 
    ・made       : kv_n8et_out / kv_n16et_out が生成され、辞書・DBに載る
    ・noInput    : 拡張ユニットに入力枚は無い (…_in が存在しない)
-   ・pins8/16   : 端子は 出力8点+COM=9 / 16点+COM=17。刻印は拡張1台目の
-                  想定で 600〜607 / 600〜615 + COM (16点は1チャネルに収まる)
+   ・pins8/16   : 端子は 出力8点+COM=9 / 16点+COM=17。端子番号はユニットごとに
+                  000 から: 000〜007 / 000〜015 + COM (拡張ユニットが何台でも同じ)
    ・noSvc      : サービス電源 (0V/24V) の端子・行が無い (基本ユニット専用)
    ・mirror     : 出力なので現場側が右 (箱が左・端子は右辺) — N14AT 出力と同じ向き
    ・oneSheet   : どちらも1枚に収まり (枚割りなし)、想定用紙が付く
    ・swap       : 機種入替グループ kv_nano_out に属し、基本ユニットと入替できる
    ・place      : 図面に置けて body が描かれ、行ピッチの寸法違い (stretch) も生きる
-   ・alts       : 2/3台目 (R700〜/R800〜) の台数違いが SYMBOLS_BY_ID にあり、
+   ・alts       : 旧版の 2/3台目の記号が SYMBOLS_BY_ID に残り (端子番号は同じ 000〜)、
                   パレット (DB_SYMBOLS) には出ない。端子位置は1台目と同一
    ・onSheet    : 見出しが「拡張出力 ◯点」、図中に「※拡張◯台目の割付」注記が
                   焼き込まれる (割付の前提が紙に残る — IEC 61082-1 の一義性)
    ・stdNote    : 端子表示がデバイス番号であり実機の刻印ではない旨を凡例に明記
    ・noChProp   : プロパティに「拡張ユニットの台数」のプルダウンは出さない (廃止)
-   ・oldC7      : 旧版で 2台目 (R700〜) にした図面は、そのまま 700〜 で描ける
+   ・oldC7      : 旧版で 2台目にした図面も開けて、端子番号は 000〜 で描かれる
    ・swapClean  : 機種入替のリストに台数違い (_c7/_c8) は混ざらない
    ・swapShow   : 旧版の 2台目の記号でプロパティを開いても、機種欄は親機種が選択表示される
-   ・swapKeepCh : 2台目のまま機種を N8ET へ差し替えると 2台目の N8ET (700〜) に着地する
+   ・swapKeepCh : 旧版の 2台目のまま機種を N8ET へ差し替えると 2台目の N8ET に着地する
    ・boundsNote : 図中注記のぶん外接矩形が下へ伸びる (注記 7mm は用紙判定にも入る)
    ・legend     : 規格外図記号の凡例 (stdNote) を pasteStdNote で図面に貼れる
    ・baseKept   : 基本ユニットの端子構成 (部屋割りコモン込み) が想定どおり */
@@ -83,18 +83,18 @@ const R = await p.evaluate(async () => {
   };
   out.onSheet = {
     header: s8.body.includes(">拡張出力 8点<") && s16.body.includes(">拡張出力 16点<"),
-    note1: s8.body.includes("※拡張1台目の割付 (R600〜)"),
-    note2: c7 && c7.body.includes("※拡張2台目の割付 (R700〜)"),
+    note1: s8.body.includes("※端子番号はユニットごとに 000〜") && !/R600/.test(s8.body),
+    note2: c7 && c7.body.includes("※端子番号はユニットごとに 000〜") && !/R700/.test(c7.body),
     boundsGrow: s8.bounds[3] > SYMBOLS_BY_ID["kv_n14at_out"].bounds[1] * 0 + 0,  // placeholder true
   };
-  out.stdNote = /デバイス番号/.test(s8.stdNote) && /刻印ではない/.test(s8.stdNote) && /接続順/.test(s8.stdNote);
+  out.stdNote = /点番号 000〜/.test(s8.stdNote) && /刻印は未確認/.test(s8.stdNote) && /接続順/.test(s8.stdNote);
 
   // ── 「拡張ユニットの台数」のプルダウンは出さない (廃止) ──
   App.selection.clear(); App.selection.add(d.id);
   UI.refresh();
   await new Promise(r => setTimeout(r, 150));
   out.noChProp = !document.querySelector("#pKvCh") && !document.body.textContent.includes("拡張ユニットの台数");
-  // 旧版で 2台目 (R700〜) にした図面を開いた想定: 記号は残っていて描ける
+  // 旧版で 2台目にした図面を開いた想定: 記号は残っていて、端子番号は 000〜
   const wireBefore = JSON.stringify(pg.wires.map(w => w.pts));
   d.sym = "kv_n16et_out_c7"; App.labelRev++;
   UI.refresh(); UI.showProps();
@@ -122,12 +122,12 @@ const R = await p.evaluate(async () => {
   const nLeg = pasteStdNote(pg, SYMBOLS_BY_ID[d.sym]);
   out.legend = {
     rows: nLeg,
-    onPage: pg.texts.some(t2 => /デバイス番号/.test(t2.text)) && pg.texts.some(t2 => /規格原本との照合/.test(t2.text)),
+    onPage: pg.texts.some(t2 => /点番号 000〜/.test(t2.text)) && pg.texts.some(t2 => /規格原本との照合/.test(t2.text)),
   };
   return out;
 });
 
-const seq = (a, b2) => Array.from({ length: b2 - a + 1 }, (_, i) => String(600 + i));
+const seq = (a, b2) => Array.from({ length: b2 - a + 1 }, (_, i) => String(a + i).padStart(3, "0"));
 const checks = {
   noPageErrors: errs.length === 0,
   made: R.made.s8 && R.made.s16 && R.made.inDb,
@@ -141,14 +141,14 @@ const checks = {
   place: R.place.dev && R.place.pins === 17 && R.place.drawn && R.place.stretch,
   baseKept: R.baseKept.n40pins === 20 && R.baseKept.n14in === 9,
   alts: R.alts.made && R.alts.notInDb && R.alts.altOf && R.alts.samePos
-    && R.alts.pins7 === [...seq(0, 7).map(v => String(+v + 100)), "COM"].join(","),
+    && R.alts.pins7 === [...seq(0, 7), "COM"].join(","),
   onSheet: R.onSheet.header && R.onSheet.note1 && R.onSheet.note2,
   stdNote: R.stdNote === true,
   noChProp: R.noChProp === true,
-  oldC7: R.oldC7.pins === "700,701…COM" && R.oldC7.wiresKept === true,
+  oldC7: R.oldC7.pins === "000,001…COM" && R.oldC7.wiresKept === true,
   swapClean: R.swapClean.shown && R.swapClean.noAlt && R.swapClean.hasBase,
   swapShow: R.swapShow === true,
-  swapKeepCh: R.swapKeepCh.sym === "kv_n8et_out_c7" && R.swapKeepCh.pin0 === "700" && R.swapKeepCh.posKept,
+  swapKeepCh: R.swapKeepCh.sym === "kv_n8et_out_c7" && R.swapKeepCh.pin0 === "000" && R.swapKeepCh.posKept,
   boundsNote: R.boundsNote.s8 === 13 && R.boundsNote.base === 13,   // (4+7+2) — AT 形は類推注記の帯が基本ユニットにも入る
   legend: R.legend.rows >= 1 && R.legend.onPage,
 };

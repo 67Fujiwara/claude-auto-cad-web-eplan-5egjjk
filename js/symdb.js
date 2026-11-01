@@ -573,9 +573,11 @@ function mkKvUnit(model, cfg) {
        内部で短絡) も、電気的には 1 つのコモンなので図では 1 行にまとめる */
     const comNote = cfg.comTerms ? `COM は ${cfg.comTerms} 端子あり内部で短絡している — 図では 1 行にまとめて描く (どの COM 端子に結線してもよい)。` : "";
     const termNote = cfg.term ? `外部接続は${cfg.term}。` : "";
-    chs.forEach((ch, ci) => {
-      const n = ci + 1;
-      const sheets = autoSheets(ch, isIn ? cfg.nIn : cfg.nOut, "COM", kind);
+    chs.forEach(ch => {
+      /* 端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。
+         リレー番号 (R600〜 など) は接続順で決まり端子には書かない。2/3台目の
+         記号 (旧版の割付) も同じ番号で描く — 旧図面を開いても 000〜 になる */
+      const sheets = autoSheets(0, isIn ? cfg.nIn : cfg.nOut, "COM", kind);
       // 拡張ユニットは最大 16 点 = 1 枚に収まる (収まらない機種を
       // 足すときは基本ユニットと同じ枚割り・id 連番に戻すこと)
       sheets.forEach(gs => {
@@ -590,17 +592,17 @@ function mkKvUnit(model, cfg) {
           fieldSide: isIn ? "left" : "right",
           swapGroup: `kv_nano_${kindId}`,
           expCh: ch, expAlts: altIds, ...(ch !== cfg.ch0 ? { altOf: altIds[cfg.ch0] } : {}),
-          expNote: `※拡張${n}台目の割付 (R${ch}00〜)` + (isIn ? "。コモンは +24V (NPN 機器向け)" : ""),
-          name: `${model} ${kind}結線図${ch === cfg.ch0 ? "" : ` (拡張${n}台目 R${ch}00〜)`}`,
-          nameEn: `${model} ${isIn ? "input" : "output"} wiring${ch === cfg.ch0 ? "" : ` (unit ${n})`}`,
+          expNote: "※端子番号はユニットごとに 000〜" + (isIn ? "。コモンは +24V (NPN 機器向け)" : ""),
+          name: `${model} ${kind}結線図`,
+          nameEn: `${model} ${isIn ? "input" : "output"} wiring`,
           stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示。端子の図記号番号は規格原本との照合が必要)。" +
-            `ただし端子位置の表示は KV のデバイス番号 (R を除いた数字) — 実機の端子台の刻印ではない (${model} の刻印は未確認)。` +
-            "リレー番号は接続順で決まるため、図中の『※拡張◯台目の割付』注記と端子番号を実機の割付に合わせること。" +
+            `端子位置の表示はユニットごとの点番号 000〜 (拡張ユニットが何台あっても 000 から。${model} の端子台の刻印は未確認)。` +
+            "KV のリレー番号 (R600〜 など) は接続順で決まるので端子には書かない。" +
             (cfg.comTerms ? `COM は ${cfg.comTerms} 端子 (内部で短絡) を 1 行にまとめて表示。` : "コモンの刻印 COM は N14AR からの類推 (実機未確認)。") +
             "ユニットの電源と接地は別紙の電源回路図に描きます",
-          desc: `キーエンス ${cfg.series || "KV Nano"} 拡張ユニット ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点・拡張${n}台目 R${ch}00〜)。` +
+          desc: `キーエンス ${cfg.series || "KV Nano"} 拡張ユニット ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点)。` +
             termNote +
-            `実機の割付が違うとき (2台目以降など) は、プロパティの「端子番号」で端子名を読み替えてください。` +
+            `端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。端子名を変えたいときはプロパティの「端子番号」で書き替えられます。` +
             (isIn
               ? `コモンは 1 つ (${pts.length}点/1コモン)。${comNote}コモンを +24V にした NPN 機器向けの割付 (PNP 機器ならレールの電位名を描き替え)。` +
                 (cfg.inNote || "")
