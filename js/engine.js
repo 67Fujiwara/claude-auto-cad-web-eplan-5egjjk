@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 236;
+const APP_VERSION = 237;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -1217,7 +1217,8 @@ function pageDrawnMinima(page) {
   page.devices.forEach(dev => {
     const sym = symOf(dev.sym);
     if (sym.mirror && linkedContacts(dev).length) h = Math.min(h, TEXT_H.small * f);
-    if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
+    if (sym.pageRef) h = Math.min(h, TEXT_H.normal * f * devScale(dev));
+    else if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
     if (deviceRowTexts(page, dev).length) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
   });
   if (!isFinite(h)) h = TEXT_H.small * f;
@@ -1878,8 +1879,39 @@ function deviceXrefUser(dev) {
   const x = dev.x + (dev.xrefAt.dx || 0), y = dev.y + (dev.xrefAt.dy || 0);
   return { x, y, text, box: { x, y: y - h, w, h }, size: h, user: true };
 }
+/** 図番の文字 (行き先の旗・参照テキスト) の置き場所。c0 = 文字の中心。
+    縦向きに置いた記号では文字も 90° 倒す (図面の文字は下辺から、やむを
+    得なければ右辺から読む向き — JIS Z 8317-1 / IEC 61082-1)。
+    高さは textHeightMM を通す。和文の図番は最小呼び 3.5mm へ上がるので
+    (JIS Z 8313-10)、そのままだと外接矩形が実際より低くなり、図枠はみ出し・
+    文字の重なりの検図が誤判定する */
+function refTextBox(dev, text0, hNom, c0) {
+  const h0 = textHeightMM(text0, hNom);
+  const w0 = textWidthMM(text0, h0, false, true);
+  /* 上下の中心合わせは実インクで測る。呼び h は基準の字 (H) の高さなので、
+     "/" や和文のように基線の下へ出る字は h だけでは測れず、中心から下へずれる */
+  const ink = textInkMM(text0, h0, true, false);
+  const ih = ink.up + ink.down;                       // 実際に紙へ乗る高さ
+  const base0 = (ink.up - ink.down) / 2;              // 中心から基線までの距離
+  const rot0 = (((dev.rot || 0) % 360) + 360) % 360;
+  const ang0 = (rot0 === 90 || rot0 === 270) ? 90 : 0;
+  // 読む向き u と字の下向き v (画面は y 下向き)。基線は中央から v へ base0
+  const ca = Math.cos(ang0 * Math.PI / 180), sa = Math.sin(ang0 * Math.PI / 180);
+  const vx = sa, vy = ca;
+  return { x: c0.x + vx * base0, y: c0.y + vy * base0, text: text0, size: h0,
+    anchor: "middle", angle: ang0, ink: true,        // 図番は図面色で刷る (注記ではない)
+    box: { x: c0.x - (ang0 ? ih : w0) / 2, y: c0.y - (ang0 ? w0 : ih) / 2,
+      w: ang0 ? ih : w0, h: ang0 ? w0 : ih } };
+}
 function deviceXrefBox(page, dev) {
   const sym0 = symOf(dev.sym);
+  /* 参照テキスト: 選んだページの図番そのものを、置いた位置を中心に書く。
+     図番は持たず描くたびに引くので、並べ替え・振り直しに追従する。
+     参照先が無い (未設定・削除済み) ときは「?」 */
+  if (sym0 && sym0.pageRef) {
+    const pg = gotoTargetPage(dev);
+    return refTextBox(dev, pg ? pageDwgNo(pg) : "?", TEXT_H.normal * contentScale() * devScale(dev), { x: dev.x, y: dev.y });
+  }
   if (sym0 && sym0.gotoRef) {
     /* 行き先の図番は旗の平行部の中央に、旗の長手方向へ沿わせて置く。図番そのものは
        持たず、選んだページのものを描くたびに引くので、ページを並べ替えても
@@ -1891,27 +1923,9 @@ function deviceXrefBox(page, dev) {
        高さは textHeightMM を通す。和文の図番は最小呼び 3.5mm へ上がるので
        (JIS Z 8313-10)、2.5mm のままだと外接矩形が実際より 1mm 低くなり、
        図枠はみ出し・文字の重なりの検図が誤判定する */
-    const s0 = contentScale();
-    const text0 = gotoRefText(dev);
-    const h0 = textHeightMM(text0, TEXT_H.small * s0 * devScale(dev));
-    const w0 = textWidthMM(text0, h0, false, true);
-    /* 上下の中心合わせは実インクで測る。呼び h は基準の字 (H) の高さなので、
-       "/" や和文のように基線の下へ出る字は h だけでは測れず、中心から下へ
-       ずれて旗の輪郭に接する */
-    const ink = textInkMM(text0, h0, true, false);
-    const ih = ink.up + ink.down;                       // 実際に紙へ乗る高さ
-    const base0 = (ink.up - ink.down) / 2;              // 中心から基線までの距離
     const fl0 = gotoFlag(sym0);
     const c0 = pinAbs(dev, { x: (fl0.x0 + fl0.x1) / 2, y: 0 });   // 平行部の中央 (機器と一緒に回る)
-    const rot0 = (((dev.rot || 0) % 360) + 360) % 360;
-    const ang0 = (rot0 === 90 || rot0 === 270) ? 90 : 0;
-    // 読む向き u と字の下向き v (画面は y 下向き)。基線は中央から v へ base0
-    const ca = Math.cos(ang0 * Math.PI / 180), sa = Math.sin(ang0 * Math.PI / 180);
-    const vx = sa, vy = ca;
-    return { x: c0.x + vx * base0, y: c0.y + vy * base0, text: text0, size: h0,
-      anchor: "middle", angle: ang0, ink: true,        // 図番は図面色で刷る (注記ではない)
-      box: { x: c0.x - (ang0 ? ih : w0) / 2, y: c0.y - (ang0 ? w0 : ih) / 2,
-        w: ang0 ? ih : w0, h: ang0 ? w0 : ih } };
+    return refTextBox(dev, gotoRefText(dev), TEXT_H.small * contentScale() * devScale(dev), c0);
   }
   if (!dev.linkTo) return null;
   const f = findDevice(dev.linkTo);
@@ -4654,6 +4668,16 @@ function runDRC() {
     /* 行き先 (継続先)。相互参照は「指し先が一意に決まる」ことと「往復で対に
        なっている」ことで初めて図面の続きが追える (IEC 61082-1)。
        未設定のまま出図すると紙に「?」が刷られるので、警告ではなくエラー */
+    /* 参照テキストも、参照先が無いまま出図すると紙に「?」が刷られる */
+    page.devices.forEach(dev => {
+      const sy = symOf(dev.sym);
+      if (!sy || !sy.pageRef) return;
+      const id = dev.props && dev.props.toPage;
+      if (!id || !gotoTargetPage(dev))
+        issues.push({ sev: "err", rule: "参照テキストの参照先なし", page: page.no, target: dev.id, loc: devLocation(dev),
+          msg: id ? "参照テキストの参照先のページが削除されています (図面に「?」が刷られます。プロパティの「参照先」で選び直してください)"
+                  : "参照テキストの参照先が選ばれていません (図面に「?」が刷られます。プロパティの「参照先」でページを選んでください)" });
+    });
     const gotoDevs = page.devices.filter(d => { const s = symOf(d.sym); return s && s.gotoRef; });
     gotoDevs.forEach(dev => {
       const sy = symOf(dev.sym);
@@ -5017,7 +5041,7 @@ function cablePartner(page, dev) {
   return page.devices.find(d2 => d2 !== dev && (symOf(d2.sym).stretchOf || d2.sym) === want &&
     Math.abs(d2.x - dev.x) < 0.01 && Math.abs(d2.y - dev.y) < 0.01 && (d2.rot || 0) === (dev.rot || 0)) || null;
 }
-const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth", "goto_ref"]); // 購買部品でないもの (行き先は図面の注記)
+const BOM_EXCLUDE = new Set(["link", "supply3", "supply1", "earth", "goto_ref", "page_ref"]); // 購買部品でないもの (行き先・参照テキストは図面の注記)
 function buildBOM() {
   const rows = new Map();
   App.project.pages.forEach(page => page.devices.forEach(dev => {

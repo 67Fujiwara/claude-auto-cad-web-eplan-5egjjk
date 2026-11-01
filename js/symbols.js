@@ -496,6 +496,17 @@ const SYMBOLS = [
     body: `<path d="M0,0 H5"/><path d="M5,-2.5 H30 L35,0 L30,2.5 H5 Z" fill="#fff" stroke-width="0.25" stroke-linejoin="miter"/>`,
   },
   {
+    /* 参照テキスト: 選んだページの図面番号だけを文字で書く (旗も引出線も無い)。
+       行き先と同じく、参照先はページ id で持ち、図番は描くたびに引く */
+    id: "page_ref", nonstd: true, cat: "misc", letter: "", name: "参照テキスト (図番)", nameEn: "Drawing number reference",
+    desc: "選んだページの図面番号を文字で表示する (例: B-015)。参照先はプロパティのプルダウンで選び、ページの並べ替え・図番の振り直しに追従する。電気的な接続は持たない",
+    stdNote: "図面番号による参照 (IEC 61082-1 の相互参照)。文字だけの注記で、電気的な意味は持たない",
+    pageRef: true, pins: [], sim: "none", noDrc: true, bounds: [-9, -3, 18, 6],
+    body: "",
+    // パレット専用の見本 (図面には描かない — 図面の文字は参照先の図番を毎回引いて描く)
+    thumbBody: `<text x="0" y="1.3" data-h="3.5" text-anchor="middle" fill="currentColor" stroke="none" font-family="monospace">B-001</text>`,
+  },
+  {
     id: "generic2", nonstd: true, cat: "misc", letter: "U", name: "汎用機器 (2端子)", nameEn: "Generic device 2-pin",
     desc: "未登録機器用の箱。名称/型式はプロパティで設定", pins: [{x:0,y:0,n:"1"},{x:0,y:20,n:"2"}],
     sim: "none", bounds: [-9,-2, 18, 24],
@@ -809,7 +820,7 @@ function symThumbSVG(sym, size = 46) {
   // 文字はそのままにして、はみ出しを防ぐ。
   const k = 1.1 / symStrokeWidth(sym);
   // 破線は「線素で始まり線素で終わる」補正を最後に掛ける (倍率は先に反映させる)
-  const scaled = symResolveTextSize(sym.body, 1)
+  const scaled = symResolveTextSize(sym.thumbBody || sym.body, 1)
     .replace(/stroke-width="([\d.]+)"/g, (m, v) => `stroke-width="${(parseFloat(v) * k).toFixed(3)}"`)
     .replace(/stroke-dasharray="([\d. ]+)"/g, (m, v) => `stroke-dasharray="${v.trim().split(/\s+/).map(n => (parseFloat(n) * k).toFixed(3)).join(" ")}"`);
   const body = scaleSymbolGeom(scaled, 1);

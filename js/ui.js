@@ -625,6 +625,7 @@ function bindPnDraw(pane) {
             `<option value="${c2}"${c2 === base.expCh ? " selected" : ""}>拡張${i2 + 1}台目 (R${c2}00〜)</option>`).join("")}</select></div>`;
       })()}
       ${(() => {
+        if (sym.pageRef) return "";       // 文字だけの記号 — 配線を隠す用途は無い
         /* 配線の破断: この記号に重なった配線を、指定した線から下だけ隠す。
            波線 (破断記号) を持つ自作記号などで、記号の下へ抜ける線を省略した
            見た目にする。外接矩形 (青枠) でなく「破断線の位置」で切るので、
@@ -667,13 +668,13 @@ function bindPnDraw(pane) {
                  : `<span class="rp-dim">✓ このページはこの用紙です</span>`}
           </div></div>`;
       })() : ""}
-      ${sym.gotoRef ? (() => {
-        // 行き先はページ id を持つ。図番はページの現在の値を描くたびに引くので、
-        // ページを並べ替えても図番を振り直しても表示が追従する
+      ${(sym.gotoRef || sym.pageRef) ? (() => {
+        // 行き先・参照テキストはページ id を持つ。図番はページの現在の値を描くたびに
+        // 引くので、ページを並べ替えても図番を振り直しても表示が追従する
         const cur2 = (dev.props && dev.props.toPage) || "";
         const opts2 = App.project.pages.filter(pg => pg !== curPage())
           .map(pg => `<option value="${pg.id}"${pg.id === cur2 ? " selected" : ""}>${escAttr(pageDwgNo(pg))} — ${pg.no}. ${escAttr(pg.name)}</option>`).join("");
-        return `<div class="prop-row"><label>行き先 <span class="rp-dim">(図面番号は選んだページのものを表示)</span></label>
+        return `<div class="prop-row"><label>${sym.pageRef ? "参照先" : "行き先"} <span class="rp-dim">(図面番号は選んだページのものを表示)</span></label>
           <select id="pGoto"><option value=""${cur2 ? "" : " selected"}>— 未設定 —</option>${opts2}</select></div>`;
       })() : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}

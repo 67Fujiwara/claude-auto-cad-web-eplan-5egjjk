@@ -362,7 +362,7 @@ function devLabelGrips(page, dev) {
     out.push({ kind: "tag", box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, ax: base.x, ay: base.y, anchor: base.anchor,
       descDy: tg && ds ? ds.y - tg.y : undefined });
   }
-  if (!sym.gotoRef) {
+  if (!sym.gotoRef && !sym.pageRef) {     // 図番の文字そのものが記号 — 動かすときは記号ごと
     const xr = deviceXrefBox(page, dev);
     if (xr) out.push({ kind: "xref", box: xr.box, ax: xr.x, ay: xr.y });
   }
