@@ -674,7 +674,9 @@ function bindPnDraw(pane) {
         const opts2 = App.project.pages.filter(pg => pg !== curPage())
           .map(pg => `<option value="${pg.id}"${pg.id === cur2 ? " selected" : ""}>${escAttr(pageDwgNo(pg))} — ${pg.no}. ${escAttr(pg.name)}</option>`).join("");
         return `<div class="prop-row"><label>${sym.pageRef ? "参照先" : "行き先"} <span class="rp-dim">(図面番号は選んだページのものを表示)</span></label>
-          <select id="pGoto"><option value=""${cur2 ? "" : " selected"}>— 未設定 —</option>${opts2}</select></div>`;
+          <select id="pGoto"><option value=""${cur2 ? "" : " selected"}>— 未設定 —</option>${opts2}</select></div>` +
+          (sym.pageRef ? `<div class="prop-row"><label>文字高 (mm) <span class="rp-dim">(標準 ${TEXT_H.normal})</span></label>
+          <input id="pRefH" class="mono" type="number" step="0.5" min="2.5" max="50" value="${pageRefH(dev)}"/></div>` : "");
       })() : ""}
       ${sym.mirror ? UI.mirrorHTML(dev) : ""}
     `;
@@ -823,6 +825,14 @@ function bindPnDraw(pane) {
     bind("#pGoto", v => {
       dev.props = dev.props || {};
       if (v) dev.props.toPage = v; else delete dev.props.toPage;
+      App.labelRev++;
+    });
+    bind("#pRefH", v => {
+      const n = parseFloat(v);
+      dev.props = dev.props || {};
+      // 標準と同じ・空欄なら持たない (既定のまま)。極端な値は丸める
+      if (isNaN(n) || Math.abs(n - TEXT_H.normal) < 1e-9) delete dev.props.refH;
+      else dev.props.refH = Math.min(50, Math.max(2.5, n));
       App.labelRev++;
     });
     bind("#pDelay", v => { const n = parseFloat(v); dev.props.delay = isNaN(n) ? 2 : n; });

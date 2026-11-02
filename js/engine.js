@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 241;
+const APP_VERSION = 242;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -1217,7 +1217,7 @@ function pageDrawnMinima(page) {
   page.devices.forEach(dev => {
     const sym = symOf(dev.sym);
     if (sym.mirror && linkedContacts(dev).length) h = Math.min(h, TEXT_H.small * f);
-    if (sym.pageRef) h = Math.min(h, TEXT_H.normal * f * devScale(dev));
+    if (sym.pageRef) h = Math.min(h, pageRefH(dev) * f * devScale(dev));
     else if (deviceXrefBox(page, dev)) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
     if (deviceRowTexts(page, dev).length) h = Math.min(h, TEXT_H.small * f * symTextK(sym) * devScale(dev));
   });
@@ -1947,6 +1947,19 @@ function refTextBox(dev, text0, hNom, c0) {
     box: { x: c0.x - (ang0 ? ih : w0) / 2, y: c0.y - (ang0 ? w0 : ih) / 2,
       w: ang0 ? ih : w0, h: ang0 ? w0 : ih } };
 }
+/** 参照テキストの文字高 (mm・紙の上の呼び)。プロパティの「文字高」で変えられ、
+    未設定なら標準 (3.5mm) */
+function pageRefH(dev) {
+  const n = dev && dev.props && +dev.props.refH;
+  return n > 0 ? n : TEXT_H.normal;
+}
+/** 記号の外形 [x, y, w, h] (記号ローカル)。参照テキストは文字高に合わせて伸び縮みする */
+function devSymBounds(dev, sym) {
+  const b = (sym || symOf(dev.sym)).bounds;
+  if (!(sym || symOf(dev.sym)).pageRef) return b;
+  const k = pageRefH(dev) / TEXT_H.normal;
+  return b.map(v => v * k);
+}
 function deviceXrefBox(page, dev) {
   const sym0 = symOf(dev.sym);
   /* 参照テキスト: 選んだページの図番そのものを、置いた位置を中心に書く。
@@ -1954,7 +1967,7 @@ function deviceXrefBox(page, dev) {
      参照先が無い (未設定・削除済み) ときは「?」 */
   if (sym0 && sym0.pageRef) {
     const pg = gotoTargetPage(dev);
-    return refTextBox(dev, pg ? pageDwgNo(pg) : "?", TEXT_H.normal * contentScale() * devScale(dev), { x: dev.x, y: dev.y });
+    return refTextBox(dev, pg ? pageDwgNo(pg) : "?", pageRefH(dev) * contentScale() * devScale(dev), { x: dev.x, y: dev.y });
   }
   if (sym0 && sym0.gotoRef) {
     /* 行き先の図番は旗の平行部の中央に、旗の長手方向へ沿わせて置く。図番そのものは
@@ -2941,8 +2954,7 @@ function devPins(dev) {
   return sym.pins.map((p, i) => ({ ...pinAbs(dev, p), name: p.n, idx: i }));
 }
 function devBounds(dev) {
-  const sym = symOf(dev.sym);
-  const [bx, by, bw, bh] = sym.bounds;
+  const [bx, by, bw, bh] = devSymBounds(dev);
   const corners = [[bx, by], [bx + bw, by], [bx, by + bh], [bx + bw, by + bh]]
     .map(([x, y]) => pinAbs(dev, { x, y }));
   const xs = corners.map(p => p.x), ys = corners.map(p => p.y);

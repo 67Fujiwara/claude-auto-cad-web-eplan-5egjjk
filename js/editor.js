@@ -555,7 +555,7 @@ function devicesSVG(page, opts = {}) {
     }
     out += `<g transform="translate(${dev.x},${dev.y}) rotate(${dev.rot || 0})${dk !== 1 ? ` scale(${dk})` : ""}" data-id="${dev.id}" class="device" style="color:${color}">`;
     if (selected || hovered) {
-      const [bx, by, bw, bh] = sym.bounds;
+      const [bx, by, bw, bh] = devSymBounds(dev, sym);
       out += `<rect x="${bx - 2}" y="${by - 2}" width="${bw + 4}" height="${bh + 4}" fill="${selected ? "rgba(31,122,224,.10)" : "rgba(31,122,224,.05)"}" stroke="${SEL}" stroke-width="${(selected ? 0.5 : 0.3) / dk}" stroke-dasharray="${selected ? "none" : "1.5 1.2"}" rx="1"/>`;
     }
     out += extra;

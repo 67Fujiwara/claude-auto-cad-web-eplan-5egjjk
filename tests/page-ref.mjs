@@ -11,7 +11,10 @@
    ・rotate  : 縦に置く (90°) と文字も 90° 倒れる
    ・props   : プロパティに「参照先」のプルダウンが出て、選ぶと参照先が入る
    ・noGrip  : 文字そのものが記号なので、明示のつかみ枠は出ない (記号ごと動かす)
-   ・bom     : 部品表には載らない (購買部品ではない)。プロパティに配線の破断は出ない */
+   ・bom     : 部品表には載らない (購買部品ではない)。プロパティに配線の破断は出ない
+   ・size    : プロパティの「文字高 (mm)」(既定 3.5) で文字の大きさを変えられる。
+              画面・印刷 SVG・DXF の文字高が変わり、選択枠・当たり判定も文字に合わせて
+              伸びる (検図の最小文字高もその値で測る)。標準値に戻すと値を持たない。2.5mm 未満 (JIS の最小) は 2.5 に丸める */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -74,6 +77,37 @@ const R = await p.evaluate(() => {
     sel.value = ins.id; sel.dispatchEvent(new Event("change"));
     out.props.picked = d.props.toPage === ins.id && txt() === pageDwgNo(ins);
   }
+  // ── size ──
+  const hIn = document.querySelector("#pRefH");
+  out.size = { input: !!hIn, def: hIn ? +hIn.value : null, h0: deviceXrefBox(pgA, d).size, bw0: devBounds(d).w };
+  if (hIn) {
+    hIn.value = "7"; hIn.dispatchEvent(new Event("change"));
+    const x7 = deviceXrefBox(pgA, d);
+    App.selection.clear(); UI.refresh(); renderAll();
+    const tEl = [...document.querySelectorAll("#lyDevices text")].find(t => t.textContent === x7.text);
+    const sv7 = exportSheetSVG(pgA); applySheet(pgA);
+    const dx7 = pageToDXF(pgA);
+    const m = new RegExp("\\n1\\n" + x7.text + "\\n").exec(dx7);
+    const pre = m ? dx7.slice(Math.max(0, m.index - 300), m.index) : "";
+    out.size.refH = d.props.refH; out.size.h7 = x7.size; out.size.bw7 = devBounds(d).w;
+    out.size.scrFs = tEl ? parseFloat(tEl.getAttribute("font-size")) : null;
+    out.size.printFs = (() => { const mm = new RegExp('font-size="([\\d.]+)"[^>]*>' + x7.text + "<").exec(sv7); return mm ? +mm[1] : null; })();
+    out.size.dxfH = (() => { const mm = /\n40\n([\d.]+)$/.exec(pre); return mm ? +mm[1] : null; })();
+    out.size.fs0 = svgFontSizeFor(x7.text, TEXT_H.normal, true);
+    out.size.saved = JSON.parse(JSON.stringify(App.project)).pages.find(q => q.id === pgA.id).devices.find(q => q.id === d.id).props.refH;
+    out.size.minH = pageDrawnMinima(pgA).h;
+    App.selection.add(d.id); UI.showProps(); renderAll();
+    const selR = document.querySelector(`#lyDevices g[data-id="${d.id}"] > rect`);
+    out.size.selW = selR ? +selR.getAttribute("width") : null;
+    const hIn2 = document.querySelector("#pRefH");
+    out.size.shown = hIn2 ? +hIn2.value : null;
+    hIn2.value = "1"; hIn2.dispatchEvent(new Event("change"));
+    out.size.clamp = d.props.refH;
+    UI.showProps();
+    const hIn3 = document.querySelector("#pRefH");
+    hIn3.value = "3.5"; hIn3.dispatchEvent(new Event("change"));
+    out.size.back = "refH" in d.props; out.size.hBack = deviceXrefBox(pgA, d).size; out.size.bwBack = devBounds(d).w;
+  }
   // ── noGrip ──
   out.noGrip = devLabelGrips(pgA, d).length;
   // ── 参照先のページを消す ──
@@ -95,6 +129,10 @@ const checks = {
   props: R.props.sel === true && /^参照先/.test(R.props.label) && R.props.picked === true && R.props.noCut === true,
   bom: R.bom === true,
   noGrip: R.noGrip === 0,
+  size: R.size.input && R.size.def === 3.5 && R.size.refH === 7 && R.size.saved === 7 && R.size.shown === 7 &&
+    Math.abs(R.size.h7 / R.size.h0 - 2) < 1e-9 && Math.abs(R.size.bw7 / R.size.bw0 - 2) < 1e-9 &&
+    R.size.scrFs > R.size.fs0 * 1.9 && R.size.printFs > R.size.fs0 * 1.9 && Math.abs(R.size.dxfH - R.size.h7) < 0.01 &&
+    R.size.minH === 7 && R.size.selW === R.size.bw7 + 4 && R.size.clamp === 2.5 && R.size.back === false && R.size.hBack === R.size.h0 && R.size.bwBack === R.size.bw0,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));
