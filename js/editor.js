@@ -1728,7 +1728,8 @@ function hitTest(wx, wy) {
         wy > r.y - 1.5 && wy < r.y + r.h + 1.5)) cands.push({ type: "device", obj: d });
       continue;
     }
-    const b = devBounds(d);
+    // 行き先は矢じりの先の図番も記号の一部 (文字をつまんでも記号ごと選べる)
+    const b = sym.gotoRef ? gotoFlagBox(d) : devBounds(d);
     if (wx > b.x - 1.5 && wx < b.x + b.w + 1.5 && wy > b.y - 1.5 && wy < b.y + b.h + 1.5) cands.push({ type: "device", obj: d });
   }
   if (!cands.length) return null;

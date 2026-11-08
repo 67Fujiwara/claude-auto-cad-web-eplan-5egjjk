@@ -12,20 +12,21 @@
    ページ個別の図番のどれでも追従すること)。
 
    判定
-   ・記号が 1 極 (線 1 本) で、図番を旗の中に表示すること
-   ・旗の寸法が図形 (body) と計算用の値で一致し、寸法モジュール M=2.5mm の
-     整数倍・全長は格子 5mm の整数倍であること (JIS C 0617-1)
-   ・旗の輪郭が細線 0.25mm で白抜きであること (JIS Z 8312: 太線は導体と外形)
+   ・記号が 1 極 (線 1 本) で、導体の終端に黒い矢じり、その先に図番を書くこと
+     (EPLAN の中断点に近い形)
+   ・矢じりの寸法が図形 (body) と計算用の値で一致し、M/2 = 1.25mm の整数倍、
+     図番の書き出し (先端 + あき) は格子の半目 2.5mm の整数倍であること
    ・図番が指し先ページの pageDwgNo と一致し、画面 (SVG) にもその文字が出ること
    ・図番の文字列を保存データに持たないこと
    ・並べ替え・接頭辞の変更・ページ個別図番・ページ追加のどれでも追従すること
    ・プルダウン (#pGoto) が実際の操作で効き、自ページは選べず、
      並べ替え後は選択肢の表示も新しい図番になること
-   ・図番の文字が旗の平行部の中央にあり、五角形の 5 辺から 0.7mm 以上あくこと。
-     縦置きでは 90° 倒れること (文字は下辺から/右辺から読む: JIS Z 8317-1)
+   ・図番は矢じりの先端からあき (gap) をとって書き出し、導体の延長線上に中心が
+     乗ること (4 方向とも矢の向きへ続く)。縦置きでは 90° 倒れること
+     (文字は下辺から/右辺から読む: JIS Z 8317-1)
    ・外接矩形と上下の中心合わせを、呼び寸法ではなく実際のインク (基線の下へ
-     出る分を含む) で行うこと。和文の図番は最小呼び 3.5mm へ上がって旗に
-     収まらないので、黙って輪郭に接するのではなく検図がエラーで知らせること
+     出る分を含む) で行うこと。図番は枠に入れないので、長い図番・和文の図番
+     (最小呼び 3.5mm) でも検図エラーにならず、文字の端をつまんでも記号を選べること
    ・相手の葉から指し返す対ができたら、図番に区分 (列と行 / JIS Z 8311) まで
      書くこと。対は葉ではなく信号 (同じ電位リンクのタグ) で決めること —
      ページだけで決めると、同じ 2 葉の間を別の回路が渡っているときに
@@ -35,8 +36,8 @@
      無関係な葉での重複と同一ページ内の重複は今までどおり出すこと
    ・別ページへ貼り付けた行き先が自分の葉を指したままにならないこと (しかも黙ってやらない)
    ・検図: 未設定=エラー (紙に「?」が刷られるため) / 自己参照=エラー /
-     指し先が削除済み=エラー / 対が無い=警告 / 旗どうしが近すぎる=警告 /
-     図番が旗に入らない=警告 / 電位リンクが無い・相手が食い違う=警告とエラー。
+     指し先が削除済み=エラー / 対が無い=警告 / 行き先どうしが近すぎる=警告 /
+     電位リンクが無い・相手が食い違う=警告とエラー。
      正しく描いた図では 0 件
    ・DXF にも同じ文字が同じ位置・同じ角度で、専用レイヤ (XREF) に出ること。
      中央寄せは揃え記号 (72/11/21) でも渡すこと */
@@ -70,18 +71,16 @@ const R = await p.evaluate(() => {
   const sym = symOf("goto_ref");
   out.sym = { gotoRef: !!sym.gotoRef, pins: sym.pins.length, cat: sym.cat, name: sym.name };
   out.flagDef = JSON.stringify(sym.gotoRef);
-  // 旗の輪郭は電気的な意味を持たない参照枠なので細線 0.25mm (JIS Z 8312)
-  out.thin = /L30,0[^"]*"[^>]*stroke-width="0\.25"/.test(sym.body) ||
-    /<path d="M5,-2\.5[^"]*"[^>]*stroke-width="0\.25"/.test(sym.body);
-  out.filled = /fill="#fff"/.test(sym.body);
-  // 寸法モジュール M=2.5mm の整数倍で、全長は格子 5mm の整数倍か
-  const M = 2.5, G = 5;
+  // 矢じり (2 本目の path) は塗りつぶし
+  out.filled = /<path d="[^"]*Z"[^>]*fill="currentColor"/.test((sym.body.match(/<path [^>]*>/g) || [])[1] || "");
+  // 寸法は M/2 = 1.25mm の整数倍、図番の書き出しは 2.5mm の整数倍か
+  const M = 1.25, G = 2.5;
   const g0 = sym.gotoRef;
-  out.module = [g0.lead, g0.x0, g0.x1, g0.tip, g0.h].every(v => Math.abs(v / M - Math.round(v / M)) < 1e-9) &&
-    Math.abs(g0.tip / G - Math.round(g0.tip / G)) < 1e-9;
+  out.module = [g0.lead, g0.tip, g0.h, g0.gap].every(v => Math.abs(v / M - Math.round(v / M)) < 1e-9) &&
+    Math.abs((g0.tip + g0.gap) / G - Math.round((g0.tip + g0.gap) / G)) < 1e-9;
 
-  /* 旗 (2 本目の path = 矢羽根の輪郭) の範囲を body から直に読む。文字の位置は
-     図形そのものを基準に見るので、旗の形を変えれば必ずここで落ちる */
+  /* 矢じり (2 本目の path) の範囲を body から直に読む。文字の位置は
+     図形そのものを基準に見るので、矢じりの形を変えれば必ずここで落ちる */
   const walk = (d) => {
     const xs = [], ys = [];
     let x = 0, y = 0;
@@ -100,8 +99,9 @@ const R = await p.evaluate(() => {
   const flag = walk((sym.body.match(/<path d="([^"]+)"/g) || [])[1].match(/d="([^"]+)"/)[1]);
   out.flag = flag;
   // 実際に描く図形と、engine が計算に使う寸法が一致していること
-  out.bodyMatchesDef = flag.x0 === g0.x0 && flag.x1 === g0.tip &&
-    flag.y0 === -g0.h && flag.y1 === g0.h;
+  const lead = walk((sym.body.match(/<path d="([^"]+)"/) || [])[1]);
+  out.bodyMatchesDef = flag.x0 === g0.lead && flag.x1 === g0.tip &&
+    flag.y0 === -g0.h && flag.y1 === g0.h && lead.x0 === 0 && lead.x1 === g0.lead;
 
   const shown = () => { const xr = deviceXrefBox(p1, dev); return xr ? xr.text : "(なし)"; };
   const drawnText = () => {                     // 実際に紙へ出る文字 (この記号のぶんだけ)
@@ -157,49 +157,26 @@ const R = await p.evaluate(() => {
     want: pageDwgNo(App.project.pages.find(pg => pg.id === r2.id)) };
   UI.movePage(2, 1);
 
-  /* ⑨ 文字の位置: 旗の平行部の中央にあり、五角形の内側に判読できるあき
-     (0.7mm) を残して収まる。外接矩形ではなく五角形の 5 辺で見るので、
-     先端の斜辺への食い込みも捕まえる */
+  /* ⑨ 文字の位置: 矢じりの先端から gap あけて書き出し、中心は導体の延長線上。
+     4 方向とも矢の向きへ続く。外接矩形ではなく記号ローカルへ戻して測る */
   const d3 = App.project.pages.find(isDrawingPage).devices.find(x => symOf(x.sym).gotoRef);
-  // 五角形の頂点 (記号ローカル)。辺への距離で判定する
-  const poly = [[g0.x0, -g0.h], [g0.x1, -g0.h], [g0.tip, 0], [g0.x1, g0.h], [g0.x0, g0.h]];
-  const distToEdges = (px, py) => {
-    let min = Infinity;
-    for (let i = 0; i < poly.length; i++) {
-      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length];
-      const vx = bx - ax, vy = by - ay;
-      const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
-      min = Math.min(min, Math.hypot(px - (ax + t * vx), py - (ay + t * vy)));
-    }
-    return min;
-  };
-  /* 検図が「入る」と言い切る幅 (gotoTextRoom) いっぱいの図番を、実際に置いたときに
-     五角形からあきが取れるか。検図の閾値と図形が食い違っていたらここで落ちる */
-  {
-    const room = gotoTextRoom(sym), roomH = gotoTextRoomH(sym), cx = (g0.x0 + g0.x1) / 2;
-    const corners = (w, h) => Math.min(...[[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]
-      .map(([dx, dy]) => distToEdges(cx + dx, dy)));
-    // 幅・高さとも許容いっぱいの図番で、輪郭の中心線まで 0.825mm
-    // (判読限界 0.7 + 輪郭のインク 0.125) 残ること
-    out.roomFits = corners(room, TEXT_H.small).toFixed(3);
-    out.roomFitsH = corners(room, roomH).toFixed(3);
-  }
   out.place = {};
   [0, 90, 180, 270].forEach(rot => {
     d3.rot = rot;
     const xr = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
     const c = { x: xr.box.x + xr.box.w / 2, y: xr.box.y + xr.box.h / 2 };
-    const want = pinAbs(d3, { x: (g0.x0 + g0.x1) / 2, y: 0 });     // 平行部の中央
-    // 文字の 4 隅を記号ローカルへ戻し、五角形の辺までのあきを測る
-    const hw = (rot === 90 || rot === 270 ? xr.box.h : xr.box.w) / 2;
-    const hh = (rot === 90 || rot === 270 ? xr.box.w : xr.box.h) / 2;
-    const cx = (g0.x0 + g0.x1) / 2;
-    const gaps = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
-      .map(([dx, dy]) => distToEdges(cx + dx, dy));
+    // 文字の中心を記号ローカルへ戻す (回転の逆)
+    const r = -rot * Math.PI / 180, dx = c.x - d3.x, dy = c.y - d3.y;
+    const lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
+    const len = (rot === 90 || rot === 270) ? xr.box.h : xr.box.w;      // 読む向きの長さ
+    // 矢じりの外接矩形と文字の外接矩形のあき
+    const ap = [[g0.lead, -g0.h], [g0.tip, g0.h]].map(([x, y]) => pinAbs(d3, { x, y }));
+    const ab = { x: Math.min(ap[0].x, ap[1].x), y: Math.min(ap[0].y, ap[1].y),
+      w: Math.abs(ap[0].x - ap[1].x), h: Math.abs(ap[0].y - ap[1].y) };
     out.place[rot] = {
-      off: Math.hypot(c.x - want.x, c.y - want.y).toFixed(3),
-      gap: Math.min(...gaps).toFixed(3),      // 文字と旗の輪郭のあき
-      angle: xr.angle,      // 旗の長手に沿う (文字は下辺から/右辺から読む: JIS Z 8317-1)
+      off: Math.hypot(lx - (g0.tip + g0.gap + len / 2), ly).toFixed(3),
+      gap: rectGap(ab, xr.box).toFixed(3),
+      angle: xr.angle,      // 縦置きは 90° (文字は下辺から/右辺から読む: JIS Z 8317-1)
       // 画面 (SVG) の文字も同じ角度で出ているか
       svg: /transform="rotate\(-90 /.test(devLabelsSVG(d3, symOf(d3.sym), App.project.pages.find(isDrawingPage))),
     };
@@ -291,16 +268,23 @@ const R = await p.evaluate(() => {
   to.devices.splice(to.devices.findIndex(d => d.tag === "-W202"), 1);
   to.wires.pop();
 
-  // ⑫ 行き先どうしが近すぎる (5mm ピッチで並べると旗が接する)
+  // ⑫ 行き先どうしが近すぎる (2.5mm ピッチだと図番どうしが重なる)
   const near = addDevice(to, "goto_ref", 150, 85, { tag: "" });
+  near.y = 82.5;
   near.props = { toPage: App.project.pages.find(isDrawingPage).id };
   out.tooNear = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
   to.devices.splice(to.devices.indexOf(near), 1);
-  // 格子 2 目 (10mm) 離せば出ない
-  const far = addDevice(to, "goto_ref", 150, 90, { tag: "" });
+  // 格子 1 目 (5mm) 離せば出ない
+  const far = addDevice(to, "goto_ref", 150, 85, { tag: "" });
   far.props = { toPage: App.project.pages.find(isDrawingPage).id };
   out.farOk = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
   to.devices.splice(to.devices.indexOf(far), 1);
+  // 矢じりどうしは離れていても、図番の下に別の矢じりが来れば近すぎる (図番も判定に入る)
+  const nearT = addDevice(to, "goto_ref", 160, 85, { tag: "" });
+  nearT.x = 158; nearT.y = 83;
+  nearT.props = { toPage: App.project.pages.find(isDrawingPage).id };
+  out.tooNearText = runDRC().filter(i => i.rule === "行き先どうしの重なり").length;
+  to.devices.splice(to.devices.indexOf(nearT), 1);
 
   // ⑬ 自分のページを指したらエラー (貼り付けで起こりうる)
   const back0 = d3.props.toPage;
@@ -315,23 +299,30 @@ const R = await p.evaluate(() => {
   out.deleted = { shown: deviceXrefBox(App.project.pages.find(isDrawingPage), d3).text, drc: drc2() };
   App.project.pages.splice(ti, 0, keep); UI.renumberPages();
 
-  // ⑮ 図番が旗に入りきらない (判定は旗の実寸から計算する)
-  out.room = gotoTextRoom(symOf(d3.sym));
+  /* ⑮ 長い図番でも枠からはみ出す心配は無い (枠に入れない)。検図エラーに
+     ならず、図番の末尾をつまんでも記号ごと選べる */
   projectMeta().dwgNo = "PROJECT-2026-VERYLONG-0010"; UI.renumberPages();
-  out.tooWide = drc2("行き先の図番が入らない");
+  {
+    const hp = App.project.pages.find(isDrawingPage);
+    App.pageIdx = App.project.pages.indexOf(hp);
+    const xl = deviceXrefBox(hp, d3);
+    const h = hitTest(xl.box.x + xl.box.w - 0.5, xl.box.y + xl.box.h / 2);
+    out.longDwg = { text: xl.text, errs: drc2().filter(m => m.startsWith("err:")),
+      hit: !!h && h.type === "device" && h.obj === d3 };
+  }
   projectMeta().dwgNo = ""; UI.renumberPages();
-  /* ⑯ 和文の図番は最小呼び 3.5mm へ上がり (JIS Z 8313-10)、この旗 (内側 5mm) には
-     収まらない。黙って輪郭に接するのではなく、検図がエラーで知らせること。
-     外接矩形も呼び寸法ではなく実際のインク (基線の下へ出る分を含む) で返すこと */
+  /* ⑯ 和文の図番は最小呼び 3.5mm へ上がる (JIS Z 8313-10)。枠に入れないので
+     検図エラーにはならない。外接矩形は呼び寸法ではなく実際のインク
+     (基線の下へ出る分を含む) で返すこと */
   const pgTo = App.project.pages.find(pg => pg.id === d3.props.toPage);
-  pgTo.dwgNo = "制御盤"; pgTo.dwgNoManual = true;   // 幅は足りるが高さが足りない図番
+  pgTo.dwgNo = "制御盤"; pgTo.dwgNoManual = true;   // 和文の図番
   const xrJ = deviceXrefBox(App.project.pages.find(isDrawingPage), d3);
   const inkJ = textInkMM(xrJ.text, xrJ.size, true, false);
   out.cjk = { size: xrJ.size, h: +xrJ.box.h.toFixed(2), ink: +(inkJ.up + inkJ.down).toFixed(2),
     boxIsInk: Math.abs(xrJ.box.h - (inkJ.up + inkJ.down)) < 0.001,
     // 字の中心が旗の中心と合っているか (基線ではなく実インクの中心で見る)
     inkCentered: Math.abs((xrJ.y - inkJ.up + (inkJ.up + inkJ.down) / 2) - (xrJ.box.y + xrJ.box.h / 2)) < 0.001,
-    drc: drc2("行き先の図番が入らない") };
+    drc: drc2().filter(m => m.startsWith("err:")) };
   delete pgTo.dwgNoManual; UI.renumberPages();
   /* 欧文でも "/" は基線の下へ出る。呼び 2.5mm の箱で測ると図枠・重なりの
      検図が甘くなるので、実インクで返していることを確かめる */
@@ -514,10 +505,10 @@ const checks = {
   symIsGoto: !!R.sym.gotoRef && R.sym.pins === 1,
   // 図形と、計算に使う寸法が一致していること
   flagDefMatchesBody: R.bodyMatchesDef === true,
-  // 寸法モジュール M=2.5mm の整数倍・全長は格子 5mm の整数倍 (JIS C 0617-1)
+  // 寸法は M/2 = 1.25mm の整数倍、図番の書き出しは 2.5mm の整数倍
   flagOnModule: R.module === true,
-  // 旗は参照枠なので細線 0.25mm (JIS Z 8312)、白抜きで下の導体を隠す
-  flagThinAndFilled: R.thin === true && R.filled === true,
+  // 矢じりは黒塗り
+  arrowFilled: R.filled === true,
   // 図番の表示 (要求①)
   showsDwgNo: R.set.shown === R.set.want && R.set.want !== "?" ,
   drawnOnSheet: R.set.drawn === R.set.want + "|図面色",
@@ -532,11 +523,10 @@ const checks = {
   followsAfterReload: R.reload.shown === R.reload.want &&
     R.reloadMoved.shown === R.reloadMoved.want && R.reloadMoved.shown !== R.reload.shown,
   // 置き方
-  centered: Object.values(R.place).every(v => parseFloat(v.off) < 0.01),
-  // 五角形の 5 辺すべてから 0.7mm 以上あく (先端の斜辺への食い込みも見る)
-  insideFlag: Object.values(R.place).every(v => parseFloat(v.gap) >= 0.7 - 0.001),
-  // 検図が許す最大幅の図番を入れても、五角形から 0.7mm あくこと (和文 3.5mm も)
-  roomMatchesFlag: parseFloat(R.roomFits) >= 0.825 - 0.001 && parseFloat(R.roomFitsH) >= 0.825 - 0.001,
+  // 図番は矢じりの先端 + gap から書き出し、中心は導体の延長線上 (4 方向とも)
+  afterTip: Object.values(R.place).every(v => parseFloat(v.off) < 0.01),
+  // 矢じりと図番のあきは gap (1.25mm) 以上
+  clearOfArrow: Object.values(R.place).every(v => parseFloat(v.gap) >= 1.25 - 0.001),
   // 横置きは水平、縦置きは 90° (読む向きは 2 通りだけ)。画面の文字も同じ角度
   textAngle: R.place[0].angle === 0 && R.place[180].angle === 0 &&
     R.place[90].angle === 90 && R.place[270].angle === 90 &&
@@ -555,8 +545,8 @@ const checks = {
   // 断定はできないので警告 (端子台経由・リンクを別葉にまとめる描き方もある)
   drcLinkMismatch: R.linkMismatch.length === 1 && R.linkMismatch[0].startsWith("warn:") &&
     R.linkOk.length === 0,
-  drcTooNear: R.tooNear === 1 && R.farOk === 0,
-  drcTooWide: R.tooWide.length === 1 && /入りきりません/.test(R.tooWide[0]),
+  drcTooNear: R.tooNear === 1 && R.farOk === 0 && R.tooNearText === 1,
+  longDwgOk: /VERYLONG/.test(R.longDwg.text) && R.longDwg.errs.length === 0 && R.longDwg.hit === true,
   // 対ができたら区分 (列) まで書く / 対が 2 つで定まらなければ図番だけ
   // 図番 + 区分 (列と行: JIS Z 8311 の格子参照)
   zoneWhenPaired: R.paired.shown === R.paired.want && /\/\d+[A-HJ-NP-Z]$/.test(R.paired.shown),
@@ -564,10 +554,10 @@ const checks = {
   zoneOnlyWhenUnique: R.otherCircuit.shown === R.paired.shown &&
     R.ambiguous.shown === R.ambiguous.want && R.ambiguous.drc.length === 1 &&
     R.ambiguous.drc[0].startsWith("warn:行き先の対が定まらない"),
-  // 和文の図番は 3.5mm に上がって旗に収まらない → エラーで知らせる。
-  // 外接矩形は呼びでなく実インク、しかも旗の中心に合っていること
+  // 和文の図番は 3.5mm に上がるが、枠に入れないのでエラーにならない。
+  // 外接矩形は呼びでなく実インクで、字の中心が外接矩形の中心に合っていること
   cjkHeight: R.cjk.size === 3.5 && R.cjk.boxIsInk === true && R.cjk.inkCentered === true &&
-    R.cjk.drc.length === 1 && R.cjk.drc[0].startsWith("err:") && /字の高さ/.test(R.cjk.drc[0]),
+    R.cjk.drc.length === 0,
   inkBox: R.ascii.boxIsInk === true && R.ascii.ink > R.small,
   // DXF
   dxfText: R.dxf.has === true,

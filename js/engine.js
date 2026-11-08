@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 242;
+const APP_VERSION = 243;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -1713,7 +1713,10 @@ function placeDeviceLabels(page, dev, obstacles) {
     if (side === "left" || side === "right") {
       const x = side === "left" ? b.x - d * f : b.x + b.w + d * f;
       const anchor = side === "left" ? "end" : "start";
-      const y = b.y + b.h / 2 + dy * f;
+      /* tagBeside: タグを記号の決まった点 (電位リンクの黒丸) の真横に、字の高さの
+         中央を合わせて置く。下の mk は基線を y - 0.8 に置くので、大文字の高さの
+         半分 (呼び 3.5 の太字で約 1.25) だけ下げて渡す */
+      const y = (sym.tagBeside && !horizontal ? pinAbs(dev, sym.tagBeside).y + 2.05 * f : b.y + b.h / 2) + dy * f;
       if (tag) out.push(mk(tag, x, y - 0.8 * f, anchor, true));
       if (desc) out.push(mk(desc, x, y + (tag ? 4 : 1) * f, anchor));
     } else if (side === "top" || side === "topL" || side === "topR") {
@@ -1738,6 +1741,8 @@ function placeDeviceLabels(page, dev, obstacles) {
        ["topL", [2.0, 3.4]], ["topR", [2.0, 3.4]], ["bottomL", [4.4, 6.4]], ["bottomR", [4.4, 6.4]]]
     : sym.mirror
       ? [["left", [2.2, 1.4, 0.8, 0.3]], ...vert, ["right", [2.2, 1.4]]]
+    : sym.tagBeside
+      ? [["right", [1.4, 2.2, 0.8]], ["left", [1.4, 2.2, 0.8]], ...vert]
       : [["left", [2.2, 1.4, 0.8, 0.3]], ["right", [2.2, 1.4, 0.8, 0.3]], ...vert];
 
   // 上下左右のどこも空いていない混んだ図のために、もっと離した候補も持つ。
@@ -1798,30 +1803,31 @@ function gotoTargetPage(dev) {
   if (!id) return null;
   return App.project.pages.find(pg => pg.id === id) || null;
 }
-/** 行き先の旗の寸法 (mm)。記号定義が持つ値をそのまま使う */
+/** 行き先の矢じりの寸法 (mm)。記号定義が持つ値をそのまま使う */
 function gotoFlag(sym) {
   const g = (sym && typeof sym.gotoRef === "object") ? sym.gotoRef : {};
-  return { lead: g.lead || 5, x0: g.x0 || 5, x1: g.x1 || 30, tip: g.tip || 35, h: g.h || 2.5 };
+  return { lead: g.lead || 2.5, tip: g.tip || 6.25, h: g.h || 1.25, gap: g.gap || 1.25 };
 }
-/* 図番と旗の内側とのあき。この図面の判読限界 (0.7mm) に合わせる。
-   旗の輪郭は細線 0.25mm を公称線の中心に描くので、インクの内縁までは
-   さらに半分 (0.125mm) 内側になる。両方を引いた値で判定する */
+/* 行き先どうしのあき。この図面の判読限界 (0.7mm) に合わせる */
 const GOTO_TEXT_GAP = 0.7;
-const GOTO_EDGE_INK = LINE_W.thin / 2;
-/** 旗の中で図番を置ける幅 (平行部から、あきと輪郭のインクを引いた値) */
-function gotoTextRoom(sym) {
-  const fl = gotoFlag(sym);
-  return (fl.x1 - fl.x0) - (GOTO_TEXT_GAP + GOTO_EDGE_INK) * 2;
+/** 行き先の図番の置き方。矢じりの先端から gap あけて、矢の向きへ読む。
+    文字の中心は記号ローカルの x 軸上 (= 導体の延長線上) なので、回しても
+    矢の先に付いてくる。縦向き (90°/270°) では文字も 90° 倒す */
+function gotoTextLayout(dev) {
+  const sym = symOf(dev.sym), fl = gotoFlag(sym);
+  const text = gotoRefText(dev);
+  const k = devScale(dev);
+  const hNom = TEXT_H.small * contentScale() * k;
+  const w = textWidthMM(text, textHeightMM(text, hNom), false, true);
+  return { text, hNom, c0: pinAbs(dev, { x: fl.tip + fl.gap + w / 2 / k, y: 0 }) };
 }
-/** 旗の中で図番を置ける高さ (同上) */
-function gotoTextRoomH(sym) {
-  return gotoFlag(sym).h * 2 - (GOTO_TEXT_GAP + GOTO_EDGE_INK) * 2;
-}
-/** 行き先の旗の外接矩形 (作図領域座標)。回転にも追従する */
+/** 行き先の矢じりと図番を合わせた外接矩形 (作図領域座標)。回転にも追従する */
 function gotoFlagBox(dev) {
   const fl = gotoFlag(symOf(dev.sym));
-  const pts = [[fl.x0, -fl.h], [fl.tip, -fl.h], [fl.tip, fl.h], [fl.x0, fl.h]]
+  const pts = [[fl.lead, -fl.h], [fl.tip, -fl.h], [fl.tip, fl.h], [fl.lead, fl.h]]
     .map(([x, y]) => pinAbs(dev, { x, y }));
+  const tb = deviceXrefBox(null, dev).box;
+  pts.push({ x: tb.x, y: tb.y }, { x: tb.x + tb.w, y: tb.y + tb.h });
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
   return { x: Math.min(...xs), y: Math.min(...ys),
     w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
@@ -1970,19 +1976,13 @@ function deviceXrefBox(page, dev) {
     return refTextBox(dev, pg ? pageDwgNo(pg) : "?", pageRefH(dev) * contentScale() * devScale(dev), { x: dev.x, y: dev.y });
   }
   if (sym0 && sym0.gotoRef) {
-    /* 行き先の図番は旗の平行部の中央に、旗の長手方向へ沿わせて置く。図番そのものは
+    /* 行き先の図番は矢じりの先に、矢の向きへ読む向きで置く。図番そのものは
        持たず、選んだページのものを描くたびに引くので、ページを並べ替えても
-       図番を振り直しても追従する。
-       中心を五角形全体ではなく平行部 (x0〜x1) に合わせるのが肝で、全体の中心に
-       置くと長い図番が先端の斜辺に食い込む。
-       縦向きに置いた行き先では文字も 90° 倒す (図面の文字は下辺から、やむを
-       得なければ右辺から読む向き — JIS Z 8317-1 / IEC 61082-1)。
-       高さは textHeightMM を通す。和文の図番は最小呼び 3.5mm へ上がるので
-       (JIS Z 8313-10)、2.5mm のままだと外接矩形が実際より 1mm 低くなり、
-       図枠はみ出し・文字の重なりの検図が誤判定する */
-    const fl0 = gotoFlag(sym0);
-    const c0 = pinAbs(dev, { x: (fl0.x0 + fl0.x1) / 2, y: 0 });   // 平行部の中央 (機器と一緒に回る)
-    return refTextBox(dev, gotoRefText(dev), TEXT_H.small * contentScale() * devScale(dev), c0);
+       図番を振り直しても追従する。縦向きに置いた行き先では文字も 90° 倒す
+       (図面の文字は下辺から、やむを得なければ右辺から読む向き — JIS Z 8317-1)。
+       高さは textHeightMM を通す (和文の図番は最小呼び 3.5mm へ上がる — JIS Z 8313-10) */
+    const L = gotoTextLayout(dev);
+    return refTextBox(dev, L.text, L.hNom, L.c0);
   }
   if (!dev.linkTo) return null;
   const f = findDevice(dev.linkTo);
@@ -4186,7 +4186,7 @@ const DRC_RULES = [
   "線番の重複", "図番の重複", "線番と導体の重なり", "記号の重なり", "導体が図記号を貫通", "3線式センサの電源が逆", "3線式センサが出力の枚",
   "分かれた枚の行き先が無い",
   "行き先未設定", "行き先の自己参照", "行き先の指し先が無い", "行き先の対が無い",
-  "行き先の図番が入らない", "行き先どうしの重なり", "行き先の対が定まらない",
+  "行き先どうしの重なり", "行き先の対が定まらない",
   "行き先とリンクの不一致", "尺度と用紙上の寸法", "記号の想定用紙と違う", "シールド未接地", "シールドと心線の短絡", "シールドの両端接地", "シールドをPEへ接続", "シールドと心線囲みの不一致", "囲みの芯数と心線本数の不一致",
 ];
 
@@ -4801,33 +4801,17 @@ function runDRC() {
           }
         }
       }
-      /* 図番が旗に入りきらないと、どこへ続くのか読めない。幅だけでなく高さも見る
-         (和文の図番は最小呼び 3.5mm へ上がるので、旗の内側に収まらないことがある)。
-         はみ出した図番は隣の図形に重なって読めないので、警告ではなくエラー */
-      const txt2 = gotoRefText(dev);
-      const h2 = textHeightMM(txt2, TEXT_H.small * contentScale());
-      const room = gotoTextRoom(sy) * contentScale();
-      const roomH = gotoTextRoomH(sy) * contentScale();
-      const tw2 = textWidthMM(txt2, h2, false, true);
-      const ink2 = textInkMM(txt2, h2, true, false);
-      if (tw2 > room + 0.01) {
-        issues.push({ sev: "err", rule: "行き先の図番が入らない", page: page.no, target: dev.id, loc: devLocation(dev),
-          msg: `${who} の「${txt2}」が記号に入りきりません (幅 ${tw2.toFixed(1)}mm / 旗の内側 ${room.toFixed(1)}mm)` });
-      } else if (ink2.up + ink2.down > roomH + 0.01) {
-        issues.push({ sev: "err", rule: "行き先の図番が入らない", page: page.no, target: dev.id, loc: devLocation(dev),
-          msg: `${who} の「${txt2}」は字の高さが旗に収まりません (${(ink2.up + ink2.down).toFixed(1)}mm / 旗の内側 ${roomH.toFixed(1)}mm。和文の図番は最小呼び 3.5mm になります)` });
-      }
     });
-    // 行き先どうしが近すぎると旗が重なって読めない (5mm ピッチで並べたとき)
+    // 行き先どうしが近すぎると矢じり・図番が重なって読めない
     for (let i = 0; i < gotoDevs.length; i++) {
       for (let j = i + 1; j < gotoDevs.length; j++) {
         const g = rectGap(gotoFlagBox(gotoDevs[i]), gotoFlagBox(gotoDevs[j]));
         if (g < GOTO_TEXT_GAP) {
           issues.push({ sev: "warn", rule: "行き先どうしの重なり", page: page.no, target: gotoDevs[i].id,
             loc: devLocation(gotoDevs[i]),
-            msg: `行き先の旗 (${gotoRefText(gotoDevs[i])} @${devLocation(gotoDevs[i])}) と ` +
+            msg: `行き先 (${gotoRefText(gotoDevs[i])} @${devLocation(gotoDevs[i])}) と ` +
               `(${gotoRefText(gotoDevs[j])} @${devLocation(gotoDevs[j])}) が近すぎます ` +
-              `(あき ${g.toFixed(1)}mm / ${GOTO_TEXT_GAP}mm 以上あけてください。継続線は 10mm ピッチで並べてください)` });
+              `(あき ${g.toFixed(1)}mm / ${GOTO_TEXT_GAP}mm 以上あけてください。継続線は 5mm ピッチ以上で並べてください)` });
         }
       }
     }

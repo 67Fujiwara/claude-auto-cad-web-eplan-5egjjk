@@ -480,32 +480,33 @@ const SYMBOLS = [
   {
     id: "link", nonstd: true, cat: "misc", letter: "W", name: "電位リンク", nameEn: "Potential link",
     desc: "ページ間の電位接続点 (タグ一致で接続)", pins: [{x:0,y:0,n:""}],
-    sim: "link", bounds: [-9,-2, 18, 12],
-    body: `<path d="M0,0 V3 M-7,3 L0,8 L7,3 Z"/>`,
+    /* 導体の終端から引出線 3mm の先に黒丸 (直径 2.2mm)。電位名 (タグ) は黒丸の横に
+       自動で置く (EPLAN の電位接続点に近い形)。外形は黒丸と引出線だけにして、
+       電位名が黒丸に寄り添えるようにする */
+    sim: "link", bounds: [-1.5, -0.5, 3, 6], tagBeside: { x: 0, y: 4 },
+    body: `<path d="M0,0 V2.9"/><circle cx="0" cy="4" r="1.1" fill="currentColor"/>`,
+    // パレット専用の見本 (図面の電位名はタグとして黒丸の横に置く)
+    thumbBody: `<path d="M0,0 V2.9"/><circle cx="0" cy="4" r="1.1" fill="currentColor"/>` +
+      `<text x="2.2" y="5.3" data-h="3.5" fill="currentColor" stroke="none" font-weight="bold" font-family="monospace">+24V</text>`,
+    thumbBox: [-1.6, -2, 17, 9.5],
   },
   {
     id: "goto_ref", nonstd: true, cat: "misc", letter: "", name: "行き先 (継続先)", nameEn: "Continuation reference",
     desc: "回路の続きが描いてあるページを指す。行き先はプロパティのプルダウンで選び、図面番号は選んだページのものを自動で表示する (ページの並べ替え・図番の振り直しに追従)",
     stdNote: "継続先の表示 (IEC 61082-1 の相互参照)。電気的な接続そのものは電位リンクで表す。" +
-      "旗は電気的な意味を持たない参照枠なので細線 0.25mm、導体に接する引出線だけ図記号線 0.5mm (JIS Z 8312)",
-    /* 旗の寸法 (mm)。図番の置き場所も検図の判定もこの値だけから計算するので、
-       形を変えれば表示と検図が一緒に動く。
-       寸法モジュール M = 2.5mm (格子 5mm = 2M / 文字高さ 2.5mm = M) の整数倍で、
-       全長 35mm はスナップ格子 5mm の 7 目。先端も格子節点に乗る (JIS C 0617-1)。
-       高さ 5mm (2M) は、欧文の図番 (呼び 2.5mm) を上下 0.825mm (判読限界 0.7 +
-       輪郭のインク 0.125) のあきで収められる最小の M 整数倍。
-       和文の図番は最小呼び 3.5mm (JIS Z 8313-10) へ上がって収まらないので、
-       検図がエラーで知らせる。
-       継続線を並べるピッチは格子 2 目 (10mm)。5mm ピッチだと旗の輪郭どうしが
-       接するので、検図の「行き先どうしの重なり」で知らせる */
-    gotoRef: { lead: 5, x0: 5, x1: 30, tip: 35, h: 2.5 },
+      "導体の終端に黒い矢じりを付け、その先に行き先の図番/区分を書く (EPLAN の中断点に近い形)",
+    /* 矢じりの寸法 (mm)。図番の置き場所・当たり判定・検図はこの値だけから計算する
+       ので、形を変えれば表示と検図が一緒に動く。寸法は M/2 = 1.25mm の整数倍:
+       引出線 2.5 (lead) → 矢じり 2.5〜6.25 (先端 tip)・半幅 1.25 (h)。
+       図番は先端から gap 1.25 あけた 7.5mm (格子の半目) から、矢の向きへ読む */
+    gotoRef: { lead: 2.5, tip: 6.25, h: 1.25, gap: 1.25 },
     pins: [{ x: 0, y: 0, n: "" }],
-    sim: "none", bounds: [-2, -4.5, 39, 9],
-    /* 進行方向を示す五角形 (旗)。中に行き先の図番が入る。
-       画面と印刷は白抜きにして、下を導体が通っても図番が読めるようにする。
-       DXF (R12) には塗りつぶしのマスクが無いので輪郭だけになる。導体が旗を
-       貫くと DXF では図番に重なるが、それは検図の「文字の重なり」で知らせる */
-    body: `<path d="M0,0 H5"/><path d="M5,-2.5 H30 L35,0 L30,2.5 H5 Z" fill="#fff" stroke-width="0.25" stroke-linejoin="miter"/>`,
+    sim: "none", bounds: [-1, -2, 8.25, 4],
+    body: `<path d="M0,0 H2.5"/><path d="M2.5,-1.25 L6.25,0 L2.5,1.25 Z" fill="currentColor" stroke-width="0.25" stroke-linejoin="miter"/>`,
+    // パレット専用の見本 (図面の図番は行き先のページから毎回引いて描く)
+    thumbBody: `<path d="M0,0 H2.5"/><path d="M2.5,-1.25 L6.25,0 L2.5,1.25 Z" fill="currentColor" stroke-width="0.25"/>` +
+      `<text x="7.5" y="1.25" data-h="3.5" fill="currentColor" stroke="none" font-family="monospace">B-001</text>`,
+    thumbBox: [-0.3, -4.5, 24, 9],
   },
   {
     /* 参照テキスト: 選んだページの図面番号だけを文字で書く (旗も引出線も無い)。
