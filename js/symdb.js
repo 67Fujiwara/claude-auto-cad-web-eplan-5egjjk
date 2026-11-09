@@ -499,16 +499,16 @@ const KV_UNITS = [
      ・KV-B16XC … 入力 16点。DC24V (5.3mA) / DC5V (1mA) のモード切換
      ・KV-B16TD … MOSFET (シンク) 出力 16点。DC30V 0.3A/点。過電流保護つき
      端子台の刻印 (Terminal No.) は 0〜15 と C0・C1。信号名 (Signal name) は 000〜015 と
-     COM0・COM1。端子の並びは 0〜7 → C0 → 8〜15 → C1 で、C0/C1 は内部で短絡している
-     (接続図の注記 "COM circuit-shorted internally"・内部回路図でも COM0-COM1 が結ばれて
-     いる) — 16点/1コモンだが端子は 2 つなので、図も端子台どおり 2 行 (C0・C1) で描く。
-     rooms = [8, 8] がその並び。digits: 1 = 刻印は 0〜15 (桁をそろえない)。
+     COM0・COM1。C0/C1 は内部で短絡している (接続図の注記 "COM circuit-shorted
+     internally"・内部回路図でも COM0-COM1 が結ばれている) ので、図ではコモンを
+     C0 の 1 行にまとめ、C1 は描かない (利用者の指定。どちらの端子に結線してもよい)。
+     com = コモン行の刻印。digits: 1 = 刻印は 0〜15 (桁をそろえない)。
      リレー番号はスロット位置で決まるので端子には書かない。unit = 入出力ユニット
      (拡張の順番で変わる割付は無いので、2/3台目の記号は作らない) */
-  ["KV-B16XC", { nIn: 16, ch0: 0, exp: true, unit: true, digits: 1, rooms: [8, 8], term: "ネジ端子台 (脱着式)",
+  ["KV-B16XC", { nIn: 16, ch0: 0, exp: true, unit: true, digits: 1, com: "C0", term: "ネジ端子台 (脱着式)",
     series: "KV-8000/7000 シリーズ (ビルディングブロック形)", swap: "kv_b",
     inNote: "DC24V (5.3mA) / DC5V (1mA) のモード切換あり (この図は DC24V の想定)。" }],
-  ["KV-B16TD", { nOut: 16, ch0: 0, exp: true, unit: true, digits: 1, rooms: [8, 8], term: "ネジ端子台 (脱着式)",
+  ["KV-B16TD", { nOut: 16, ch0: 0, exp: true, unit: true, digits: 1, com: "C0", term: "ネジ端子台 (脱着式)",
     series: "KV-8000/7000 シリーズ (ビルディングブロック形)", swap: "kv_b",
     outNote: "定格 DC30V 0.3A/点 (MOSFET シンク・過電流保護つき)。" }],
 ];
@@ -600,26 +600,22 @@ function mkKvUnit(model, cfg) {
     const nPt = isIn ? cfg.nIn : cfg.nOut;
     const termWord = cfg.digits ? `0〜${nPt - 1}` : "000〜";
     const sigWord = `000〜${String(nPt - 1).padStart(3, "0")}`;
-    /* 部屋割り (rooms) を持つユニットはコモン端子が複数 (C0・C1…)。端子台の並び
-       どおりに各部屋の末尾へ置く。KV-B は内部で短絡しているので電気的には 1 コモン */
-    const roomCom = cfg.rooms ? cfg.rooms.map((_, k) => `C${k}`) : [];
+    /* 入出力ユニット (unit) のコモン: 端子台には C0・C1 の 2 端子があるが内部で
+       短絡しているので、図では C0 の 1 行にまとめる (C1 は描かない) */
+    const comName = cfg.com || "COM";
     const termRule = cfg.unit
-      ? `端子台の刻印は ${termWord} と ${roomCom.join("・")} (信号名は ${sigWord} と ${roomCom.map(c => "COM" + c.slice(1)).join("・")})。` +
-        `${roomCom.join("/")} は内部で短絡 (公式の接続図の注記 "COM circuit-shorted internally") — 電気的には ${nPt}点/1コモンだが、端子は端子台どおり ${roomCom.length} 行で描く。` +
+      ? `端子台の刻印は ${termWord} と C0・C1 (信号名は ${sigWord} と COM0・COM1)。` +
+        `C0/C1 は内部で短絡 (公式の接続図の注記 "COM circuit-shorted internally") なので ${nPt}点/1コモン — 図ではコモンを ${comName} の 1 行にまとめ、C1 は描かない (どちらの端子に結線してもよい)。` +
         `リレー番号はスロット位置で決まるので端子には書かない。`
       : `端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。`;
     const comText = cfg.unit
-      ? `コモンは ${roomCom.join("・")} の ${roomCom.length} 端子 (内部で短絡しているので、どちらか一方に結線すれば電気的には足りる。下地は両方をレールへ結ぶ)。`
+      ? `コモンは 1 つ (${nPt}点/1コモン。端子は C0・C1 の 2 つで内部で短絡 — 図は ${comName} の 1 行)。`
       : `コモンは 1 つ (${nPt}点/1コモン)。${comNote}`;
     chs.forEach(ch => {
       /* 端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。
          リレー番号 (R600〜 など) は接続順で決まり端子には書かない。2/3台目の
          記号 (旧版の割付) も同じ番号で描く — 旧図面を開いても 000〜 になる */
-      const sheets = cfg.rooms
-        ? [(() => { let at = 0; return cfg.rooms.map((cnt, k) => {
-            const pts = []; for (let i = 0; i < cnt; i++) pts.push(termName(0, at + i)); at += cnt;
-            return { pts, com: roomCom[k] }; }); })()]
-        : autoSheets(0, nPt, "COM", kind);
+      const sheets = autoSheets(0, nPt, comName, kind);
       // 拡張ユニットは最大 16 点 = 1 枚に収まる (収まらない機種を
       // 足すときは基本ユニットと同じ枚割り・id 連番に戻すこと)
       sheets.forEach(gs => {
@@ -637,17 +633,17 @@ function mkKvUnit(model, cfg) {
           expCh: ch, expAlts: altIds, ...(ch !== cfg.ch0 ? { altOf: altIds[cfg.ch0] } : {}),
           /* 出力の注記は短く (帯 = 字数 × 3.6mm がレール下端の電位リンク 107mm に
              届かない 29 字まで)。端子の刻印は図に描いてあるので、紙には信号名との
-             対応と、コモン端子が内部で短絡していることだけを書く */
-          expNote: (cfg.unit ? `※${roomCom.join("/")} は内部短絡。信号名 ${sigWord}` : "※端子番号はユニットごとに 000〜") +
+             対応と、描いていない C1 が C0 と内部で短絡していることだけを書く */
+          expNote: (cfg.unit ? `※信号名 ${sigWord}。C1 は ${comName} と内部短絡` : "※端子番号はユニットごとに 000〜") +
             (isIn ? "。コモンは +24V (NPN 機器向け)" : ""),
           name: `${model} ${kind}結線図`,
           nameEn: `${model} ${isIn ? "input" : "output"} wiring`,
           stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示。端子の図記号番号は規格原本との照合が必要)。" +
             (cfg.unit
-              ? `端子位置の表示は端子台の刻印 ${termWord}・${roomCom.join("・")} (公式の接続図より)。KV のリレー番号はスロット位置で決まるので端子には書かない。`
+              ? `端子位置の表示は端子台の刻印 ${termWord}・${comName} (公式の接続図より)。KV のリレー番号はスロット位置で決まるので端子には書かない。`
               : `端子位置の表示はユニットごとの点番号 000〜 (拡張ユニットが何台あっても 000 から。${model} の端子台の刻印は未確認)。` +
                 "KV のリレー番号 (R600〜 など) は接続順で決まるので端子には書かない。") +
-            (cfg.unit ? `コモン端子 ${roomCom.join("・")} は内部で短絡 (端子台どおり ${roomCom.length} 行で表示)。`
+            (cfg.unit ? `コモン端子 C0・C1 は内部で短絡 — ${comName} の 1 行にまとめて表示 (C1 は描かない)。`
               : cfg.comTerms ? `COM は ${cfg.comTerms} 端子 (内部で短絡) を 1 行にまとめて表示。` : "コモンの刻印 COM は N14AR からの類推 (実機未確認)。") +
             "ユニットの電源と接地は別紙の電源回路図に描きます",
           desc: `キーエンス ${cfg.series || "KV Nano"} ${unitWord} ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点)。` +
