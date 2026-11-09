@@ -17,6 +17,8 @@ const DB_DEFAULT_PINNED = [
   "kv_n14ar_in", "kv_n14ar_out",
   // 拡張ユニット (ヨーロピアン端子台)
   "kv_nc16exe_in", "kv_nc16ete_out",
+  // KV-8000/7000 の入出力ユニット (ネジ端子台)
+  "kv_b16xc_in", "kv_b16td_out",
   // 受動部品・半導体 (プルアップ抵抗ほか — 値はプロパティの「値・定格」に手入力)
   "resistor", "var_resistor", "resistor_pullup", "resistor_pulldown",
   "resistor_z", "resistor_pullup_z", "resistor_pulldown_z",
@@ -492,6 +494,21 @@ const KV_UNITS = [
     inNote: "DC24V/DC5V のモード切換あり (この図は DC24V の想定)。" }],
   ["KV-NC16ETE", { nOut: 16, ch0: 6, exp: true, comTerms: 16, term: "ヨーロピアン端子台", series: "KV",
     outNote: "定格 DC30V 0.2A/点 (MOSFET・過電流保護つき)。" }],
+  /* ビルディングブロック形 (KV-8000/7000/X/5000/3000) の入出力ユニット — ネジ端子台
+     (キーエンス公式の型式ページより):
+     ・KV-B16XC … 入力 16点。DC24V (5.3mA) / DC5V (1mA) のモード切換。16点/1コモン
+       (COM 2 端子・内部で共通)
+     ・KV-B16TD … MOSFET (シンク) 出力 16点。DC30V 0.3A/点。過電流保護つき。
+       16点/1コモン (COM 2 端子・内部で共通)
+     端子は 1 ユニット 1 チャネル (16 点) で、刻印は 00〜15 (2 桁 — 実機未確認)。
+     リレー番号はスロット位置で決まるので端子には書かない。unit = 入出力ユニット
+     (拡張の順番で変わる割付は無いので、2/3台目の記号は作らない) */
+  ["KV-B16XC", { nIn: 16, ch0: 0, exp: true, unit: true, digits: 2, comTerms: 2, term: "ネジ端子台 (脱着式)",
+    series: "KV-8000/7000 シリーズ (ビルディングブロック形)", swap: "kv_b",
+    inNote: "DC24V (5.3mA) / DC5V (1mA) のモード切換あり (この図は DC24V の想定)。" }],
+  ["KV-B16TD", { nOut: 16, ch0: 0, exp: true, unit: true, digits: 2, comTerms: 2, term: "ネジ端子台 (脱着式)",
+    series: "KV-8000/7000 シリーズ (ビルディングブロック形)", swap: "kv_b",
+    outNote: "定格 DC30V 0.3A/点 (MOSFET シンク・過電流保護つき)。" }],
 ];
 
 /** KV Nano 基本ユニットの結線図記号。1 枚 = A3 横に収まる高さまで */
@@ -522,7 +539,7 @@ function mkKvUnit(model, cfg) {
         for (let k = 0; k < nSheets; k++) {
           const take = Math.ceil((cnt - at) / (nSheets - k));
           const pts = [];
-          for (let i = 0; i < take; i++) pts.push(kvTerm(ch0, c + at + i));
+          for (let i = 0; i < take; i++) pts.push(cfg.digits === 2 ? String(c + at + i).padStart(2, "0") : kvTerm(ch0, c + at + i));
           trial.push([{ pts, com: "C0" }]);   // 名は仮 (高さ measure 用)。確定後に振る
           at += take;
         }
@@ -565,14 +582,20 @@ function mkKvUnit(model, cfg) {
     // 入力の拡張ユニット (nIn) も同じ作り。現場側・レールの電位・入替グループだけ入力向きにする
     const isIn = !!cfg.nIn;
     const kind = isIn ? "入力" : "出力", kindId = isIn ? "in" : "out";
-    const chs = [cfg.ch0, cfg.ch0 + 1, cfg.ch0 + 2];
+    // 入出力ユニット (unit) は割付がスロットで決まるので 1 種類だけ
+    const chs = cfg.unit ? [cfg.ch0] : [cfg.ch0, cfg.ch0 + 1, cfg.ch0 + 2];
     const idOf = ch => `${model.toLowerCase().replace(/-/g, "_")}_${kindId}${ch === cfg.ch0 ? "" : `_c${ch}`}`;
     const altIds = {};
     chs.forEach(ch => { altIds[ch] = idOf(ch); });
     /* COM 端子が点ごとに並ぶ機種 (ヨーロピアン端子台の KV-NC16EXE/ETE: COM 16 端子・
        内部で短絡) も、電気的には 1 つのコモンなので図では 1 行にまとめる */
-    const comNote = cfg.comTerms ? `COM は ${cfg.comTerms} 端子あり内部で短絡している — 図では 1 行にまとめて描く (どの COM 端子に結線してもよい)。` : "";
+    const comNote = cfg.comTerms ? `COM は ${cfg.comTerms} 端子あり内部で${cfg.unit ? "共通" : "短絡"}している — 図では 1 行にまとめて描く (どの COM 端子に結線してもよい)。` : "";
     const termNote = cfg.term ? `外部接続は${cfg.term}。` : "";
+    const unitWord = cfg.unit ? "入出力ユニット" : "拡張ユニット";
+    const termWord = cfg.digits === 2 ? "00〜15" : "000〜";
+    const termRule = cfg.unit
+      ? `端子番号は ${termWord} (2 桁)。リレー番号はスロット位置で決まるので端子には書かない。`
+      : `端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。`;
     chs.forEach(ch => {
       /* 端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。
          リレー番号 (R600〜 など) は接続順で決まり端子には書かない。2/3台目の
@@ -585,30 +608,33 @@ function mkKvUnit(model, cfg) {
         const pts = gs.flatMap(g => g.pts);
         out.push(mkKvSheet({
           id: altIds[ch], model,
-          title: `拡張${kind} ${pts.length}点`,
+          title: `${cfg.unit ? "" : "拡張"}${kind} ${pts.length}点`,
           seq, allSeqs: sheets.map(g2 => mkSeq(g2, false)),
           // 入力はコモンを P24V へ・機器の帰りは N24V (基本ユニットの入力と同じ)
           railTags: isIn ? { branch: "N24V", supply: "P24V" } : { branch: "P24V", supply: "N24V" },
           fieldSide: isIn ? "left" : "right",
-          swapGroup: `kv_nano_${kindId}`,
+          swapGroup: `${cfg.swap || "kv_nano"}_${kindId}`,
+          // 入出力ユニット (unit) は ch0 = 0 なので expCh が偽になり、mkKvSheet は expAlts を付けない
           expCh: ch, expAlts: altIds, ...(ch !== cfg.ch0 ? { altOf: altIds[cfg.ch0] } : {}),
-          expNote: "※端子番号はユニットごとに 000〜" + (isIn ? "。コモンは +24V (NPN 機器向け)" : ""),
+          expNote: (cfg.unit ? `※端子番号は ${termWord}` : "※端子番号はユニットごとに 000〜") + (isIn ? "。コモンは +24V (NPN 機器向け)" : ""),
           name: `${model} ${kind}結線図`,
           nameEn: `${model} ${isIn ? "input" : "output"} wiring`,
           stdNote: "機器の端子配置を写した実務用の枠記号 (JIS C 0617-1 の作成原則で構成: 外郭 + 端子 + 端子指示。端子の図記号番号は規格原本との照合が必要)。" +
-            `端子位置の表示はユニットごとの点番号 000〜 (拡張ユニットが何台あっても 000 から。${model} の端子台の刻印は未確認)。` +
-            "KV のリレー番号 (R600〜 など) は接続順で決まるので端子には書かない。" +
-            (cfg.comTerms ? `COM は ${cfg.comTerms} 端子 (内部で短絡) を 1 行にまとめて表示。` : "コモンの刻印 COM は N14AR からの類推 (実機未確認)。") +
+            (cfg.unit
+              ? `端子位置の表示は点番号 ${termWord} (${model} の端子台の刻印は未確認)。KV のリレー番号はスロット位置で決まるので端子には書かない。`
+              : `端子位置の表示はユニットごとの点番号 000〜 (拡張ユニットが何台あっても 000 から。${model} の端子台の刻印は未確認)。` +
+                "KV のリレー番号 (R600〜 など) は接続順で決まるので端子には書かない。") +
+            (cfg.comTerms ? `COM は ${cfg.comTerms} 端子 (内部で${cfg.unit ? "共通" : "短絡"}) を 1 行にまとめて表示。` : "コモンの刻印 COM は N14AR からの類推 (実機未確認)。") +
             "ユニットの電源と接地は別紙の電源回路図に描きます",
-          desc: `キーエンス ${cfg.series || "KV Nano"} 拡張ユニット ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点)。` +
-            termNote +
-            `端子番号はユニットごとに 000 から (拡張ユニットが何台あっても同じ)。端子名を変えたいときはプロパティの「端子番号」で書き替えられます。` +
+          desc: `キーエンス ${cfg.series || "KV Nano"} ${unitWord} ${model} の${kind}結線図 (端子 ${pts[0]}〜${pts[pts.length - 1]} の${pts.length}点)。` +
+            termNote + termRule +
+            `端子名を変えたいときはプロパティの「端子番号」で書き替えられます。` +
             (isIn
               ? `コモンは 1 つ (${pts.length}点/1コモン)。${comNote}コモンを +24V にした NPN 機器向けの割付 (PNP 機器ならレールの電位名を描き替え)。` +
                 (cfg.inNote || "")
               : `コモンは 1 つ (${pts.length}点/1コモン) — コモン線には全点の合計電流が乗るのでサイズ選定に注意。${comNote}` +
                 (cfg.outNote || "")) +
-            `サービス電源 (0V/24V) の端子は無い (拡張バスから給電)。` +
+            `サービス電源 (0V/24V) の端子は無い (${cfg.unit ? "ユニットは本体のバスから給電" : "拡張バスから給電"})。` +
             `置くと P24V/N24V のレールとコモンの結線が実線で引かれます — 端子までの配線は自分で引きます。機能欄の文言はプロパティでまとめて入れられます。`,
         }));
       });
@@ -1210,7 +1236,7 @@ DB_SYMBOLS.forEach(sym => {
 /* 既定でパレットに出す記号を増やしたときの版数。上げると、その版より前から
    使っている人のパレットにも新しい既定記号だけを追い足す (並べ替えや外した
    記号はそのまま残す)。 */
-const DB_PINNED_VER = 10;
+const DB_PINNED_VER = 11;
 function dbPinnedList() {
   try {
     const s = localStorage.getItem("electracad.dbPinned");
