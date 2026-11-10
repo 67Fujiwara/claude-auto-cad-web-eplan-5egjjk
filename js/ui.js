@@ -2852,9 +2852,6 @@ UI.sheetSetup = () => {
       <div class="prop-row"><label>管理番号</label><input id="tbCtrl" class="mono" value="${escAttr(meta.ctrlNo || "")}" placeholder="シンプル様式の帯に表示"/></div>
       <div class="prop-row"><label>日付</label><input id="tbDate" class="mono" value="${escAttr(meta.date || todayStr())}" placeholder="2026-01-31"/></div>
       <div class="prop-row"><label>企業 (団体) 名</label><input id="tbAuth" value="${escAttr(meta.author || "")}" placeholder="社名を入力"/></div>
-      <div class="prop-row"><label>投影法</label><select id="tbProjMethod">
-        ${["該当なし (回路図)", "第三角法", "第一角法"].map(v => opt(v, meta.proj || PROJ_DEFAULT)).join("")}
-      </select></div>
     </div>
     <div class="prop-note">
       図番はページ順に自動採番されます (例 <span class="mono">TK-2026-010</span> → 010, 011, 012…)。<br>
@@ -2992,7 +2989,7 @@ UI.sheetSetup = () => {
     delete meta.frameStyle;    // 画面切替の旧形式は使わない (出力時にだけ差し替える)
     meta.date = q("#tbDate").value.trim();
     meta.author = q("#tbAuth").value.trim();
-    meta.proj = q("#tbProjMethod").value;
+    delete meta.proj;        // 投影法の欄は廃止 (旧図面の値は捨てる)
     collectRevs();
     meta.revs = revRows.filter(r => r.rev || r.date || r.desc || r.appr);
     // 表題欄の改訂記号は履歴の最新行に合わせる (管理図面の整合)

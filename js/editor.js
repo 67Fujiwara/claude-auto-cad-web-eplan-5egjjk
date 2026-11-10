@@ -146,7 +146,8 @@ function sheetSVG(page, opts = {}) {
     out += `<text x="${w - m + 2.8 * fr}" y="${cy}" font-size="${svgFontSize(fs, true)}" text-anchor="middle" fill="${INK_SOFT}" font-family="monospace">${ch}</text>`;
     if (i) out += `<path d="M${ml - zw},${m + rh * i} H${ml}" stroke="${INK_SOFT}" stroke-width="${tick}"/><path d="M${w - m},${m + rh * i} H${w - m + zw}" stroke="${INK_SOFT}" stroke-width="${tick}"/>`;
   }
-  // 表題欄 (JIS Z 8311: 右下・輪郭線に接する。図番/図名/企業名/署名/日付/尺度/投影法を記入)
+  // 表題欄 (JIS Z 8311: 右下・輪郭線に接する。図番/図名/企業名/署名/日付/尺度を記入。
+  //   回路図は正投影図ではないので投影法の欄・図示記号は持たない — JIS Z 8316 の記号は不要)
   const meta = projectMeta();
   const pm = pageSheetMeta(page);          // 用紙・尺度はページ固有設定を優先
   const S = v => v * fr;                       // 用紙実寸 mm → 作図領域 mm
@@ -176,7 +177,7 @@ function sheetSVG(page, opts = {}) {
   out += revisionTableSVG(tbX, tbY, tbW, S, fr, meta, clipBase + "r");
   out += `<g font-family="sans-serif" data-titleblock="1">
     <rect x="${tbX}" y="${tbY}" width="${tbW}" height="${tbH}" fill="#fff" stroke="${INK}" stroke-width="${S(LINE_W.thick)}"/>
-    <path d="M${c1},${r2} H${tbX + tbW} M${c1},${r3} H${tbX + tbW} M${c2},${r1} V${r4} M${c3},${r1} V${r4} M${c4},${r1} V${r4}"
+    <path d="M${c1},${r2} H${tbX + tbW} M${c1},${r3} H${tbX + tbW} M${c2},${r1} V${r4} M${c3},${r1} V${r4} M${c4},${r1} V${r3}"
       stroke="${INK}" stroke-width="${S(LINE_W.thin)}"/>
     ${cell(c1, r1, 0, "図名 (プロジェクト)", (page.tb && page.tb.proj) || App.project.name, TEXT_H.normal, true)}
     ${cell(c2, r1, 1, "ページ名", page.name, TEXT_H.normal, true)}
@@ -187,10 +188,9 @@ function sheetSVG(page, opts = {}) {
     ${cell(c3, r2, 2, "日付", (page.tb && page.tb.date) || meta.date || todayStr())}
     ${cell(c4, r2, 3, "尺度", pm.scale || "1:1")}
     ${cell(c1, r3, 0, "企業 (団体) 名", (page.tb && page.tb.author) || meta.author || "—")}
-    ${cell(c2, r3, 1, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || PROJ_DEFAULT}`)}
+    ${cell(c2, r3, 1, "用紙", paperLabel(pm))}
     <text x="${c3 + S(2)}" y="${r3 + S(3.6)}" font-size="${svgFontSizeFor("ページ", S(TEXT_H.small))}" fill="${INK_SOFT}">ページ</text>
     <text x="${c3 + S(2)}" y="${r3 + S(8.8)}" font-size="${svgFontSize(S(TEXT_H.large), false, true)}" fill="${INK}" font-weight="bold">${page.no} / ${App.project.pages.length}</text>
-    ${projSymbolSVG(c4 + S(2.5), r3 + S(2.4), S(1), meta.proj)}
   </g>`;
   return out;
 }
@@ -253,23 +253,6 @@ function revisionTableSVG(tbX, tbY, tbW, S, fr, meta, idBase = "rv") {
 function revColWidths(tbW, S) {
   const c = REV_TABLE.cols;
   return [S(c[0]), S(c[1]), tbW - S(c[0]) - S(c[1]) - S(c[3]), S(c[3])];
-}
-
-/** 投影法の記号 (JIS Z 8316 / ISO 5456-2)。円すい台とその端面図を並べ、
-    第三角法は端面図 (同心円) を右、第一角法は左に置く。同心円の径は
-    円すい台の大端 (φ6) と小端 (φ3.72) に一致させる。 */
-function projSymbolSVG(x, y, u, proj) {
-  if (proj === "該当なし (回路図)") return "";
-  const first = proj === "第一角法";
-  const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
-  // 2つの投影図は 0.5mm 以上離す (円すい台の端面線が同心円を貫通しないように)
-  const bx = x + (first ? 14.3 * u : 5.2 * u), sx = x + (first ? 5.2 * u : 14.3 * u);
-  const sw = LINE_W.thin * u;
-  return `<g stroke="${INK}" stroke-width="${sw}" fill="none">
-    <path d="M${bx - big * 1.7},${cy - big} L${bx + big * 1.7},${cy - smallR} M${bx - big * 1.7},${cy + big} L${bx + big * 1.7},${cy + smallR}
-             M${bx - big * 1.7},${cy - big} V${cy + big} M${bx + big * 1.7},${cy - smallR} V${cy + smallR}"/>
-    <circle cx="${sx}" cy="${cy}" r="${big}"/><circle cx="${sx}" cy="${cy}" r="${smallR}"/>
-  </g>`;
 }
 
 /* ── 破線枠 (盤外エリア / 機器グループ) ── */

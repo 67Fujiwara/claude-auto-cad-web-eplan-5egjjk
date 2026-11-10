@@ -525,23 +525,6 @@ function dxfDevXform(dev) {
   return (x, y) => [dev.x + (x * k) * c - (y * k) * s, dev.y + (x * k) * s + (y * k) * c];
 }
 
-/** 投影法の記号 (画面の projSymbolSVG と同一寸法) */
-function dxfProjSymbol(x, y, u, proj) {
-  if (proj === "該当なし (回路図)") return "";
-  const first = proj === "第一角法";
-  const big = 3 * u, smallR = 1.86 * u, cy = y + 3.6 * u;
-  // 2つの投影図は 0.5mm 以上離す (円すい台の端面線が同心円を貫通しないように)
-  const bx = x + (first ? 14.3 * u : 5.2 * u), sx = x + (first ? 5.2 * u : 14.3 * u);
-  let out = "";
-  out += dxfPoly([[bx - big * 1.7, cy - big], [bx + big * 1.7, cy - smallR]], "FRAME_THIN");
-  out += dxfPoly([[bx - big * 1.7, cy + big], [bx + big * 1.7, cy + smallR]], "FRAME_THIN");
-  out += dxfLine(bx - big * 1.7, cy - big, bx - big * 1.7, cy + big, "FRAME_THIN");
-  out += dxfLine(bx + big * 1.7, cy - smallR, bx + big * 1.7, cy + smallR, "FRAME_THIN");
-  out += dxfCircle(sx, cy, big, "FRAME_THIN");
-  out += dxfCircle(sx, cy, smallR, "FRAME_THIN");
-  return out;
-}
-
 /** コイル下の接点ミラー表 (画面 mirrorSVG と同じ内容) */
 function dxfMirrorTable(coilDev, S) {   // S には contentScale 版を渡す
   if (frameStyle() === "plain") return "";   // この様式では接点ミラーを描かない
@@ -640,7 +623,8 @@ function pageToDXF(page) {
   ents += dxfPoly([[tbX, tbY], [tbX + tbW, tbY], [tbX + tbW, tbY + tbH], [tbX, tbY + tbH], [tbX, tbY]], "FRAME");
   ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH), tbX + tbW, tbY + S(TITLE_BLOCK.rowH), "FRAME_THIN");
   ents += dxfLine(tbX, tbY + S(TITLE_BLOCK.rowH * 2), tbX + tbW, tbY + S(TITLE_BLOCK.rowH * 2), "FRAME_THIN");
-  cxmm.slice(1).forEach(o => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), tbY + tbH, "FRAME_THIN"));
+  // 最後の縦線は 2 段目まで (3 段目はページ欄が右端まで広がる — 画面と同じ)
+  cxmm.slice(1).forEach((o, i) => ents += dxfLine(tbX + S(o), tbY, tbX + S(o), i === cxmm.length - 2 ? tbY + S(TITLE_BLOCK.rowH * 2) : tbY + tbH, "FRAME_THIN"));
   /* DXF はクリップできないため、欄に収まる文字高へ縮小し、それでも溢れる場合は
      末尾を「…」で切り詰めて隣の欄へはみ出させない (画面と同じ判定を使う) */
   const tbCell = (ci, ry, label, value) => {
@@ -663,10 +647,9 @@ function pageToDXF(page) {
   tbCell(2, R, "日付", (page.tb && page.tb.date) || meta.date || todayStr());
   tbCell(3, R, "尺度", pm.scale || "1:1");
   tbCell(0, R * 2, "企業 (団体) 名", (page.tb && page.tb.author) || meta.author || "—");
-  tbCell(1, R * 2, "用紙 / 投影法", `${paperLabel(pm)} / ${meta.proj || PROJ_DEFAULT}`);
+  tbCell(1, R * 2, "用紙", paperLabel(pm));
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(3.6), S(TEXT_H.small), "ページ", "FRAME");
   ents += dxfText(tbX + S(cxmm[2]) + S(2), tbY + S(R * 2) + S(8.8), S(TEXT_H.large), `${page.no} / ${App.project.pages.length}`, "TEXT");
-  ents += dxfProjSymbol(tbX + S(cxmm[3]) + S(2.5), tbY + S(R * 2) + S(2.4), S(1), meta.proj);
 
   // ── 改訂履歴欄 (画面と同じ寸法。管理図面に必須) ──
   const rev = revisionRect();

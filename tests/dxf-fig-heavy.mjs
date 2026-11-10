@@ -163,7 +163,8 @@ const R = await p.evaluate(async () => {
 const checks = {
   noPageErrors: errs.length === 0,
   simplify: R.simplify.straight === true && R.simplify.zig >= 49990 && R.simplify.heavy === true,
-  screen: R.screen.layerLen < 20000 && R.screen.text === true && R.screen.printL >= 50000,
+  // 印刷はベクタのまま: 5 万点の折れ線 = L 命令 49,999 個 (表題欄などの他の L は数えない前提で下限にする)
+  screen: R.screen.layerLen < 20000 && R.screen.text === true && R.screen.printL >= 49999,
   raster: R.raster.shown === true && R.raster.pixels > 500 && R.raster.panKept === true &&
     R.raster.zoomRedraw === true && R.raster.denser === true,
   hit: R.hit.figIdx === 0 && R.hit.onLine === 0 && R.hit.empty === -1,
