@@ -19,7 +19,12 @@
                シンク 過電流保護)・入力の DC24V/DC5V 切換・シリーズ名を書く
    ・scaffold : 置いて「結線図の下地を作る」で C0 がコモン側レールにつながる。
                入力は P24V 側、出力は N24V 側
-   ・migrate  : 旧版 (ピン留め ver10) の利用者にも 2 機種が追い足される */
+   ・migrate  : 旧版 (ピン留め ver10) の利用者にも 2 機種が追い足される
+   ・fnKeys   : 旧版 (端子 00〜15) で保存した図面の機能欄 (props.fn は端子名で持つ) が、
+               開いたとき (normalizeWireNumbers) に 0〜15 の端子へ付け直されて消えない。
+               同じ名前の端子は触らず、付け直し先に既に文言があれば上書きせず、
+               端子に無い名前 (COM) や数字でない名前 (12a) もそのまま残す。
+               通常の記号 (KV Nano 基本ユニット) の機能欄は変わらない */
 import { chromium } from "playwright-core";
 const b = await chromium.launch({
   executablePath: process.env.CHROME || "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
@@ -81,6 +86,23 @@ const R = await p.evaluate(() => {
   localStorage.setItem("electracad.dbPinnedVer", "10");
   const merged = dbPinnedList();
   out.migrate = merged.includes("kv_b16xc_in") && merged.includes("kv_b16td_out") && merged.includes("cable_core");
+  // ── fnKeys: 旧版 (端子 00〜15) の図面を開く ──
+  {
+    App.project = newProject("旧版"); UI.renumberPages();
+    const pg = App.project.pages.find(isDrawingPage);
+    App.pageIdx = App.project.pages.indexOf(pg); applySheet(pg); pg.devices.length = 0; pg.wires.length = 0;
+    const d = addDevice(pg, "kv_b16td_out", 200, 40, {});
+    // 00/007/09 は付け直す。08 は付け直し先 8 に文言があるので触らない (上書きしない)。10/15 はそのまま。
+    // 数字でない 12a は 12 の端子に付け直さない。COM は端子に無いが残す
+    d.props = { fn: { "00": "ソレノイド1", "007": "ソレノイド8", "08": "旧", "8": "新", "09": "ソレノイド10", "10": "ソレノイド11", "15": "ソレノイド16", "12a": "ゴミ", "COM": "共通" } };
+    const d2 = addDevice(pg, "kv_n14at_out", 400, 40, {});
+    d2.props = { fn: { "500": "ランプ", "07": "迷子" } };
+    const before = JSON.stringify(d2.props.fn);
+    normalizeWireNumbers(); App.labelRev++;
+    const texts = deviceRowTexts(pg, d).map(t => t.text).join(",");
+    out.fnKeys = { keys: Object.keys(d.props.fn).sort().join(","), texts,
+      other: JSON.stringify(d2.props.fn) === before && deviceRowTexts(pg, d2).map(t => t.text).join(",") === "ランプ" };
+  }
   return out;
 });
 
@@ -96,6 +118,8 @@ const checks = {
     R.scaffold.xc.overlap === 0 && R.scaffold.td.overlap === 0 && /P24V/.test(R.scaffold.xc.rails) && !/N24V/.test(R.scaffold.xc.rails) &&
     /N24V/.test(R.scaffold.td.rails) && !/P24V/.test(R.scaffold.td.rails),
   migrate: R.migrate === true,
+  fnKeys: R.fnKeys.keys === "0,08,10,12a,15,7,8,9,COM" &&
+    R.fnKeys.texts === "ソレノイド1,ソレノイド8,新,ソレノイド10,ソレノイド11,ソレノイド16" && R.fnKeys.other === true,
 };
 const bad = Object.entries(checks).filter(([, v]) => !v);
 console.log(JSON.stringify({ checks, R, errs: errs.slice(0, 3) }, null, 1));

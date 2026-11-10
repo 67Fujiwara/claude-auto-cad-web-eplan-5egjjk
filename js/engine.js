@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 246;
+const APP_VERSION = 247;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -3747,8 +3747,30 @@ function autoNumberWires() {
 /* 図面を開いたときの手当て: 線番を持っているのにどこにも出ていないネットを
    直す。古い版で保存した図面や、途中の操作で表示フラグが落ちた図面でも
    「入力したのに出ない」を残さない (番号そのものは変えない) */
+/* 入出力結線図の機能欄 (dev.props.fn) は端子名で持つ。記号の端子の刻印が版の
+   更新で変わると (KV-B16XC/TD: 00〜15 → 0〜15)、旧図面の文言が端子に結びつかず
+   消えて見える。刻印の数字が同じで桁だけ違う端子へ読み替えて付け直す
+   (端子に無い名前で、桁をそろえ直した名前の端子があるものだけ。それ以外は触らない) */
+function migrateFnKeys(project) {
+  (project ? project.pages : []).forEach(page => (page.devices || []).forEach(dev => {
+    const fn = dev.props && dev.props.fn;
+    if (!fn || Array.isArray(fn) || typeof fn !== "object") return;
+    const sym = symOf(dev.sym);
+    if (!sym || !sym.pins) return;
+    const names = new Set(sym.pins.map(p => p.n));
+    Object.keys(fn).forEach(k => {
+      if (!/^\d+$/.test(k)) return;
+      const alt = String(parseInt(k, 10));          // 桁をそろえ直した名前 (007 → 7)
+      // その端子が無い・同じ名前・付け直し先に既に文言がある (開いた後に書いた) ときは触らない
+      if (alt === k || !names.has(alt) || fn[alt] !== undefined) return;
+      fn[alt] = fn[k];
+      delete fn[k];
+    });
+  }));
+}
 function normalizeWireNumbers() {
   panelNormalize(App.project);   // 旧形式のパネルデータを分離置き場へ (読込経路で必ず通る)
+  migrateFnKeys(App.project);    // 端子の刻印が変わった記号の機能欄を付け直す
   (App.project ? App.project.pages : []).forEach(page => {
     if (!isDrawingPage(page)) return;
     // 旧仕様 (尺度違いコピペの伸縮) が残した線の太さ倍率を消す —
