@@ -944,7 +944,14 @@ function bindPnDraw(pane) {
       ${w.numOff ? `<div class="prop-row"><button class="btn-solid" id="pNumAuto" style="padding:5px 10px;font-size:11.5px">自動採番に戻す</button></div>` : ""}
       ${w.numAt ? `<div class="prop-row"><button class="btn-solid" id="pNumAtAuto" style="padding:5px 10px;font-size:11.5px">線番の位置を自動に戻す</button>
         <span class="rp-dim" style="font-size:10.5px">ダブルクリックで決めた位置に出しています</span></div>` : ""}
-      <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>`
+      <div class="prop-row"><label>電線仕様 (サイズ・色)</label><input id="pSpec" class="mono" value="${(w.spec || "").replace(/"/g, "&quot;")}" placeholder="例: KIV(BL)-1.25sq"/></div>
+      <div class="prop-grid2">
+        <div class="prop-row"><label>線番の太さ</label><select id="pNumBold">${(() => { const g = projectMeta().wireNumBold ? "太字" : "細字";
+          return [["", `全体の設定に従う (${g})`], ["1", "太字"], ["0", "細字"]].map(([v, t]) => `<option value="${v}"${(w.numBold === true ? "1" : w.numBold === false ? "0" : "") === v ? " selected" : ""}>${t}</option>`).join(""); })()}</select></div>
+        <div class="prop-row"><label>電線仕様の太さ</label><select id="pSpecBold">${(() => { const g = projectMeta().wireSpecBold ? "太字" : "細字";
+          return [["", `全体の設定に従う (${g})`], ["1", "太字"], ["0", "細字"]].map(([v, t]) => `<option value="${v}"${(w.specBold === true ? "1" : w.specBold === false ? "0" : "") === v ? " selected" : ""}>${t}</option>`).join(""); })()}</select></div>
+      </div>
+      <div class="prop-note" style="margin-top:2px">文字の大きさは「プロジェクト › 線番・電線仕様の文字…」で全体をまとめて変えられます (${wireTextH("num")}mm / ${wireTextH("spec")}mm)。</div>`
       : `<div class="prop-note">作図線です。接続ドット・線番は付かず、ネット解析・
          シミュレーション・検図 (DRC)・端子表・接続リストの対象外です。<br>
          破線のまま回路として扱いたい場合は上のチェックを外してください。</div>`}`;
@@ -1014,6 +1021,15 @@ function bindPnDraw(pane) {
       commit();
       setWireSpec(page, w, e.target.value.trim());
       UI.refresh(false);
+    });
+    // 配線ごとの太字 (無指定 = 全体の設定に従う)
+    [["#pNumBold", "numBold"], ["#pSpecBold", "specBold"]].forEach(([sel, key]) => {
+      const el = pane.querySelector(sel);
+      if (el) el.addEventListener("change", () => {
+        commit();
+        if (el.value === "1") w[key] = true; else if (el.value === "0") w[key] = false; else delete w[key];
+        UI.refresh(false);
+      });
     });
   } else if (selZones.length === 1 && only1) {
     // 破線枠 (盤外エリア / 機器グループ)
@@ -1299,6 +1315,7 @@ const MENUS = {
     { label: "エクスポート (SVG・現在ページ)", key: "", fn: () => downloadFile(App.project.name + "_p" + curPage().no + ".svg", exportSheetSVG(), "image/svg+xml") },
     { sep: true },
     { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
+    { label: "線番・電線仕様の文字…", key: "", fn: () => UI.wireTextSetup() },
     { sep: true },
     { label: "DXF取り込み (図面に作図)…", key: "", fn: () => UI.importDXF() },
     { label: "Panel Studio の図面を差し込む… (JSON / ZIP)", key: "", fn: () => UI.importPanelStudio() },
@@ -2759,6 +2776,47 @@ UI.zoomSpeedDialog = () => {
     localStorage.setItem("electracad.zoomStep", String(Editor.zoomStep));
   });
   UI.openModal({ title: "ズーム速度", sub: "マウスホイールの拡大縮小の強さ", body });
+};
+
+/* ══════════════ 線番・電線仕様の文字 ══════════════ */
+/** 線番と電線仕様の文字高・太字 (プロジェクト全体)。A4 に縮小印刷する図面は
+    3.5mm にすると A4 上で 2.5mm (JIS Z 8313 の最小) になる */
+UI.wireTextSetup = () => {
+  const meta = projectMeta();
+  const sizes = [2.5, 3, 3.5, 4, 5];
+  const opt = (v, cur) => `<option value="${v}"${v === cur ? " selected" : ""}>${v.toFixed(1)} mm${v === 2.5 ? " (標準)" : v === 3.5 ? " (A4 縮小で 2.5mm)" : ""}</option>`;
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">A3 の図面を A4 に印刷すると文字は 71% に縮みます (2.5mm → 1.8mm)。A4 で読める大きさにするなら 3.5mm。太字は大きさを変えずに視認性を上げます。配線ごとの太字はその配線のプロパティで指定できます (ここは全体の既定)。</div>
+    <div class="prop-sect">線番</div>
+    <div class="prop-grid2">
+      <div class="prop-row"><label>文字高</label><select id="wtNumH">${sizes.map(v => opt(v, wireTextH("num"))).join("")}</select></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="wtNumB" ${meta.wireNumBold ? "checked" : ""}/><span>太字</span></label></div>
+    </div>
+    <div class="prop-sect">電線仕様 (サイズ・色)</div>
+    <div class="prop-grid2">
+      <div class="prop-row"><label>文字高</label><select id="wtSpecH">${sizes.map(v => opt(v, wireTextH("spec"))).join("")}</select></div>
+      <div class="prop-row"><label class="chk"><input type="checkbox" id="wtSpecB" ${meta.wireSpecBold ? "checked" : ""}/><span>太字</span></label></div>
+    </div>
+    <div class="prop-note">大きくすると文字幅も広がり、5mm ピッチの密な配線では隣と重なることがあります。自動配置は避けますが、重なりは検図 (DRC) の「文字の重なり」で確認してください。画面・印刷・PDF・DXF すべてに効きます。</div>
+  </div>`);
+  const foot = h(`<div style="display:flex;gap:10px;justify-content:flex-end">
+    <button class="btn-solid" id="wtCancel">キャンセル</button>
+    <button class="btn-solid primary" id="wtOk">適用</button>
+  </div>`);
+  const m = UI.openModal({ title: "線番・電線仕様の文字", sub: "文字高と太字 (プロジェクト全体の既定)", body, foot });
+  foot.querySelector("#wtCancel").addEventListener("click", m.close);
+  foot.querySelector("#wtOk").addEventListener("click", () => {
+    commit();
+    const setH = (key, v) => { const n = parseFloat(v); if (n === TEXT_H.small || isNaN(n)) delete meta[key]; else meta[key] = n; };
+    setH("wireNumH", body.querySelector("#wtNumH").value);
+    setH("wireSpecH", body.querySelector("#wtSpecH").value);
+    if (body.querySelector("#wtNumB").checked) meta.wireNumBold = true; else delete meta.wireNumBold;
+    if (body.querySelector("#wtSpecB").checked) meta.wireSpecBold = true; else delete meta.wireSpecBold;
+    // 線番の配置 (箱の寸法) のやり直しは commit() の labelRev++ で起きる
+    m.close();
+    UI.refresh();
+    UI.setMsg(`線番 ${wireTextH("num")}mm${meta.wireNumBold ? " 太字" : ""} / 電線仕様 ${wireTextH("spec")}mm${meta.wireSpecBold ? " 太字" : ""} にしました`);
+  });
 };
 
 /* ══════════════ 図枠・表題欄の設定 ══════════════ */

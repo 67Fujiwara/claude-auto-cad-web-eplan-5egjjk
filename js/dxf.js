@@ -831,13 +831,13 @@ function pageToDXF(page) {
     parts.forEach(pt2 => { ents += dxfPoly(pt2, "WIRE", lt); });
     if (wr.num && wr.numShow !== false) {
       const [mx, my, horiz] = wireLabelPos(wr, page);
-      ents += dxfText(mx, my, C(TEXT_H.small), wr.num, "WIRENUM", "middle", horiz ? 0 : 90);
+      ents += dxfText(mx, my, C(wireTextH("num")), wr.num, "WIRENUM", "middle", horiz ? 0 : 90, { bold: wireTextBold(wr, "num") });
     }
     if (wr.spec && wr.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz, gap, side, hideSpec] = wireLabelPos(wr, page);
       if (!hideSpec) {                       // 画面と同じ: 狭い所では仕様を出さない
         const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
-        ents += dxfText(sx, sy, C(TEXT_H.small), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90);
+        ents += dxfText(sx, sy, C(wireTextH("spec")), wr.spec, "WIRENUM", "middle", horiz ? 0 : 90, { bold: wireTextBold(wr, "spec") });
       }
     }
   });

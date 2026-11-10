@@ -498,14 +498,16 @@ function wiresSVG(page, opts = {}) {
       const [mx, my, horiz] = wireLabelPos(w, page);
       // 位置は wireLabelPos が確定済み (当たり判定矩形と完全に一致させる)
       const lx = mx, ly = my;
-      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, TEXT_H.small * fr, true)}" fill="#7a4ec2" font-family="monospace" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
+      const nb = wireTextBold(w, "num");
+      out += `<text x="${lx}" y="${ly}" font-size="${svgFontSizeFor(w.num, wireTextH("num") * fr, true, { bold: nb })}" fill="#7a4ec2" font-family="monospace"${nb ? ' font-weight="bold"' : ""} text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${lx} ${ly})"`}>${escXML(w.num)}</text>`;
     }
     // 電線仕様 (例 KIV(BL)-1.25sq) — 線番の反対側にイタリックで表示
     if (w.spec && w.numShow !== false) {   // 線番と同じ代表1本にだけ表示する
       const [mx, my, horiz, gap, side, hideSpec] = wireLabelPos(w, page);
       if (!hideSpec) {                     // 狭くて線番しか置けない所では仕様を出さない
         const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
-        out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, TEXT_H.small * fr, true)}" fill="#4a6b52" font-family="monospace" font-style="italic" text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
+        const sb = wireTextBold(w, "spec");
+        out += `<text x="${sx}" y="${sy}" font-size="${svgFontSizeFor(w.spec, wireTextH("spec") * fr, true, { bold: sb })}" fill="#4a6b52" font-family="monospace" font-style="italic"${sb ? ' font-weight="bold"' : ""} text-anchor="middle"${horiz ? "" : ` transform="rotate(-90 ${sx} ${sy})"`}>${escXML(w.spec)}</text>`;
       }
     }
   });

@@ -7,7 +7,7 @@
 /* アプリの版数。ヘッダーのアプリ名の横に V209・V210 … と出す (小数点なし)。
    開発開始からの通算の配布回数 (= 配布リポジトリのコミット数) に合わせて
    いて、機能追加・修正を配布するたびに 1 つ上げること */
-const APP_VERSION = 248;
+const APP_VERSION = 249;
 
 const GRID = 5;              // スナップグリッド 5mm
 /* 微調整の刻み。端子の張り出しが 5mm の倍数でない記号 (M12 コネクタなど) を
@@ -523,10 +523,27 @@ function titleBlocksRects() {
 }
 /** 線番ラベルの位置。最長区間の中点を基本とし、機器の図記号に重なる場合は
     同じ区間内で空いている位置へずらす (画面・DXF・検図で共有)。 */
+/* ── 線番・電線仕様の文字 ──
+   A3 で描いた図面を A4 に縮小印刷すると 2.5mm の文字が 1.8mm になって読めない。
+   文字高はプロジェクト設定 (meta.wireNumH / meta.wireSpecH, mm・紙の上の呼び) で
+   変えられる。太字はプロジェクト全体 (meta.wireNumBold / meta.wireSpecBold) と
+   配線ごと (w.numBold / w.specBold: true=太字, false=細字, 無指定=全体に従う) */
+const WIRE_TEXT_H_MIN = 2.5, WIRE_TEXT_H_MAX = 7;
+function wireTextH(kind) {
+  const m = App.project && App.project.meta;
+  const v = m ? +(kind === "spec" ? m.wireSpecH : m.wireNumH) : NaN;
+  return v >= WIRE_TEXT_H_MIN && v <= WIRE_TEXT_H_MAX ? v : TEXT_H.small;
+}
+function wireTextBold(w, kind) {
+  const own = w ? (kind === "spec" ? w.specBold : w.numBold) : undefined;
+  if (own === true || own === false) return own;
+  const m = App.project && App.project.meta;
+  return !!(m && (kind === "spec" ? m.wireSpecBold : m.wireNumBold));
+}
 /** 線番ラベルの外接矩形 (mx,my は wireLabelPos の戻り値) */
 function wireNumBox(w, mx, my, horiz) {
-  const f = contentScale(), h = TEXT_H.small * f;
-  const wd = textWidthMM(String(w.num || ""), h, false, true);
+  const f = contentScale(), h = wireTextH("num") * f;
+  const wd = textWidthMM(String(w.num || ""), h, false, true);    // 等幅書体は太字でも字幅が同じ
   return horiz ? { x: mx - wd / 2, y: my - h, w: wd, h }
                : { x: mx - h, y: my - wd / 2, w: h, h: wd };
 }
@@ -536,18 +553,18 @@ function wireNumBox(w, mx, my, horiz) {
     my からの相対で足すと、線番が配線の下/右に置かれた回で仕様だけが
     2(g+h) ぶん外へ飛び、隣の心線の上に乗る */
 function wireSpecAnchor(mx, my, horiz, gap, side) {
-  const f = contentScale(), h = TEXT_H.small * f;
+  const f = contentScale(), h = wireTextH("num") * f, hs = wireTextH("spec") * f;
   const g = (gap === undefined ? WIRE_LABEL_GAP * f : gap);
   const sd = (side === undefined ? 1 : side);
   const lv = horiz ? my : mx;                       // 線番の基準線 (箱の配線側の縁)
-  const wv = sd > 0 ? lv + g : lv - g - h;          // 配線そのものの座標
-  const sv = sd > 0 ? wv + g + h : wv - g;          // 仕様の基準線 (反対側)
+  const wv = sd > 0 ? lv + g : lv - g - h;          // 配線そのものの座標 (線番の文字高ぶん戻す)
+  const sv = sd > 0 ? wv + g + hs : wv - g;         // 仕様の基準線 (反対側・仕様の文字高)
   return horiz ? [mx, sv] : [sv, my];
 }
 /** 電線仕様ラベルの外接矩形 (線番の反対側)。spec が無ければ null */
 function wireSpecBox(w, mx, my, horiz, gap, side) {
   if (!w.spec || w.numShow === false) return null;
-  const f = contentScale(), h = TEXT_H.small * f;
+  const f = contentScale(), h = wireTextH("spec") * f;
   const wd = textWidthMM(String(w.spec), h, false, true);
   const [sx, sy] = wireSpecAnchor(mx, my, horiz, gap, side);
   return horiz ? { x: sx - wd / 2, y: sy - h, w: wd, h }
@@ -750,7 +767,7 @@ function wireLabelPosCalc(w, page, placed, opt = {}) {
   // 区間内判定) と実際の箱の位置がずれるので、ずらさない。
   // 配線からのすき間 gap は表裏で同じにする (片側だけ広いと、線番が自分の線より
   // 隣の線に近くなる)
-  const th = TEXT_H.small * f;
+  const th = wireTextH("num") * f;
   const posOf = (pt, horiz, side = 1, extra = 0, gap = WIRE_LABEL_GAP * f) => {
     const d = gap + extra * f;
     const o = side > 0 ? -d : d + th;
@@ -1202,7 +1219,10 @@ function pageDrawnMinima(page) {
     // タグは出力に出るときだけ数える (尺度の検図は「用紙に刷られる寸法」を見る)
     if ((displayTag(dev) && tagShownFor(dev, true)) || dev.desc) h = Math.min(h, TEXT_H.normal * f * k);
   });
-  condWires(page).forEach(wr => { if (wr.num || wr.spec) h = Math.min(h, TEXT_H.small * f * objScale(wr)); });
+  condWires(page).forEach(wr => {
+    if (wr.num) h = Math.min(h, wireTextH("num") * f * objScale(wr));
+    if (wr.spec) h = Math.min(h, wireTextH("spec") * f * objScale(wr));
+  });
   (page.texts || []).forEach(t => { h = Math.min(h, (t.size || TEXT_H.normal) * f); });
   // アプリが描く線 — 導体は太線、作図線 (破線・一点鎖線) と破線枠は細線。
   // 尺度の違うページから貼った線・枠は倍率つきで描かれるので、その分を掛けて測る
