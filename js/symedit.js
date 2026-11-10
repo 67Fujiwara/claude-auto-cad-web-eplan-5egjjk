@@ -136,12 +136,7 @@ function symShapeSVG(sh, opts = {}) {
     return `<path d="M${+p0[0].toFixed(2)},${+p0[1].toFixed(2)} A${+r.toFixed(2)},${+r.toFixed(2)} 0 0 ${sweep} ${+p1[0].toFixed(2)},${+p1[1].toFixed(2)} Z"${fill}${dash}${extra}/>`;
   }
   if (sh.k === "arc") {
-    const a0 = sh.a0 * Math.PI / 180, a1 = sh.a1 * Math.PI / 180;
-    const x0 = sh.x + sh.r * Math.cos(a0), y0 = sh.y + sh.r * Math.sin(a0);
-    const x1 = sh.x + sh.r * Math.cos(a1), y1 = sh.y + sh.r * Math.sin(a1);
-    let sweep = ((sh.a1 - sh.a0) % 360 + 360) % 360;
-    const large = sweep > 180 ? 1 : 0;
-    return `<path d="M${+x0.toFixed(2)},${+y0.toFixed(2)} A${+sh.r.toFixed(2)},${+sh.r.toFixed(2)} 0 ${large} 1 ${+x1.toFixed(2)},${+y1.toFixed(2)}"${dash}${extra}/>`;
+    return `<path d="${symArcD(sh)}"${dash}${extra}/>`;
   }
   if (sh.k === "table") {
     // パラメーター表。罫線は1本のパスに、文字はセル内へ左詰め・上下中央で置く。
@@ -178,9 +173,114 @@ function symShapeSVG(sh, opts = {}) {
   return "";
 }
 
+/** 飾りの無い実線の折れ線 (塗り・破線・個別線幅なし) か。これらは 1 本の path に
+    まとめて描ける — DXF 取り込みの数千本の線分を要素 1 個にする */
+function symShapePlainLine(sh) {
+  return sh.k === "line" && !sh.fill && sh.style !== "dash" && !sh.lw && sh.pts && sh.pts.length >= 2;
+}
+/** 飾りの無い実線の円弧も同じ path にまとめられる (A 命令。逆変換・DXF 出力とも対応) */
+function symShapePlainArc(sh) {
+  return sh.k === "arc" && !sh.fill && sh.style !== "dash" && !sh.lw && sh.r > 0;
+}
+function symArcD(sh) {
+  const a0 = sh.a0 * Math.PI / 180, a1 = sh.a1 * Math.PI / 180;
+  const x0 = sh.x + sh.r * Math.cos(a0), y0 = sh.y + sh.r * Math.sin(a0);
+  const x1 = sh.x + sh.r * Math.cos(a1), y1 = sh.y + sh.r * Math.sin(a1);
+  const sweep = ((sh.a1 - sh.a0) % 360 + 360) % 360;
+  return `M${+x0.toFixed(2)},${+y0.toFixed(2)} A${+sh.r.toFixed(2)},${+sh.r.toFixed(2)} 0 ${sweep > 180 ? 1 : 0} 1 ${+x1.toFixed(2)},${+y1.toFixed(2)}`;
+}
+/** 図形一覧 → SVG。連続する飾りの無い実線は 1 本の path (M…L… M…L…) にまとめる。
+    DXF 取り込みの大きなシンボルは線分が数千個あり、要素ごとに <path> を作ると
+    図面側 (置くたび・描くたび) も作画画面 (ドラッグのたび) も重くなる。
+    まとめた path は body → 図形の逆変換 (symPathToShapes: M ごとに折れ線へ分ける) と
+    DXF 出力 (dxfParsePath: M ごとに折線へ分ける) の両方がそのまま読めるので無損失。
+    hl = 強調 (選択中) する図形の番号 — これは個別に描く */
+function symShapesSVG(shapes, hl) {
+  let out = "", run = [];
+  const flush = () => {
+    if (!run.length) return;
+    const d = run.map(sh => sh.k === "arc" ? symArcD(sh)
+      : sh.pts.map((p, i) => `${i ? "L" : "M"}${+p[0].toFixed(2)},${+p[1].toFixed(2)}`).join(" ") + (sh.closed ? " Z" : "")).join(" ");
+    out += `<path d="${d}"/>`;
+    run = [];
+  };
+  shapes.forEach((sh, i) => {
+    const on = hl ? hl(i) : false;
+    if (!on && (symShapePlainLine(sh) || symShapePlainArc(sh))) { run.push(sh); return; }
+    flush();
+    out += symShapeSVG(sh, { hl: on });
+  });
+  flush();
+  return out;
+}
 /** 図形一覧 → シンボル body */
 function symShapesToBody(shapes) {
-  return shapes.map(sh => symShapeSVG(sh)).join("");
+  return symShapesSVG(shapes, null);
+}
+/** DXF 取り込みの線分を軽くする: 端点がつながる実線の線分を 1 本の折れ線に
+    つなぎ、曲線を細かく刻んだ点列は Douglas–Peucker (許容 tol mm) で間引く。
+    形は tol (0.02mm = 紙の上で見えない) 以内で同じまま、図形の数と点の数が減る。
+    始点と終点が同じになった折れ線は閉じた線 (closed) にする */
+const SYM_DXF_TOL = 0.02;
+function symCompactLines(shapes, tol = SYM_DXF_TOL) {
+  const r2 = v => Math.round(v * 100) / 100;
+  const key = q => `${r2(q[0])},${r2(q[1])}`;
+  const lines = [], rest = [];
+  shapes.forEach(sh => {
+    if (!symShapePlainLine(sh) || sh.closed || sh.grp) { rest.push(sh); return; }
+    // 長さ 0 の線分・重複点を捨てる
+    const pts = [];
+    sh.pts.forEach(q => { if (!pts.length || key(pts[pts.length - 1]) !== key(q)) pts.push([r2(q[0]), r2(q[1])]); });
+    if (pts.length >= 2) lines.push({ pts, used: false });
+  });
+  // 端点 → その端点を持つ線分
+  const ends = new Map();
+  lines.forEach((ln, i) => {
+    [ln.pts[0], ln.pts[ln.pts.length - 1]].forEach(q => {
+      const k = key(q);
+      if (!ends.has(k)) ends.set(k, []);
+      ends.get(k).push(i);
+    });
+  });
+  const takeFrom = (k, except) => {
+    const arr = ends.get(k) || [];
+    for (const i of arr) if (!lines[i].used && i !== except) return i;
+    return -1;
+  };
+  const out = [];
+  lines.forEach((ln, i0) => {
+    if (ln.used) return;
+    ln.used = true;
+    let pts = ln.pts.slice();
+    // 終点側へ伸ばす
+    for (;;) {
+      const j = takeFrom(key(pts[pts.length - 1]), -1);
+      if (j < 0) break;
+      const o = lines[j]; o.used = true;
+      const seg = key(o.pts[0]) === key(pts[pts.length - 1]) ? o.pts : o.pts.slice().reverse();
+      pts = pts.concat(seg.slice(1));
+      if (key(pts[0]) === key(pts[pts.length - 1])) break;   // 閉じた
+    }
+    // 始点側へ伸ばす (閉じていなければ)
+    while (key(pts[0]) !== key(pts[pts.length - 1])) {
+      const j = takeFrom(key(pts[0]), -1);
+      if (j < 0) break;
+      const o = lines[j]; o.used = true;
+      const seg = key(o.pts[o.pts.length - 1]) === key(pts[0]) ? o.pts : o.pts.slice().reverse();
+      pts = seg.slice(0, -1).concat(pts);
+    }
+    const closed = pts.length > 3 && key(pts[0]) === key(pts[pts.length - 1]);
+    if (closed) pts.pop();
+    // 間引き (閉じた線は始点を固定して間引く — 始点は必ず残る)
+    const flat = []; pts.forEach(q => flat.push(q[0], q[1]));
+    if (closed) flat.push(pts[0][0], pts[0][1]);
+    const thin = panelFigSimplify(flat, tol);
+    const out2 = [];
+    for (let i = 0; i < thin.length; i += 2) out2.push([thin[i], thin[i + 1]]);
+    if (closed) out2.pop();
+    if (out2.length >= 2) out.push({ k: "line", pts: out2, style: "solid", ...(closed ? { closed: true } : {}) });
+  });
+  return rest.concat(out);
 }
 
 /** 図形と端子から外接矩形を求める (一様余白 2mm。JIS の他の記号と同じ作法) */
@@ -217,7 +317,7 @@ function dxfEntsToShapes(ents, opt = {}) {
   const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
   const X = x => +(((x - cx) * k)).toFixed(2);
   const Y = y => +((-(y - cy) * k)).toFixed(2);      // DXF は上向きが +Y
-  const out = [];
+  const out0 = []; let out = out0;
   ents.forEach(e => {
     if (e.type === "INSERT") return;
     if (e.type === "LINE" || e.type === "SOLID") {
@@ -239,6 +339,8 @@ function dxfEntsToShapes(ents, opt = {}) {
         anchor: e.anchor || "start" });          // 寄せは DXF の指定どおり (ずれ防止)
     }
   });
+  // 線分をつないで間引く (形は同じまま図形と点の数を減らす)
+  out = symCompactLines(out0);
   // センタリングをやり直す: dxfEntsBounds の文字幅は見積もりなので、
   // 実際に描いた寸法 (getBBox) とずれると図形群が原点から大きく外れ、
   // 作画キャンバスの外に出て「プレビューには出るのに見えない」状態になる
@@ -797,6 +899,21 @@ UI.openSymbolEditor = (symId = null) => {
     c.forEach(q => { const d = Math.hypot(q[0] - px, q[1] - py); if (d < bd) { bd = d; best = q; } });
     return best && [+best[0].toFixed(2), +best[1].toFixed(2)];
   };
+  /* 自動の外接矩形 (青い枠) は getBBox で測るので毎回描き直すと重い (DXF 取り込みの
+     大きな図形では 1 回数十 ms)。図形・端子の座標の要約が変わったときだけ測り直す */
+  let _bbSig = null, _bbVal = null;
+  const autoBounds = () => {
+    let sig = S.shapes.length * 7 + S.pins.length * 13;
+    S.shapes.forEach((sh, i) => {
+      const w = (i % 97) + 1;
+      if (sh.k === "line") { const a = sh.pts[0], b2 = sh.pts[sh.pts.length - 1]; sig += w * (a[0] + a[1] * 3 + b2[0] * 7 + b2[1] * 11 + sh.pts.length * 17); }
+      else sig += w * ((sh.x || 0) + (sh.y || 0) * 3 + (sh.r || sh.w || sh.dx || 0) * 7 + (sh.h || sh.dy || 0) * 11 + (sh.sc || 1) * 13 + (sh.rot || 0) * 19 + String(sh.text || "").length * 23);
+    });
+    S.pins.forEach((p, i) => { sig += ((i % 89) + 1) * (p.x * 29 + p.y * 31); });
+    if (_bbVal && _bbSig === sig) return _bbVal;
+    _bbSig = sig; _bbVal = symShapesBounds(S.shapes, S.pins);
+    return _bbVal;
+  };
   const draw = () => {
     const g = 1, G = 5;
     let out = "";
@@ -810,7 +927,7 @@ UI.openSymbolEditor = (symId = null) => {
     out += `<path d="M-3,0 H3 M0,-3 V3" stroke="rgba(255,120,120,.55)" stroke-width="0.2" fill="none"/>`;
     // シンボル枠 (青)。配置時の外接矩形。選択ツールでは角をドラッグしてサイズを変えられる
     if (S.shapes.length || S.pins.length) {
-      const fb = S.frame ?? symShapesBounds(S.shapes, S.pins);
+      const fb = S.frame ?? autoBounds();
       out += `<rect x="${fb[0]}" y="${fb[1]}" width="${fb[2]}" height="${fb[3]}" fill="none" stroke="#4b9fff" stroke-width="${S.frame ? 0.3 : 0.16}" stroke-dasharray="1.6 1" opacity="${S.frame ? 0.95 : 0.55}"/>`;
       if (S.tool === "select") {
         const hs = 1.3;
@@ -820,7 +937,9 @@ UI.openSymbolEditor = (symId = null) => {
     }
     // 図形
     out += `<g fill="none" stroke="#e6edf7" stroke-width="${S.lw}" stroke-linecap="round" stroke-linejoin="round" color="#e6edf7">`;
-    S.shapes.forEach((sh, i) => { out += symShapeSVG(sh, { hl: i === S.sel || S.msel.shapes.includes(i) }); });
+    // 飾りの無い実線は 1 本の path にまとめる (DXF 取り込みの数千本でも要素 1 個)。選択中の図形だけ個別に強調
+    const msel = new Set(S.msel.shapes);
+    out += symShapesSVG(S.shapes, i => i === S.sel || msel.has(i));
     out += `</g>`;
     // 範囲選択の矩形
     if (S.marquee) {
@@ -851,7 +970,7 @@ UI.openSymbolEditor = (symId = null) => {
     syncR();                        // 四角形を選んでいれば角Rの欄を出す
   };
   const refreshSide = () => {
-    const bd = S.frame ?? symShapesBounds(S.shapes, S.pins);
+    const bd = S.frame ?? autoBounds();
     const bEl = body.querySelector("#seBounds");
     bEl.innerHTML =
       `シンボル枠 (青): X ${bd[0]} / Y ${bd[1]} / 幅 ${bd[2]} / 高さ ${bd[3]} mm` +
@@ -1099,7 +1218,7 @@ UI.openSymbolEditor = (symId = null) => {
       }
       // シンボル枠 (青) の角ハンドル → 枠のサイズ変更
       if (S.shapes.length || S.pins.length) {
-        const fb = S.frame ?? symShapesBounds(S.shapes, S.pins);
+        const fb = S.frame ?? autoBounds();
         const corners = [[fb[0], fb[1], "nw"], [fb[0] + fb[2], fb[1], "ne"], [fb[0], fb[1] + fb[3], "sw"], [fb[0] + fb[2], fb[1] + fb[3], "se"]];
         // 当たり判定は描いている青い四角 (1.3mm) と同じ感覚に絞る。
         // 広くすると、角の近くから始める範囲選択ドラッグが枠リサイズに化ける
