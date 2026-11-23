@@ -79,16 +79,37 @@ input, select, textarea { font-family: inherit; }
 }
 .menu:hover, .menu.open { background: var(--panel-3); color: var(--text); }
 
-.titlebar-center { flex: 1; display: flex; justify-content: center; }
+/* 中央のプロジェクト名は縮む側 (幅に応じて 260px から細くなる) */
+.titlebar-center { flex: 1 1 120px; display: flex; justify-content: center; }
 #projectName {
   background: transparent; border: 1px solid transparent; border-radius: var(--r-sm);
   color: var(--text-dim); text-align: center; font-size: 12.5px; padding: 4px 14px;
-  width: 260px; outline: none; transition: all .15s;
+  width: 100%; max-width: 260px; min-width: 0; outline: none; transition: all .15s;
 }
 #projectName:hover { border-color: var(--line); }
 #projectName:focus { border-color: var(--accent); color: var(--text); background: var(--panel); }
 
 .titlebar-right { display: flex; gap: 8px; align-items: center; }
+#btnAIWizard .ai-short { display: none; }      /* 狭い画面だけ「AI」の短い表示 (下の media で出す) */
+/* ── 画面幅 (ブラウザの拡大率を含む) に合わせてヘッダを収める ──
+   1600px 以下: ボタンの文字を消してアイコンだけにする (説明は title のツールチップ)。
+   1250px 以下: プロジェクト名の欄を細く。1000px 以下: プロジェクト名の欄を隠す
+   (名前は表題欄の設定で変えられる) */
+@media (max-width: 1600px) {
+  .tb-chip .save-label { display: none; }
+  .tb-chip { padding: 6px 9px; gap: 0; }
+  .tb-chip .wip-master-badge { margin-right: 4px; }
+  #btnAIWizard { gap: 4px; }
+  #btnAIWizard .ai-short { display: inline; }
+  .menu { padding: 5px 8px; }
+}
+@media (max-width: 1250px) {
+  #projectName { max-width: 150px; }
+  .brand { padding-right: 4px; }
+}
+@media (max-width: 1000px) {
+  .titlebar-center { display: none; }
+}
 .tb-chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 11px; border-radius: 8px; font-size: 12.5px; font-weight: 600;
