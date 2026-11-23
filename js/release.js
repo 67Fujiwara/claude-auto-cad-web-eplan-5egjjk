@@ -407,10 +407,13 @@ function relPageSVG(project, idx) {
 }
 UI.openReleasePage = () => {
   if (document.getElementById("relView")) return;
-  const el = h(`<div id="relView" class="rel-view">
+  let listOpen = true;
+  try { listOpen = localStorage.getItem("electracad.relViewList") !== "0"; } catch (e) { /* 既定は開く */ }
+  const el = h(`<div id="relView" class="rel-view${listOpen ? "" : " nolist"}">
     <div class="rel-view-head">
+      <button class="btn-solid" id="rvToggle" title="一覧を出す / しまう">☰ 一覧</button>
       <button class="btn-solid" id="rvBack">← 編集画面に戻る</button>
-      <div class="rel-view-title">設計完了した図面 <span class="rel-dim" style="font-weight:400">— 閲覧専用 (ここでは編集できません)</span></div>
+      <div class="rel-view-title">設計完了した図面 <span class="rel-dim" style="font-weight:400">— 閲覧専用</span></div>
       <span style="flex:1"></span>
       <button class="btn-solid" id="rvHist">履歴の管理…</button>
     </div>
@@ -420,6 +423,12 @@ UI.openReleasePage = () => {
     </div></div>`);
   document.body.append(el);
   const st = { id: null, p: null, r: null, idx: 0, zoom: 0 };   // zoom 0 = 幅に合わせる
+  // 一覧 (サイドバー) の出し入れ。しまった状態は次回も覚えておく
+  el.querySelector("#rvToggle").addEventListener("click", () => {
+    el.classList.toggle("nolist");
+    try { localStorage.setItem("electracad.relViewList", el.classList.contains("nolist") ? "0" : "1"); } catch (e) { /* 無視 */ }
+    if (st.p && !st.zoom) renderPage();           // 幅に合わせているときは描き直す
+  });
   const renderList = () => {
     const list = relList();
     const box = el.querySelector("#rvList");
@@ -431,6 +440,8 @@ UI.openReleasePage = () => {
       ${r.note ? `<div class="rel-dim">${escXML(r.note)}</div>` : ""}</div>`).join("");
     box.querySelectorAll(".rel-view-item").forEach(it => it.addEventListener("click", () => open(it.dataset.id)));
   };
+  /* 図面の表示。ツールバーとページのタブは高さを固定し (1 行・折り返さない)、
+     ページを替えても図面の左上の位置とスクロール位置が動かないようにする */
   const renderPage = () => {
     const main = el.querySelector("#rvMain");
     if (!st.p) return;
@@ -438,28 +449,36 @@ UI.openReleasePage = () => {
     const svg = relPageSVG(st.p, st.idx);
     const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg);
     const W = vb ? +vb[1] : 420, H = vb ? +vb[2] : 297;
-    const sheetW = el.querySelector(".rel-view-sheet") ? el.querySelector(".rel-view-sheet").clientWidth - 32 : 1000;
+    const prevSheet = el.querySelector("#rvSheet");
+    const sheetW = prevSheet ? prevSheet.clientWidth - 32 : (el.querySelector("#rvMain").clientWidth - 32);
+    const scroll = prevSheet ? { x: prevSheet.scrollLeft, y: prevSheet.scrollTop } : { x: 0, y: 0 };
     const k = st.zoom || Math.max(0.1, sheetW / W);
     const px = Math.round(W * k), py = Math.round(H * k);
     const svg2 = svg.replace(/^<\?xml[^>]*>\s*/, "").replace(/width="[^"]*" height="[^"]*"/, `width="${px}" height="${py}"`);
+    const n = st.p.pages.length;
     main.innerHTML = `
       <div class="rel-view-bar">
-        <b>${escXML(st.r.project)}</b> <span class="rel-dim">Rev ${escXML(st.r.rev)} / ${escXML(st.r.stamp)}</span>
+        <span class="rel-view-name" title="${escAttr(st.r.project)} Rev ${escAttr(st.r.rev)} / ${escAttr(st.r.stamp)}"><b>${escXML(st.r.project)}</b> <span class="rel-dim">Rev ${escXML(st.r.rev)} / ${escXML(st.r.stamp)}</span></span>
+        <span class="rel-view-nav">
+          <button class="btn-solid" id="rvPrev" title="前のページ (←)" ${st.idx === 0 ? "disabled" : ""}>◀</button>
+          <span class="mono">${st.idx + 1} / ${n}</span>
+          <button class="btn-solid" id="rvNext" title="次のページ (→)" ${st.idx >= n - 1 ? "disabled" : ""}>▶</button>
+          <span class="mono rel-view-pgname">${escXML(pageDwgNoOf(st.p, pg))} ${escXML(pg.name || "")}</span>
+        </span>
         <span style="flex:1"></span>
-        <button class="btn-solid" id="rvPrev" ${st.idx === 0 ? "disabled" : ""}>◀ 前</button>
-        <span class="mono">${st.idx + 1} / ${st.p.pages.length}</span>
-        <button class="btn-solid" id="rvNext" ${st.idx >= st.p.pages.length - 1 ? "disabled" : ""}>次 ▶</button>
-        <span class="mono">${escXML(pageDwgNoOf(st.p, pg))} ${escXML(pg.name || "")}</span>
-        <span style="width:12px"></span>
-        <button class="btn-solid" id="rvZoomOut">−</button><button class="btn-solid" id="rvZoomFit">幅に合わせる</button><button class="btn-solid" id="rvZoomIn">＋</button>
-        <span style="width:12px"></span>
-        <button class="btn-solid" id="rvDxf">DXF</button><button class="btn-solid" id="rvJson">JSON</button><button class="btn-solid" id="rvEdit">作業中に開いて編集…</button>
+        <button class="btn-solid" id="rvZoomOut" title="縮小">−</button><button class="btn-solid" id="rvZoomFit" title="幅に合わせる">幅</button><button class="btn-solid" id="rvZoomIn" title="拡大">＋</button>
+        <span style="width:10px"></span>
+        <button class="btn-solid" id="rvDxf" title="この図面の DXF を出し直す">DXF</button><button class="btn-solid" id="rvJson" title="この図面の JSON を書き出す">JSON</button><button class="btn-solid" id="rvEdit" title="作業中に開いて編集する (確認が出ます)">編集…</button>
       </div>
-      <div class="rel-view-pages" style="padding:6px 12px;border-bottom:1px solid var(--line)" id="rvPages">${st.p.pages.map((q, i) => `<button class="btn-solid${i === st.idx ? " on" : ""}" data-i="${i}" title="${escAttr(q.name || "")}">${i + 1}</button>`).join("")}</div>
+      <div class="rel-view-tabs" id="rvPages">${st.p.pages.map((q, i) => `<div class="ptab${i === st.idx ? " active" : ""}" data-i="${i}" title="図番 ${escAttr(pageDwgNoOf(st.p, q))}"><span class="ptab-no">${i + 1}</span><span>${escXML(q.name || "")}</span></div>`).join("")}</div>
       <div class="rel-view-sheet" id="rvSheet">${svg2}</div>`;
+    const sheet = main.querySelector("#rvSheet");
+    sheet.scrollLeft = scroll.x; sheet.scrollTop = scroll.y;       // ページを替えても同じ場所を見続ける
+    const act = main.querySelector("#rvPages .ptab.active");
+    if (act && act.scrollIntoView) act.scrollIntoView({ block: "nearest", inline: "nearest" });
     main.querySelector("#rvPrev").addEventListener("click", () => { st.idx = Math.max(0, st.idx - 1); renderPage(); });
     main.querySelector("#rvNext").addEventListener("click", () => { st.idx = Math.min(st.p.pages.length - 1, st.idx + 1); renderPage(); });
-    main.querySelectorAll("#rvPages button").forEach(b => b.addEventListener("click", () => { st.idx = +b.dataset.i; renderPage(); }));
+    main.querySelectorAll("#rvPages .ptab").forEach(b => b.addEventListener("click", () => { st.idx = +b.dataset.i; renderPage(); }));
     main.querySelector("#rvZoomIn").addEventListener("click", () => { st.zoom = (st.zoom || k) * 1.25; renderPage(); });
     main.querySelector("#rvZoomOut").addEventListener("click", () => { st.zoom = Math.max(0.1, (st.zoom || k) / 1.25); renderPage(); });
     main.querySelector("#rvZoomFit").addEventListener("click", () => { st.zoom = 0; renderPage(); });
