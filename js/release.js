@@ -422,7 +422,7 @@ UI.openReleasePage = () => {
       <div class="rel-view-main" id="rvMain"><div class="se-empty" style="padding:24px">左の一覧から図面を選んでください</div></div>
     </div></div>`);
   document.body.append(el);
-  const st = { id: null, p: null, r: null, idx: 0, zoom: 0 };   // zoom 0 = 幅に合わせる
+  const st = { id: null, p: null, r: null, idx: 0, zoom: 0, fit: "page" };   // zoom 0 = 自動 (fit: "page" 全体 / "width" 幅)
   // 一覧 (サイドバー) の出し入れ。しまった状態は次回も覚えておく
   el.querySelector("#rvToggle").addEventListener("click", () => {
     el.classList.toggle("nolist");
@@ -443,16 +443,22 @@ UI.openReleasePage = () => {
   /* 図面の表示。ツールバーとページのタブは高さを固定し (1 行・折り返さない)、
      ページを替えても図面の左上の位置とスクロール位置が動かないようにする */
   const renderPage = () => {
-    const main = el.querySelector("#rvMain");
     if (!st.p) return;
     const pg = st.p.pages[st.idx];
     const svg = relPageSVG(st.p, st.idx);
     const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg);
     const W = vb ? +vb[1] : 420, H = vb ? +vb[2] : 297;
     const prevSheet = el.querySelector("#rvSheet");
-    const sheetW = prevSheet ? prevSheet.clientWidth - 32 : (el.querySelector("#rvMain").clientWidth - 32);
+    /* 自動の倍率: 「全体」は用紙全体が画面に収まる倍率 (縦横の小さいほう)。尺度 1:1.5 の
+       ページは作図領域が広く用紙の縦横比も違うので、幅だけで合わせると下が切れる。
+       「幅」は横幅いっぱい (縦にスクロールして読む)。初めて描くときは画面の寸法を
+       ツールバー・タブの高さを引いて見積もる */
+    const main = el.querySelector("#rvMain");
+    const sheetW = (prevSheet ? prevSheet.clientWidth : main.clientWidth) - 32;
+    const sheetH = (prevSheet ? prevSheet.clientHeight : main.clientHeight - 74) - 32;
     const scroll = prevSheet ? { x: prevSheet.scrollLeft, y: prevSheet.scrollTop } : { x: 0, y: 0 };
-    const k = st.zoom || Math.max(0.1, sheetW / W);
+    const kFit = st.fit === "width" ? sheetW / W : Math.min(sheetW / W, sheetH / H);
+    const k = st.zoom || Math.max(0.05, kFit);
     const px = Math.round(W * k), py = Math.round(H * k);
     const svg2 = svg.replace(/^<\?xml[^>]*>\s*/, "").replace(/width="[^"]*" height="[^"]*"/, `width="${px}" height="${py}"`);
     const n = st.p.pages.length;
@@ -466,12 +472,12 @@ UI.openReleasePage = () => {
           <span class="mono rel-view-pgname">${escXML(pageDwgNoOf(st.p, pg))} ${escXML(pg.name || "")}</span>
         </span>
         <span style="flex:1"></span>
-        <button class="btn-solid" id="rvZoomOut" title="縮小">−</button><button class="btn-solid" id="rvZoomFit" title="幅に合わせる">幅</button><button class="btn-solid" id="rvZoomIn" title="拡大">＋</button>
+        <button class="btn-solid" id="rvZoomOut" title="縮小">−</button><button class="btn-solid${!st.zoom && st.fit === "page" ? " on" : ""}" id="rvZoomPage" title="用紙全体を画面に収める (尺度が違っても同じ)">全体</button><button class="btn-solid${!st.zoom && st.fit === "width" ? " on" : ""}" id="rvZoomFit" title="幅に合わせる">幅</button><button class="btn-solid" id="rvZoomIn" title="拡大">＋</button>
         <span style="width:10px"></span>
         <button class="btn-solid" id="rvDxf" title="この図面の DXF を出し直す">DXF</button><button class="btn-solid" id="rvJson" title="この図面の JSON を書き出す">JSON</button><button class="btn-solid" id="rvEdit" title="作業中に開いて編集する (確認が出ます)">編集…</button>
       </div>
       <div class="rel-view-tabs" id="rvPages">${st.p.pages.map((q, i) => `<div class="ptab${i === st.idx ? " active" : ""}" data-i="${i}" title="図番 ${escAttr(pageDwgNoOf(st.p, q))}"><span class="ptab-no">${i + 1}</span><span>${escXML(q.name || "")}</span></div>`).join("")}</div>
-      <div class="rel-view-sheet" id="rvSheet">${svg2}</div>`;
+      <div class="rel-view-sheet" id="rvSheet"><div class="rel-view-center">${svg2}</div></div>`;
     const sheet = main.querySelector("#rvSheet");
     sheet.scrollLeft = scroll.x; sheet.scrollTop = scroll.y;       // ページを替えても同じ場所を見続ける
     const act = main.querySelector("#rvPages .ptab.active");
@@ -481,7 +487,8 @@ UI.openReleasePage = () => {
     main.querySelectorAll("#rvPages .ptab").forEach(b => b.addEventListener("click", () => { st.idx = +b.dataset.i; renderPage(); }));
     main.querySelector("#rvZoomIn").addEventListener("click", () => { st.zoom = (st.zoom || k) * 1.25; renderPage(); });
     main.querySelector("#rvZoomOut").addEventListener("click", () => { st.zoom = Math.max(0.1, (st.zoom || k) / 1.25); renderPage(); });
-    main.querySelector("#rvZoomFit").addEventListener("click", () => { st.zoom = 0; renderPage(); });
+    main.querySelector("#rvZoomFit").addEventListener("click", () => { st.zoom = 0; st.fit = "width"; renderPage(); });
+    main.querySelector("#rvZoomPage").addEventListener("click", () => { st.zoom = 0; st.fit = "page"; renderPage(); });
     main.querySelector("#rvDxf").addEventListener("click", () => relActDxf(st.p, st.r));
     main.querySelector("#rvJson").addEventListener("click", () => relActJson(st.p, st.r));
     main.querySelector("#rvEdit").addEventListener("click", async () => { if (await relActOpen(st.p, st.r)) close(); });
@@ -500,8 +507,11 @@ UI.openReleasePage = () => {
     else if (e.key === "ArrowRight" && st.p) { st.idx = Math.min(st.p.pages.length - 1, st.idx + 1); renderPage(); }
     else if (e.key === "ArrowLeft" && st.p) { st.idx = Math.max(0, st.idx - 1); renderPage(); }
   };
-  const close = () => { document.removeEventListener("keydown", onKey, true); el.remove(); };
+  // 画面の大きさが変わったら、自動の倍率のときは描き直す
+  const onResize = () => { if (st.p && !st.zoom) renderPage(); };
+  const close = () => { document.removeEventListener("keydown", onKey, true); window.removeEventListener("resize", onResize); el.remove(); };
   document.addEventListener("keydown", onKey, true);
+  window.addEventListener("resize", onResize);
   el.querySelector("#rvBack").addEventListener("click", close);
   el.querySelector("#rvHist").addEventListener("click", () => UI.openReleaseHistory());
   renderList();

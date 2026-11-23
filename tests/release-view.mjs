@@ -10,7 +10,10 @@
               切り替わる (図番とページ名も)。ツールバーとタブは 1 行・高さ固定で、ページを
               替えても図面の表示位置 (スクロール) が動かない
    ・sidebar : 「☰ 一覧」で左の一覧をしまえる (次に開いたときも覚えている)
-   ・zoom    : ＋/− で拡大縮小、「幅に合わせる」で戻る
+   ・zoom    : ＋/− で拡大縮小、「幅」で横幅いっぱい、「全体」で用紙全体が画面に収まる (既定)
+   ・fitAll  : 既定は尺度に関係なく用紙全体が画面に収まる: 1:1 の A3 も 1:1.5 のページも、
+              SVG が表示域に縦横とも収まり、どちらかの辺が表示域いっぱい。画面の大きさを
+              変えても (resize) 収まり直す
    ・back    : 「編集画面に戻る」/ Esc でページが消え、編集画面に戻る。図面は変わっていない
    ・history : 「履歴の管理…」で従来の履歴ダイアログが上に開く (閲覧ページの上) */
 import { chromium } from "playwright-core";
@@ -32,6 +35,7 @@ const R = await p.evaluate(async () => {
     const d = { id: uid("d"), sym: "coil", x: 100, y: 100, rot: 0, tag, desc: "", props: {} };
     pg.devices.push(d);
     pr.pages.push({ id: uid("pg"), no: 0, name: "2枚目", devices: [], wires: [], texts: [], zones: [] });
+    pr.pages.push({ id: uid("pg"), no: 0, name: "1:1.5のページ", scale: "1:1.5", devices: [], wires: [], texts: [], zones: [] });
     return pr;
   };
   const keep = App.project;
@@ -67,7 +71,11 @@ const R = await p.evaluate(async () => {
   const drawIdx = relList().length && (await relGetSnapshot("rel_t2")).pages.findIndex(q => !q.kind);
   const coverFirst = /1 \/ \d+/.test(view.querySelector(".rel-view-bar").textContent) && svgText().includes("完了案件B");
   [...view.querySelectorAll("#rvPages .ptab")][drawIdx].click(); await new Promise(r => setTimeout(r, 300));
-  out.view = { shown: !!sheet() && !!sheet().querySelector("svg"), tag: svgText().includes("-KB1"), title: coverFirst,
+  // 開いた直後の既定は「全体」(用紙全体が画面に収まる)
+  const sv0 = sheet().querySelector("svg"), bx0 = sheet().getBoundingClientRect();
+  const fitDefault = view.querySelector("#rvZoomPage").classList.contains("on") && !view.querySelector("#rvZoomFit").classList.contains("on") &&
+    +sv0.getAttribute("height") <= bx0.height - 31 && +sv0.getAttribute("width") <= bx0.width - 31;
+  out.view = { shown: !!sheet() && !!sheet().querySelector("svg"), tag: svgText().includes("-KB1"), title: coverFirst, fitDefault,
     drawPage: view.querySelector(".rel-view-bar").textContent.includes(`${drawIdx + 1} / `),
     editingSame: App.project === editing && App.project.name === "編集中", pageIdx: App.pageIdx,
     sel: !!view.querySelector(".rel-view-item.on") && view.querySelector(".rel-view-item.on").dataset.id === "rel_t2",
@@ -95,23 +103,38 @@ const R = await p.evaluate(async () => {
     fitW: Math.round(view.querySelector("#rvZoomFit").getBoundingClientRect().width) };   // 余白があってもボタンを引き伸ばさない
   view.querySelector("#rvZoomFit").click(); await new Promise(r => setTimeout(r, 200));
   const lastBtn = [...view.querySelectorAll("#rvPages .ptab")].pop(); lastBtn.click(); await new Promise(r => setTimeout(r, 300));
-  out.pages.last = bar().includes(`${lastBtn.dataset.i * 1 + 1} / `) && svgText().includes("2枚目");
+  out.pages.last = bar().includes(`${lastBtn.dataset.i * 1 + 1} / `) && svgText().includes("1:1.5のページ");
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })); await new Promise(r => setTimeout(r, 200));
   out.pages.back = bar().includes(`${lastBtn.dataset.i * 1} / `);
+  // ── fitAll (既定 = 全体) ──
+  const fitInfo = () => { const sv = sheet().querySelector("svg"), box = sheet().getBoundingClientRect();
+    const W = +sv.getAttribute("width"), H = +sv.getAttribute("height"), aw = box.width - 32, ah = box.height - 32;
+    return { W: Math.round(W), H: Math.round(H), aw: Math.round(aw), ah: Math.round(ah), inside: W <= aw + 1 && H <= ah + 1, full: W >= aw - 2 || H >= ah - 2,
+      centered: Math.abs((sv.getBoundingClientRect().left - box.left) - (box.width - W) / 2) < 3 }; };
+  view.querySelector("#rvZoomPage").click(); await new Promise(r => setTimeout(r, 200));
+  out.fitAll = { a3: fitInfo(), pageOn: view.querySelector("#rvZoomPage").classList.contains("on") };
+  [...view.querySelectorAll("#rvPages .ptab")].pop().click(); await new Promise(r => setTimeout(r, 300));   // 1:1.5 のページ
+  out.fitAll.s15 = fitInfo(); out.fitAll.s15name = view.querySelector(".rel-view-pgname").textContent;
+  tabs[0].click(); await new Promise(r => setTimeout(r, 200));
   // ── zoom ──
   const w = () => +sheet().querySelector("svg").getAttribute("width");
   const w0 = w(); view.querySelector("#rvZoomIn").click(); await new Promise(r => setTimeout(r, 200)); const w1 = w();
   view.querySelector("#rvZoomOut").click(); await new Promise(r => setTimeout(r, 200)); const w2 = w();
   view.querySelector("#rvZoomIn").click(); view.querySelector("#rvZoomFit").click(); await new Promise(r => setTimeout(r, 200)); const w3 = w();
-  out.zoom = { w0, w1, w2, w3 };
+  const widthFull = Math.abs(w3 - (sheet().getBoundingClientRect().width - 32)) < 2 && view.querySelector("#rvZoomFit").classList.contains("on");
+  view.querySelector("#rvZoomPage").click(); await new Promise(r => setTimeout(r, 200)); const w4 = w();
+  out.zoom = { w0, w1, w2, w3, w4, widthFull };
   // ── sidebar ──
   const listShown = () => getComputedStyle(view.querySelector("#rvList")).display !== "none";
   out.sidebar = { shown0: listShown() };
+  view.querySelector("#rvZoomFit").click(); await new Promise(r => setTimeout(r, 200));   // 幅に合わせているとき、一覧をしまうと図面が広がる
+  const wList = +view.querySelector("#rvSheet svg").getAttribute("width");
   view.querySelector("#rvToggle").click(); await new Promise(r => setTimeout(r, 200));
   out.sidebar.hidden = !listShown(); out.sidebar.saved = localStorage.getItem("electracad.relViewList");
-  out.sidebar.wider = +view.querySelector("#rvSheet svg").getAttribute("width");
+  out.sidebar.wider = +view.querySelector("#rvSheet svg").getAttribute("width") - wList;
   view.querySelector("#rvToggle").click(); await new Promise(r => setTimeout(r, 200));
   out.sidebar.again = listShown();
+  view.querySelector("#rvZoomPage").click(); await new Promise(r => setTimeout(r, 200));
   // ── history ──
   view.querySelector("#rvHist").click(); await new Promise(r => setTimeout(r, 200));
   out.history = { open: !!document.querySelector("#rlRows"), above: !!document.querySelector("#relView") };
@@ -136,7 +159,10 @@ const N = await p.evaluate(() => {
   const v = document.querySelector("#relView");
   if (v.classList.contains("nolist")) v.querySelector("#rvToggle").click();
   const bar = v.querySelector(".rel-view-bar");
-  const r = { barH: Math.round(bar.getBoundingClientRect().height), btnMax: Math.max(...[...bar.querySelectorAll(".btn-solid")].map(b2 => b2.getBoundingClientRect().height)),
+  const sv = v.querySelector("#rvSheet svg"), box = v.querySelector("#rvSheet").getBoundingClientRect();
+  const resized = { inside: +sv.getAttribute("width") <= box.width - 31 && +sv.getAttribute("height") <= box.height - 31,
+    full: +sv.getAttribute("width") >= box.width - 34 || +sv.getAttribute("height") >= box.height - 34 };
+  const r = { resized, barH: Math.round(bar.getBoundingClientRect().height), btnMax: Math.max(...[...bar.querySelectorAll(".btn-solid")].map(b2 => b2.getBoundingClientRect().height)),
     fitW: Math.round(bar.querySelector("#rvZoomFit").getBoundingClientRect().width),   // ボタンは中身の幅のまま (引き伸ばさない)
     listShown: getComputedStyle(v.querySelector("#rvList")).display !== "none" };
   v.querySelector("#rvBack").click();
@@ -148,14 +174,16 @@ const checks = {
   noPageErrors: errs.length === 0,
   button: R.button.btn && R.button.opened,
   list: R.list.n === 2 && R.list.names === "完了案件A,完了案件B" && R.list.none,
-  view: R.view.shown && R.view.tag && R.view.title && R.view.drawPage && R.view.editingSame && R.view.sel &&
+  view: R.view.shown && R.view.tag && R.view.title && R.view.fitDefault && R.view.drawPage && R.view.editingSame && R.view.sel &&
     R.view.editW === 297 && R.view.sheetW === R.view.editW && R.back.sheetW === R.view.editW,
   pages: R.pages.p1 && R.pages.active && R.pages.p2 && R.pages.p3 && R.pages.last && R.pages.back && R.pages.tabs === "1表紙|2目次" && R.pages.tabNo === "1" &&
     R.pages.scroll.top === 120 && R.pages.scroll.left === 40 && R.pages.scroll.sheetTopSame && R.pages.scroll.barSame && R.pages.scroll.barH <= 44 &&
     R.pages.scroll.tabH <= 36 && R.pages.scroll.oneLine && R.pages.scroll.fitW < 60,
-  sidebar: R.sidebar.shown0 && R.sidebar.hidden && R.sidebar.saved === "0" && R.sidebar.wider > R.zoom.w0 + 100 && R.sidebar.again,
+  sidebar: R.sidebar.shown0 && R.sidebar.hidden && R.sidebar.saved === "0" && R.sidebar.wider > 200 && R.sidebar.again,
   narrow: N.listShown && N.barH <= 44 && N.btnMax < 32 && N.fitW < 60,
-  zoom: R.zoom.w1 > R.zoom.w0 * 1.2 && Math.abs(R.zoom.w2 - R.zoom.w0) < 2 && Math.abs(R.zoom.w3 - R.zoom.w0) < 2,
+  zoom: R.zoom.w1 > R.zoom.w0 * 1.2 && Math.abs(R.zoom.w2 - R.zoom.w0) < 2 && R.zoom.widthFull && R.zoom.w3 > R.zoom.w0 && Math.abs(R.zoom.w4 - R.zoom.w0) < 2,
+  fitAll: R.fitAll.pageOn && R.fitAll.a3.inside && R.fitAll.a3.full && R.fitAll.a3.centered && R.fitAll.s15.inside && R.fitAll.s15.full && /1:1\.5のページ/.test(R.fitAll.s15name) &&
+    N.resized.inside && N.resized.full,
   history: R.history.open && R.history.above,
   back: R.back.gone && R.back.same && R.back.btn,
 };
