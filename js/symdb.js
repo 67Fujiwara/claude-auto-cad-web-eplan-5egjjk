@@ -1394,6 +1394,7 @@ function setSymTagVis(id, v) {
 }
 /** タグをこの場面 (print = PDF/DXF 出力) で出すか */
 function tagShownFor(dev, print) {
+  if (dev && dev.tagOff) return false;           // 機器ごとに明示を消す (端子台の番号など)
   const v = symTagVis(symOf(dev.sym));
   if (v === "hide") return false;
   if (v === "noprint") return !print;

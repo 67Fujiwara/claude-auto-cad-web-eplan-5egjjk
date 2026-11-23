@@ -95,6 +95,7 @@ UI.buildPalette = (filter = "") => {
 /** ページ番号を振り直し、ページ固有の図番も並び順に同期する */
 UI.renumberPages = () => {
   tocEnsurePages();          // 目次の枚数を行数に合わせる (こぼれを防ぐ)
+  stripsEnsurePages();       // 端子台配列も同じく
   const meta = projectMeta();
   const base = (meta.dwgNo || "").trim();
   const auto = meta.dwgNoAuto !== false;
@@ -489,8 +490,11 @@ function bindPnDraw(pane) {
     const memo = sp.memo || {};
     const cov = page.cover || {};
     pane.innerHTML = `
-      <div class="prop-head"><div><b>${page.kind === "cover" ? "表紙" : page.kind === "toc" ? "目次" : page.kind === "parts" ? "機器リスト" : "仕様"}</b>
-        <div class="rp-dim">図面集の頭に置くページ (回路は描きません)</div></div></div>
+      <div class="prop-head"><div><b>${page.kind === "cover" ? "表紙" : page.kind === "toc" ? "目次" : page.kind === "parts" ? "機器リスト" : page.kind === "strips" ? "端子台配列" : "仕様"}</b>
+        <div class="rp-dim">${page.kind === "strips" ? "端子台の定義と回路から自動で作る表 (回路は描きません)" : "図面集の頭に置くページ (回路は描きません)"}</div></div></div>
+      ${page.kind === "strips" ? `
+        <div class="prop-row" style="margin-top:8px"><button class="btn-solid" id="pgStrips" style="width:100%">端子台の設定…</button></div>
+        <div class="prop-note">端子台 ${projectStrips().length} 件。端子台を足す・段数や接続方式を変えるのはここから。端子の紐づけは回路図で端子を選んだプロパティで行います。枚数は中身に合わせて自動で増減します。</div>` : ""}
       ${page.kind === "parts" ? `
         <div class="prop-row" style="margin-top:8px"><button class="btn-solid" id="plEdit" style="width:100%">Excel 貼り付けで編集…</button></div>
         <div class="prop-note">今の内容 (${partsRows().length} 件) がタブ区切りで入った状態で開きます。Excel へ貼り戻すこともできます。</div>` : ""}
@@ -514,6 +518,8 @@ function bindPnDraw(pane) {
     };
     const plBtn = pane.querySelector("#plEdit");
     if (plBtn) plBtn.addEventListener("click", () => UI.openPartsList());
+    const stBtn = pane.querySelector("#pgStrips");
+    if (stBtn) stBtn.addEventListener("click", () => UI.stripSetup());
     bindPg("#cvCust", v => { page.cover = page.cover || {}; page.cover.customer = v.trim(); });
     bindPg("#cvTitle", v => { page.cover = page.cover || {}; page.cover.title = v.trim(); });
     pane.querySelectorAll(".spMemo").forEach(el => el.addEventListener("change", () => {
@@ -543,7 +549,22 @@ function bindPnDraw(pane) {
           <div class="t2">${sym.nameEn}<span class="cat-pill" style="background:${cat.color}22;color:${cat.color}">${cat.name}</span></div>
         </div>
       </div>
-      <div class="prop-row"><label>デバイスタグ (DT)</label><input id="pTag" class="mono" value="${dev.linkTo ? displayTag(dev) : (dev.tag || "")}" ${dev.linkTo ? "disabled" : ""}/></div>
+      <div class="prop-row"><label>デバイスタグ (DT)${isTerminalDev(dev) && dev.props && dev.props.strip ? ' <span class="rp-dim">(端子台の紐づけから自動)</span>' : ""}</label><input id="pTag" class="mono" value="${dev.linkTo ? displayTag(dev) : (dev.tag || "")}" ${dev.linkTo || (isTerminalDev(dev) && dev.props && dev.props.strip) ? "disabled" : ""}/></div>
+      ${isTerminalDev(dev) ? (() => {
+        const strips = projectStrips();
+        const cur = (dev.props && dev.props.strip) || "";
+        const st = stripById(cur);
+        const lv = st ? stripLevels(st) : 1;
+        return `<div class="prop-sect">端子台</div>
+        <div class="prop-row"><label>端子台 <span class="rp-dim">(紐づけるとタグ・端子台配列が連動)</span></label>
+          <select id="pStrip"><option value=""${cur ? "" : " selected"}>— 紐づけない —</option>${strips.map(s => `<option value="${s.id}"${s.id === cur ? " selected" : ""}>${escAttr(s.name)} (${stripTypeName(s)}・${stripConnName(s)})</option>`).join("")}<option value="__new">＋ 新しい端子台を作る…</option></select></div>
+        <div class="prop-grid2">
+          <div class="prop-row"><label>端子番号</label><input id="pTerm" class="mono" value="${escAttr((dev.props && dev.props.term) || "")}" placeholder="例: 3"${st ? "" : " disabled"}/></div>
+          <div class="prop-row"><label>段</label><select id="pLevel"${lv > 1 ? "" : " disabled"}>${Array.from({ length: lv }, (_, i) => `<option value="${i + 1}"${(dev.props && dev.props.level || 1) === i + 1 ? " selected" : ""}>${i + 1} 段目</option>`).join("")}</select></div>
+        </div>
+        <div class="prop-row"><button class="btn-solid" id="pStripSetup" style="padding:3px 10px;font-size:11px">端子台の設定…</button>
+          <span class="rp-dim" style="font-size:10.5px">段数・接続方式 (ネジ/プッシュイン)・型式は端子台側で決めます</span></div>`;
+      })() : ""}
       ${(() => {
         // 受動部品・半導体は「値・定格」として手入力 (タグの横に図面表示)
         const isVal = sym.group === "受動部品" || sym.group === "半導体";
@@ -566,7 +587,7 @@ function bindPnDraw(pane) {
            仮番号 1,2,3… を消せる)。記号どおりに戻したいときは既定値を入れ直す。
            結線図の枠記号 (端子名を外郭内に描く) と端子台は対象外 */
         const pins2 = sym.pins || [];
-        if (!pins2.length || pins2.length > 12 || sym.ioSheet || symBaseIdOf(dev.sym) === "terminal") return "";
+        if (!pins2.length || pins2.length > 12 || sym.ioSheet || isTerminalSymId(symBaseIdOf(dev.sym))) return "";
         const rows = pins2.map((p2, i) => {
           if (p2.inBody) return "";
           const auto = autoPinName(dev, i);
@@ -638,6 +659,11 @@ function bindPnDraw(pane) {
             <span class="rp-dim" style="font-size:10.5px">mm (記号内の y)</span>
           </div></div>`;
       })()}
+      ${(dev.tag || dev.linkTo) ? `<div class="prop-sect">明示 (タグの表示)</div>
+      <div class="prop-grid2">
+        <div class="prop-row"><label class="chk"><input type="checkbox" id="pTagShow"${dev.tagOff ? "" : " checked"}/><span>図面に表示する</span></label></div>
+        <div class="prop-row"><label>文字高 <span class="rp-dim">(標準 ${TEXT_H.normal})</span></label><input id="pTagH" class="mono" type="number" step="0.5" min="2.5" max="20" value="${dev.tagH > 0 ? dev.tagH : TEXT_H.normal}"/></div>
+      </div>` : ""}
       ${(dev.xrefAt || (dev.tagAt && dev.tagAt.user)) ? `<div class="prop-row"><label>明示の位置 <span class="rp-dim">(${[dev.tagAt && dev.tagAt.user ? "タグ" : "", dev.xrefAt ? "相互参照" : ""].filter(Boolean).join("・")}を手で動かしています)</span></label>
         <button class="btn-solid" id="pLblAuto" style="padding:3px 10px;font-size:11px">明示の位置を自動に戻す</button></div>`
         : (dev.tag || dev.linkTo) ? `<div class="prop-note" style="margin-top:4px">タグ・相互参照 (明示) は、この機器を選んだまま文字をドラッグすると動かせます。</div>` : ""}
@@ -696,6 +722,26 @@ function bindPnDraw(pane) {
     });
     bind("#pDesc", v => dev.desc = v.trim());
     bind("#pType", v => dev.typeRef = v.trim());
+    // 端子台への紐づけ
+    const stripSel = pane.querySelector("#pStrip");
+    if (stripSel) stripSel.addEventListener("change", () => {
+      if (stripSel.value === "__new") {
+        const s = (commit(), stripAdd({}));
+        termLink(dev, s.id, (dev.props && dev.props.term) || "", 1);
+        UI.refresh(false); UI.showProps(); UI.stripSetup(s.id); return;
+      }
+      commit();
+      termLink(dev, stripSel.value, (dev.props && dev.props.term) || "", (dev.props && dev.props.level) || 1);
+      UI.refresh(false); UI.showProps();
+    });
+    bind("#pTerm", v => { termLink(dev, dev.props.strip, v, dev.props.level); });
+    bind("#pLevel", v => { termLink(dev, dev.props.strip, dev.props.term, v); });
+    const stripBtn = pane.querySelector("#pStripSetup");
+    if (stripBtn) stripBtn.addEventListener("click", () => UI.stripSetup(dev.props && dev.props.strip));
+    // 明示 (タグ) の表示・文字高
+    const tagShow = pane.querySelector("#pTagShow");
+    if (tagShow) tagShow.addEventListener("change", () => { commit(); if (tagShow.checked) delete dev.tagOff; else dev.tagOff = true; UI.refresh(false); });
+    bind("#pTagH", v => { const n = parseFloat(v); if (isNaN(n) || Math.abs(n - TEXT_H.normal) < 1e-9) delete dev.tagH; else dev.tagH = Math.min(20, Math.max(2.5, n)); });
     const num = (v, old) => { const n = parseFloat(v); return isNaN(n) ? old : snap(n); }; // 0 も入力可
     /* X/Y は 0.5mm 刻みで受ける。端子の張り出しが 5mm の倍数でない記号を
        配線と真横に合わせるには、格子ちょうどでは置けないため */
@@ -1316,6 +1362,7 @@ const MENUS = {
     { sep: true },
     { label: "図枠・表題欄の設定…", key: "", fn: () => UI.sheetSetup() },
     { label: "線番・電線仕様の文字…", key: "", fn: () => UI.wireTextSetup() },
+    { label: "端子台…", key: "", fn: () => UI.stripSetup() },
     { sep: true },
     { label: "DXF取り込み (図面に作図)…", key: "", fn: () => UI.importDXF() },
     { label: "Panel Studio の図面を差し込む… (JSON / ZIP)", key: "", fn: () => UI.importPanelStudio() },
@@ -1328,6 +1375,7 @@ const MENUS = {
     { sep: true },
     { label: "設計完了 (DXF + PDF を出力)…", key: "", fn: () => UI.finishDesign() },
     { label: "設計完了履歴…", key: "", fn: () => UI.openReleaseHistory() },
+    { label: "設計完了した図面を閲覧…", key: "", fn: () => UI.openReleasePage() },
   ],
   edit: [
     { label: "シンボルデータベース…", key: "", fn: () => UI.openSymDB() },
@@ -1365,6 +1413,7 @@ const MENUS = {
     { label: "表紙を追加", key: "", fn: () => UI.addSpecialPage("cover") },
     { label: "目次を追加", key: "", fn: () => UI.addSpecialPage("toc") },
     { label: "仕様を追加", key: "", fn: () => UI.addSpecialPage("spec") },
+    { label: "端子台配列を追加", key: "", fn: () => UI.addSpecialPage("strips") },
     { label: "テキスト", key: "T", fn: () => UI.setTool("text") },
     { label: "破線枠 (盤外/グループ)", key: "", fn: () => UI.insertZone() },
     { label: "表 (行・列は後から追加)", key: "", fn: () => UI.insertTable() },
@@ -1486,12 +1535,13 @@ UI.addPage = () => {
 UI.addSpecialPage = (kind) => {
   if (App.sim.running) { UI.setMsg("シミュレーション中はページを追加できません"); return; }
   commit();
-  const nm = { cover: "表紙", toc: "目次", spec: "仕様" }[kind] || "ページ";
+  const nm = { cover: "表紙", toc: "目次", spec: "仕様", strips: "端子台配列" }[kind] || "ページ";
   /* 頭の 3 枚は図面集の先頭に置くのが作法。既にある同種のページの直後、
-     無ければ回路ページより前 (表紙 → 目次 → 仕様 の順) へ入れる */
+     無ければ回路ページより前 (表紙 → 目次 → 仕様 の順) へ入れる。
+     端子台配列は図面集の末尾 (EPLAN の端子台図と同じ置き場所) */
   const order = ["cover", "toc", "spec"];
   const rank = k => (k ? order.indexOf(k) : order.length);
-  let at = App.project.pages.findIndex(pg => rank(pg.kind) > rank(kind));
+  let at = kind === "strips" ? -1 : App.project.pages.findIndex(pg => rank(pg.kind) > rank(kind));
   if (at < 0) at = App.project.pages.length;
   const pg = newPage(nm, at + 1, kind);
   App.project.pages.splice(at, 0, pg);
@@ -2221,7 +2271,7 @@ UI.openMasterPages = () => {
     const box = body.querySelector("#mpPages");
     if (!snap || !snap.pages) { box.textContent = "この一時保存の中身を読み出せませんでした"; return; }
     box.innerHTML = snap.pages.map((pg, i) => {
-      const kind = pg.kind ? ` (${{ cover: "表紙", toc: "目次", spec: "仕様", panel: "盤", parts: "機器" }[pg.kind] || pg.kind})` : "";
+      const kind = pg.kind ? ` (${{ cover: "表紙", toc: "目次", spec: "仕様", panel: "盤", parts: "機器", strips: "端子台" }[pg.kind] || pg.kind})` : "";
       const nDev = (pg.devices || []).length, nWire = (pg.wires || []).length;
       return `<label class="chk" style="display:block;padding:2px 0"><input type="checkbox" class="mpPg" data-i="${i}"/>
         <span>${i + 1}. ${escXML(pg.name || "無題")}${kind} <span class="rp-dim">機器 ${nDev} / 配線 ${nWire}</span></span></label>`;
@@ -2776,6 +2826,82 @@ UI.zoomSpeedDialog = () => {
     localStorage.setItem("electracad.zoomStep", String(Editor.zoomStep));
   });
   UI.openModal({ title: "ズーム速度", sub: "マウスホイールの拡大縮小の強さ", body });
+};
+
+/* ══════════════ 端子台の設定 ══════════════ */
+/** 端子台の一覧: 名前・段数 (1段/2段/3段)・接続方式 (ネジ/プッシュイン/スプリング)・
+    型式・メーカー。名前や段数を変えると紐づいた端子のタグも付け直す */
+UI.stripSetup = (focusId) => {
+  const strips = projectStrips();
+  const row = s => {
+    const n = stripTerminals(s).length;
+    return `<tr data-id="${s.id}" style="${s.id === focusId ? "background:rgba(31,122,224,.12)" : ""}">
+      <td><input class="stName mono" value="${escAttr(s.name)}" style="width:72px"/></td>
+      <td><select class="stType">${Object.entries(STRIP_TYPES).map(([k, v]) => `<option value="${k}"${(s.type || "single") === k ? " selected" : ""}>${v.name}</option>`).join("")}</select></td>
+      <td><select class="stConn">${Object.entries(STRIP_CONNS).map(([k, v]) => `<option value="${k}"${(s.conn || "screw") === k ? " selected" : ""}>${v}</option>`).join("")}</select></td>
+      <td><input class="stPart mono" value="${escAttr(s.part || "")}" placeholder="例: UK 2.5 N" style="width:110px"/></td>
+      <td><input class="stMaker" value="${escAttr(s.maker || "")}" placeholder="例: Phoenix" style="width:90px"/></td>
+      <td><input class="stDesc" value="${escAttr(s.desc || "")}" placeholder="用途 (盤内 / 現場 など)" style="width:120px"/></td>
+      <td class="mono" style="text-align:center">${n}</td>
+      <td><button class="btn-solid stDel" style="padding:2px 8px;font-size:11px"${n ? ' title="紐づいた端子は外れます (タグは残ります)"' : ""}>削除</button></td></tr>`;
+  };
+  const body = h(`<div>
+    <div class="prop-note" style="margin-top:0">端子台は図面全体で 1 つの定義 (EPLAN の端子台定義と同じ)。回路図の端子は、端子のプロパティで端子台と端子番号を選んで紐づけます。タグ (-X1:3) は紐づけから自動で付き、2段以上の端子台は段を付けて -X1:3.2 になります。端子台配列のページ (挿入 › 端子台配列を追加) は定義と回路から自動で作られます。</div>
+    <table class="st-table" style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr><th>名前</th><th>段数</th><th>接続方式</th><th>型式</th><th>メーカー</th><th>用途</th><th>端子</th><th></th></tr></thead>
+      <tbody id="stRows">${strips.map(row).join("")}</tbody></table>
+    ${strips.length ? "" : `<div class="prop-note">端子台がまだありません。「端子台を追加」で作ってください。</div>`}
+    <div class="prop-row" style="margin-top:8px"><button class="btn-solid" id="stAdd">＋ 端子台を追加</button></div>
+  </div>`);
+  const foot = h(`<div style="display:flex;gap:10px;justify-content:flex-end">
+    ${App.project.pages.some(pg => pg.kind === "strips") ? "" : `<button class="btn-solid" id="stPage">端子台配列のページを追加</button>`}
+    <button class="btn-solid" id="stCancel">キャンセル</button>
+    <button class="btn-solid primary" id="stOk">適用</button>
+  </div>`);
+  const m = UI.openModal({ title: "端子台", sub: "端子台の定義 (名前・段数・接続方式・型式)", body, foot });
+  body.querySelector("#stAdd").addEventListener("click", () => {
+    const s = stripAdd({});
+    body.querySelector("#stRows").insertAdjacentHTML("beforeend", row(s));
+    body.querySelector("#stRows").lastElementChild.querySelector(".stName").focus();
+  });
+  body.addEventListener("click", e => {
+    const btn = e.target.closest(".stDel");
+    if (!btn) return;
+    const tr = btn.closest("tr"), s = stripById(tr.dataset.id);
+    const n = s ? stripTerminals(s).length : 0;
+    if (n && !confirm(`端子台 ${s.name} を削除しますか？ 紐づいた端子 ${n} 点は外れます (タグはそのまま残ります)`)) return;
+    tr.remove();
+    tr.dataset.del = "1";
+    body._dels = (body._dels || []).concat(tr.dataset.id);
+  });
+  foot.querySelector("#stCancel").addEventListener("click", () => {
+    // 追加だけして取り消したものを戻す (適用前の追加は未保存)
+    m.close();
+  });
+  const apply = () => {
+    commit();
+    (body._dels || []).forEach(id => stripRemove(id));
+    [...body.querySelectorAll("#stRows tr")].forEach(tr => {
+      const s = stripById(tr.dataset.id);
+      if (!s) return;
+      stripRename(s, tr.querySelector(".stName").value);
+      stripRetype(s, tr.querySelector(".stType").value);
+      s.conn = tr.querySelector(".stConn").value;
+      s.part = tr.querySelector(".stPart").value.trim();
+      s.maker = tr.querySelector(".stMaker").value.trim();
+      s.desc = tr.querySelector(".stDesc").value.trim();
+    });
+    // 名前の重複は許さない (タグが衝突する)
+    const names = projectStrips().map(s => s.name);
+    const dup = names.find((nm, i) => names.indexOf(nm) !== i);
+    if (dup) UI.toast(`⚠ 端子台の名前 ${dup} が重複しています`, 3800);
+    UI.renumberPages();
+    UI.refresh();
+    UI.showProps();
+  };
+  foot.querySelector("#stOk").addEventListener("click", () => { apply(); m.close(); });
+  const pgBtn = foot.querySelector("#stPage");
+  if (pgBtn) pgBtn.addEventListener("click", () => { apply(); m.close(); UI.addSpecialPage("strips"); });
 };
 
 /* ══════════════ 線番・電線仕様の文字 ══════════════ */
@@ -3494,6 +3620,7 @@ async function boot() {
   UI.updateSaveButton();
   document.getElementById("btnAIWizard").addEventListener("click", UI.openWizard);
   document.getElementById("btnRelease").addEventListener("click", () => UI.finishDesign());
+  document.getElementById("btnRelView").addEventListener("click", () => UI.openReleasePage());
   UI.updateReleaseBadge();
   document.getElementById("btnZoomIn").addEventListener("click", () => UI.zoomCenter(1.25));
   document.getElementById("btnZoomOut").addEventListener("click", () => UI.zoomCenter(0.8));

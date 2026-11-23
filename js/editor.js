@@ -1128,10 +1128,50 @@ function tubeFigSVG(cx, cy, f) {
   });
   return o;
 }
+/** 端子台配列 — 端子台ごとに、端子番号・段・内部/外部の線番と接続先・ジャンパを表にする
+    (EPLAN の端子台図にならう)。中身は端子台の定義と回路から毎回作り直す */
+function stripsSVG(page) {
+  const b = sheetInner(), f = sheetScale();
+  const pagesC = stripsPagesContent();
+  const mine = App.project.pages.filter(pg => pg.kind === "strips");
+  const idx = Math.max(0, mine.indexOf(page));
+  const chunks = pagesC[idx] || [];
+  const title = idx ? `端子台配列 (${idx + 1})` : "端子台配列";
+  let out = `<text x="${b.x + 4 * f}" y="${b.y + 10 * f}" font-size="${svgFontSizeFor(title, 5 * f)}" fill="${INK}" font-family="sans-serif">${escXML(title)}</text>`;
+  const RH = (b.h - 16 * f - 34 * f) / STRIPS_CAP;          // 行の高さ (表題欄を避ける)
+  const TH = Math.min(3.5 * f, RH * 0.5);
+  const W = b.w - 8 * f;
+  const cols = [
+    { w: W * 0.07, align: "middle" }, { w: W * 0.05, align: "middle" },
+    { w: W * 0.08, align: "middle" }, { w: W * 0.26, align: "start" },
+    { w: W * 0.08, align: "middle" }, { w: W * 0.26, align: "start" },
+    { w: W * 0.1, align: "middle" }, { w: W * 0.1, align: "middle" },
+  ];
+  const head = ["端子", "段", "内部 線番", "内部 接続先 (盤内)", "外部 線番", "外部 接続先 (現場)", "ジャンパ", "ページ"];
+  const fmt = side => side.others.length > 3 ? `${side.others.slice(0, 3).join(" ")} ほか${side.others.length - 3}` : side.others.join(" ");
+  let y = b.y + 16 * f;
+  if (!projectStrips().length) {
+    out += `<text x="${b.x + 4 * f}" y="${y + 6 * f}" font-size="${svgFontSizeFor("x", TEXT_H.normal * f)}" fill="${INK}" font-family="sans-serif">` +
+      `${escXML("端子台がまだありません — 「プロジェクト › 端子台…」で端子台を作り、端子のプロパティで紐づけてください")}</text>`;
+    return out;
+  }
+  chunks.forEach(ch => {
+    const s = ch.strip, n = stripTerminals(s).length;
+    const hd = `端子台 ${s.name}${ch.cont ? " (続き)" : ""}  —  ${stripTypeName(s)} / ${stripConnName(s)}` +
+      `${s.part ? "  型式 " + s.part : ""}${s.maker ? " (" + s.maker + ")" : ""}  端子 ${n} 点${s.desc ? "  " + s.desc : ""}`;
+    out += `<text x="${b.x + 4 * f}" y="${y + RH * 0.7}" font-size="${svgFontSizeFor(hd, 3.5 * f)}" fill="${INK}" font-family="sans-serif" font-weight="bold">${escXML(hd)}</text>`;
+    y += RH;
+    const rows = ch.rows.map(r => [r.num, stripLevels(s) > 1 ? String(r.level) : "", r.int.num, fmt(r.int), r.ext.num, fmt(r.ext), r.jumper, pageDwgNo(r.page)]);
+    out += tableSVG(b.x + 4 * f, y, cols, [head, ...rows], { rh: RH, th: TH });
+    y += RH * (rows.length + 1) + RH * 0.5;
+  });
+  return out;
+}
 /** 頭 3 枚の中身 (図枠の内側に描く) */
 function kindSVG(page, print) {
   if (page.kind === "cover") return coverSVG(page);
   if (page.kind === "toc") return tocSVG(page);
+  if (page.kind === "strips") return stripsSVG(page);
   if (page.kind === "spec") return specSVG(page, print);
   if (page.kind === "panel") return panelSVG(page);
   if (page.kind === "parts") return partsSVG(page);

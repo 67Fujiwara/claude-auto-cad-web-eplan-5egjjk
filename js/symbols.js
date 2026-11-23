@@ -439,6 +439,17 @@ const SYMBOLS = [
     body: `<path d="M0,0 V${10 - TERM_R} M0,20 V${10 + TERM_R}"/><circle cx="0" cy="10" r="${TERM_R}"/>`,
   },
   {
+    /* 2段端子台の 1 点 (段ごとに別の回路)。見た目は二重丸 — 端子台の段数を 2段以上に
+       すると、紐づいた端子はこの記号に自動で入れ替わる (端子は同じ位置なので配線はそのまま)。
+       段はタグ (-X1:3.2) で分かる */
+    id: "terminal2", stdNote: "端子 (JIS C 0617-3 接続部品。多段端子台の 1 点を二重丸で区別する — 規格外の表し方)", nonstd: true,
+    cat: "misc", letter: "TB", name: "端子 (2段)", nameEn: "Terminal (double-level)",
+    desc: "2段 (多段) 端子台の 1 点。段ごとに別の回路なので、段ごとに 1 個置く。端子台の段数を変えると 1段用の記号と自動で入れ替わる", typ: "PTTB 2,5",
+    pins: [{ x: 0, y: 0, n: "" }, { x: 0, y: 20, n: "" }],
+    sim: "passthru", bounds: [-4.2, -2, 8.4, 24],
+    body: `<path d="M0,0 V${10 - TERM_R} M0,20 V${10 + TERM_R}"/><circle cx="0" cy="10" r="${TERM_R}"/><circle cx="0" cy="10" r="${(TERM_R * 0.55).toFixed(2)}" stroke-width="0.25"/>`,
+  },
+  {
     /* 丸のみの端子。導体の途中に落として使う (端子台の1点・測定点)。
        円の中を通る導体は、描くときだけ円の内側を抜いて印刷する
        (wireMask)。電気的にはつながったまま — 端子を動かせば線は戻る */

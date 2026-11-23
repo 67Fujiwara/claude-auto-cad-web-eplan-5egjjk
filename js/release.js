@@ -362,41 +362,15 @@ UI.openReleaseHistory = () => {
       if (!p) { alert("この履歴の図面データが見つかりません (ブラウザのデータが消去された可能性があります)"); return; }
       fn(p, list.find(r => r.id === id));
     };
+    /* 今の図面を作業中へ退避してから開く — 開いた図面は新しい作業中の
+       枠として登録する。登録しないと、ヘッダの作業中名が前の図面のまま
+       になり、次の一時保存が前の図面の枠を上書きしてしまう (relActOpen) */
     rows.querySelectorAll(".rl-open").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, async (p, r) => {
-      if (!confirm(`${r.stamp} の図面を開いて「作業中」に追加します。\n今の図面は作業中へ退避します。よろしいですか？`)) return;
-      /* 今の図面を作業中へ退避してから開く — 開いた図面は新しい作業中の
-         枠として登録する。登録しないと、ヘッダの作業中名が前の図面のまま
-         になり、次の一時保存が前の図面の枠を上書きしてしまう */
-      await wipStashCurrent();
-      commit();
-      App.project = p;
-      mergeProjectSymbols(); migrateFrameStyle();
-      App.pageIdx = 0;
-      App.selection.clear();
-      UI.renumberPages();
-      applySheet();
-      document.getElementById("projectName").value = App.project.name;
-      await UI.wipSave({ asNew: true });
-      m.close();
-      UI.refresh();
-      zoomFit();
-      UI.setMsg(`設計完了履歴 (${r.stamp}) の図面を開き、作業中に追加しました`);
+      if (await relActOpen(p, r)) m.close();
     })));
-    rows.querySelectorAll(".rl-dxf").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, async (p, r) => {
-      // 履歴の図面で一時的に差し替えて DXF を作り、元に戻す (様式もその図面の設定どおり)
-      const keep = App.project, keepIdx = App.pageIdx;
-      App.project = p; App.pageIdx = 0;
-      const base = `${(r.project || "図面").replace(/[\\/:*?"<>|]/g, "_")}_rev${r.rev}`;
-      const files = await withOutputFrame(() => p.pages.map(pg =>
-        ({ name: `${base}_p${pg.no}_${pg.name}.dxf`.replace(/[\\/:*?"<>|]/g, "_"), data: dxfBytes(pageToDXF(pg)) })));
-      App.project = keep; App.pageIdx = keepIdx;
-      applySheet(curPage());
-      files.forEach((f, i) => setTimeout(() => downloadFile(f.name, f.data, "application/dxf"), i * 350));
-      UI.setMsg(`履歴 (${r.stamp}) の DXF を ${p.pages.length} ファイル出力します`);
-    })));
-    rows.querySelectorAll(".rl-json").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => {
-      downloadFile(`${(r.project || "図面").replace(/[\\/:*?"<>|]/g, "_")}_rev${r.rev}.ecad.json`, JSON.stringify(p, null, 1));
-    })));
+    // 履歴の図面で一時的に差し替えて DXF を作り、元に戻す (様式もその図面の設定どおり)
+    rows.querySelectorAll(".rl-dxf").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => relActDxf(p, r))));
+    rows.querySelectorAll(".rl-json").forEach(b => b.addEventListener("click", () => withSnap(b.dataset.id, (p, r) => relActJson(p, r))));
     rows.querySelectorAll(".rl-del").forEach(b => b.addEventListener("click", async () => {
       const r = list.find(x => x.id === b.dataset.id);
       if (!confirm(`${r.stamp} の記録を削除しますか？ (出力済みのファイルは消えません)`)) return;
@@ -412,6 +386,149 @@ UI.openReleaseHistory = () => {
   });
   foot.querySelector("#rlClose").addEventListener("click", m.close);
 };
+
+/* ── 設計完了ページ (閲覧専用) ─────────────────────────────
+   設計完了した図面を、今の作業を離れずに見るだけのページ。図面は履歴の写し
+   (スナップショット) を画面用 SVG に描く — 編集はできない (作業中へ開くのは
+   履歴の「開く」と同じ) */
+/** 履歴の図面 1 ページを画面用 SVG にする。描いている間だけ App.project を差し替える */
+function relPageSVG(project, idx) {
+  const keep = App.project, keepIdx = App.pageIdx;
+  App.project = project; App.pageIdx = Math.max(0, Math.min(idx, project.pages.length - 1));
+  try {
+    mergeProjectSymbols();                       // 図面に同梱の自作記号を辞書へ
+    App.labelRev++;
+    return exportSheetSVG(project.pages[App.pageIdx]);
+  } finally {
+    App.project = keep; App.pageIdx = keepIdx;
+    App.labelRev++;
+    applySheet(curPage());
+  }
+}
+UI.openReleasePage = () => {
+  if (document.getElementById("relView")) return;
+  const el = h(`<div id="relView" class="rel-view">
+    <div class="rel-view-head">
+      <button class="btn-solid" id="rvBack">← 編集画面に戻る</button>
+      <div class="rel-view-title">設計完了した図面 <span class="rel-dim" style="font-weight:400">— 閲覧専用 (ここでは編集できません)</span></div>
+      <span style="flex:1"></span>
+      <button class="btn-solid" id="rvHist">履歴の管理…</button>
+    </div>
+    <div class="rel-view-body">
+      <div class="rel-view-list" id="rvList"></div>
+      <div class="rel-view-main" id="rvMain"><div class="se-empty" style="padding:24px">左の一覧から図面を選んでください</div></div>
+    </div></div>`);
+  document.body.append(el);
+  const st = { id: null, p: null, r: null, idx: 0, zoom: 0 };   // zoom 0 = 幅に合わせる
+  const renderList = () => {
+    const list = relList();
+    const box = el.querySelector("#rvList");
+    if (!list.length) { box.innerHTML = '<div class="se-empty" style="padding:24px">まだ設計完了した図面はありません</div>'; return; }
+    box.innerHTML = list.map(r => `<div class="rel-view-item${r.id === st.id ? " on" : ""}" data-id="${r.id}">
+      <div><b>${escXML(r.project)}</b> <span class="rel-dim">Rev ${escXML(r.rev)} / 第 ${r.seq} 版</span></div>
+      <div class="mono rel-dim">${escXML(r.stamp)}${r.by ? " / " + escXML(r.by) : ""}</div>
+      <div class="rel-dim">${r.pages} ページ / 機器 ${r.devices} / 配線 ${r.wires}${r.saved === false ? ' / <span class="rel-bad">図面データなし</span>' : ""}</div>
+      ${r.note ? `<div class="rel-dim">${escXML(r.note)}</div>` : ""}</div>`).join("");
+    box.querySelectorAll(".rel-view-item").forEach(it => it.addEventListener("click", () => open(it.dataset.id)));
+  };
+  const renderPage = () => {
+    const main = el.querySelector("#rvMain");
+    if (!st.p) return;
+    const pg = st.p.pages[st.idx];
+    const svg = relPageSVG(st.p, st.idx);
+    const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg);
+    const W = vb ? +vb[1] : 420, H = vb ? +vb[2] : 297;
+    const sheetW = el.querySelector(".rel-view-sheet") ? el.querySelector(".rel-view-sheet").clientWidth - 32 : 1000;
+    const k = st.zoom || Math.max(0.1, sheetW / W);
+    const px = Math.round(W * k), py = Math.round(H * k);
+    const svg2 = svg.replace(/^<\?xml[^>]*>\s*/, "").replace(/width="[^"]*" height="[^"]*"/, `width="${px}" height="${py}"`);
+    main.innerHTML = `
+      <div class="rel-view-bar">
+        <b>${escXML(st.r.project)}</b> <span class="rel-dim">Rev ${escXML(st.r.rev)} / ${escXML(st.r.stamp)}</span>
+        <span style="flex:1"></span>
+        <button class="btn-solid" id="rvPrev" ${st.idx === 0 ? "disabled" : ""}>◀ 前</button>
+        <span class="mono">${st.idx + 1} / ${st.p.pages.length}</span>
+        <button class="btn-solid" id="rvNext" ${st.idx >= st.p.pages.length - 1 ? "disabled" : ""}>次 ▶</button>
+        <span class="mono">${escXML(pageDwgNoOf(st.p, pg))} ${escXML(pg.name || "")}</span>
+        <span style="width:12px"></span>
+        <button class="btn-solid" id="rvZoomOut">−</button><button class="btn-solid" id="rvZoomFit">幅に合わせる</button><button class="btn-solid" id="rvZoomIn">＋</button>
+        <span style="width:12px"></span>
+        <button class="btn-solid" id="rvDxf">DXF</button><button class="btn-solid" id="rvJson">JSON</button><button class="btn-solid" id="rvEdit">作業中に開いて編集…</button>
+      </div>
+      <div class="rel-view-pages" style="padding:6px 12px;border-bottom:1px solid var(--line)" id="rvPages">${st.p.pages.map((q, i) => `<button class="btn-solid${i === st.idx ? " on" : ""}" data-i="${i}" title="${escAttr(q.name || "")}">${i + 1}</button>`).join("")}</div>
+      <div class="rel-view-sheet" id="rvSheet">${svg2}</div>`;
+    main.querySelector("#rvPrev").addEventListener("click", () => { st.idx = Math.max(0, st.idx - 1); renderPage(); });
+    main.querySelector("#rvNext").addEventListener("click", () => { st.idx = Math.min(st.p.pages.length - 1, st.idx + 1); renderPage(); });
+    main.querySelectorAll("#rvPages button").forEach(b => b.addEventListener("click", () => { st.idx = +b.dataset.i; renderPage(); }));
+    main.querySelector("#rvZoomIn").addEventListener("click", () => { st.zoom = (st.zoom || k) * 1.25; renderPage(); });
+    main.querySelector("#rvZoomOut").addEventListener("click", () => { st.zoom = Math.max(0.1, (st.zoom || k) / 1.25); renderPage(); });
+    main.querySelector("#rvZoomFit").addEventListener("click", () => { st.zoom = 0; renderPage(); });
+    main.querySelector("#rvDxf").addEventListener("click", () => relActDxf(st.p, st.r));
+    main.querySelector("#rvJson").addEventListener("click", () => relActJson(st.p, st.r));
+    main.querySelector("#rvEdit").addEventListener("click", async () => { if (await relActOpen(st.p, st.r)) close(); });
+  };
+  const open = async (id) => {
+    const r = relList().find(x => x.id === id);
+    if (!r) return;
+    const p = await relGetSnapshot(id);
+    if (!p) { alert("この履歴の図面データが見つかりません (ブラウザのデータが消去された可能性があります)"); return; }
+    st.id = id; st.p = p; st.r = r; st.idx = 0; st.zoom = 0;
+    renderList(); renderPage();
+  };
+  const onKey = (e) => {
+    if (document.getElementById("overlay-root").children.length) return;   // 上にダイアログがあれば譲る
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "ArrowRight" && st.p) { st.idx = Math.min(st.p.pages.length - 1, st.idx + 1); renderPage(); }
+    else if (e.key === "ArrowLeft" && st.p) { st.idx = Math.max(0, st.idx - 1); renderPage(); }
+  };
+  const close = () => { document.removeEventListener("keydown", onKey, true); el.remove(); };
+  document.addEventListener("keydown", onKey, true);
+  el.querySelector("#rvBack").addEventListener("click", close);
+  el.querySelector("#rvHist").addEventListener("click", () => UI.openReleaseHistory());
+  renderList();
+  // 1 件しか無ければそれを開いておく
+  const list = relList();
+  if (list.length === 1) open(list[0].id);
+  return { open, close, state: st };
+};
+/** 履歴の図面のページの図番 (写しの図面に対して引く — 表題欄と同じ値) */
+function pageDwgNoOf(project, pg) {
+  const keep = App.project; App.project = project;
+  try { return pageDwgNo(pg); } finally { App.project = keep; }
+}
+/** 履歴の図面を「作業中」に開く (履歴ダイアログの「開く」と同じ)。開いたら true */
+async function relActOpen(p, r) {
+  if (!confirm(`${r.stamp} の図面を開いて「作業中」に追加します。\n今の図面は作業中へ退避します。よろしいですか？`)) return false;
+  await wipStashCurrent();
+  commit();
+  App.project = p;
+  mergeProjectSymbols(); migrateFrameStyle();
+  App.pageIdx = 0;
+  App.selection.clear();
+  UI.renumberPages();
+  applySheet();
+  document.getElementById("projectName").value = App.project.name;
+  await UI.wipSave({ asNew: true });
+  UI.refresh();
+  zoomFit();
+  UI.setMsg(`設計完了履歴 (${r.stamp}) の図面を開き、作業中に追加しました`);
+  return true;
+}
+/** 履歴の図面の DXF を出し直す (様式はその図面の設定どおり) */
+async function relActDxf(p, r) {
+  const keep = App.project, keepIdx = App.pageIdx;
+  App.project = p; App.pageIdx = 0;
+  const base = `${(r.project || "図面").replace(/[\\/:*?"<>|]/g, "_")}_rev${r.rev}`;
+  const files = await withOutputFrame(() => p.pages.map(pg =>
+    ({ name: `${base}_p${pg.no}_${pg.name}.dxf`.replace(/[\\/:*?"<>|]/g, "_"), data: dxfBytes(pageToDXF(pg)) })));
+  App.project = keep; App.pageIdx = keepIdx;
+  applySheet(curPage());
+  files.forEach((f, i) => setTimeout(() => downloadFile(f.name, f.data, "application/dxf"), i * 350));
+  UI.setMsg(`履歴 (${r.stamp}) の DXF を ${p.pages.length} ファイル出力します`);
+}
+function relActJson(p, r) {
+  downloadFile(`${(r.project || "図面").replace(/[\\/:*?"<>|]/g, "_")}_rev${r.rev}.ecad.json`, JSON.stringify(p, null, 1));
+}
 
 /** 設計完了ボタンに履歴件数を出す */
 UI.updateReleaseBadge = () => {
